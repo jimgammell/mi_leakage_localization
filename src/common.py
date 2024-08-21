@@ -8,24 +8,25 @@ import random
 import numpy as np
 import torch
 
-from utils.constant import Constant
-
-SRC_DIR = Constant(os.path.dirname(os.path.realpath(__file__)))
-PROJ_DIR = Constant(os.path.abspath(os.path.join(SRC_DIR, '..')))
-CONFIG_DIRNAME = Constant('config')
-CONFIG_DIR = Constant(os.path.join(PROJ_DIR, CONFIG_DIRNAME))
-RESOURCE_DIRNAME = Constant('resources')
-RESOURCE_DIR = Constant(os.path.join(PROJ_DIR, RESOURCE_DIRNAME))
-OUTPUT_DIRNAME = Constant('outputs')
-OUTPUT_DIR = Constant(os.path.join(PROJ_DIR, OUTPUT_DIRNAME))
+SRC_DIR = os.path.dirname(os.path.realpath(__file__))
+PROJ_DIR = os.path.abspath(os.path.join(SRC_DIR, '..'))
+CONFIG_DIRNAME = 'config'
+CONFIG_DIR = os.path.join(PROJ_DIR, CONFIG_DIRNAME)
+RESOURCE_DIRNAME = 'resources'
+RESOURCE_DIR = os.path.join(PROJ_DIR, RESOURCE_DIRNAME)
+OUTPUT_DIRNAME = 'outputs'
+OUTPUT_DIR = os.path.join(PROJ_DIR, OUTPUT_DIRNAME)
 numpy_rng = np.random.default_rng()
 _trial_name = None
 _verbose = None
 _seed = None
 
-def get_trial_dir():
+def get_trial_name():
     assert _trial_name is not None
-    trial_dir = os.path.join(OUTPUT_DIR, _trial_name)
+    return _trial_name
+
+def get_trial_dir():
+    trial_dir = os.path.join(OUTPUT_DIR, get_trial_name())
     os.makedirs(trial_dir, exist_ok=True)
     return trial_dir
 
