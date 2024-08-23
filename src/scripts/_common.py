@@ -14,12 +14,18 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=None, action='store', help='Random seed to use for this trial.')
 parser.add_argument('--device', type=str, default='cpu', choices=available_devices, action='store', help='Device to use for this trial.')
 parser.add_argument('--name', type=str, default=None, action='store', help='Specify the trial name.')
+parser.add_argument('--overwrite', default=False, action='store_true', help='If there is already an output directory with the specified name, delete it before proceeding.')
 parser.add_argument('--quiet', default=False, action='store_true', help='Disable printing to the terminal for this trial.')
 clargs = parser.parse_args()
 
 DEVICE = clargs.device
 SEED = set_seed(clargs.seed)
 if clargs.name is not None:
+    if os.path.exists(os.path.join(OUTPUT_DIR, clargs.name)):
+        if clargs.overwrite:
+            shutil.rmtree(os.path.join(OUTPUT_DIR, clargs.name))
+        else:
+            assert False, f'Directory already exists: `{os.path.join(OUTPUT_DIR, clargs.name)}`'
     rename_trial(clargs.name)
 set_verbosity(not clargs.quiet)
 
