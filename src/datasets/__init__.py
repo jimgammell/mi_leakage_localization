@@ -1,10 +1,9 @@
-from utils.constant import Constant
 from . import mnist
 
-_DATASET_MODULES = Constant({
+_DATASET_MODULES = {
     'mnist': mnist
-})
-AVAILABLE_DATASETS = Constant(list(_DATASET_MODULES.keys()))
+}
+AVAILABLE_DATASETS = list(_DATASET_MODULES.keys())
 
 def _check_name(name):
     if not name in AVAILABLE_DATASETS:

@@ -9,9 +9,8 @@ from torchvision import transforms
 import lightning as L
 
 from common import *
-from utils.constant import Constant
 
-ROOT = Constant(os.path.join(RESOURCE_DIR, 'mnist'))
+ROOT = os.path.join(RESOURCE_DIR, 'mnist')
 os.makedirs(ROOT, exist_ok=True)
 
 def download():

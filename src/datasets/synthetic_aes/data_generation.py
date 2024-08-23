@@ -1,9 +1,10 @@
 import numpy as np
 import numba
+from numba import jit
 import torch
 from torch.utils.data import Dataset
 
-from .common import *
+from ..common import *
 
 @jit(nopython=True)
 def apply_ema(trace, ema_coeff):
@@ -31,9 +32,11 @@ def generate_trace(data_vals, data_locs, cycles_per_trace, timesteps_per_cycle, 
         if data_val is None:
             data_val = random_integers[cycle]
         if leakage_model == 'hamming_weight':
-            data_power = get_hamming_weight(data_val)
+            data_power = (get_hamming_weight(data_val).astype(np.float32) - 4) / np.sqrt(2)
         elif leakage_model == 'hamming_distance':
-            data_power = get_hamming_weight(data_val ^ prev_data_val)
+            data_power = (get_hamming_weight(data_val ^ prev_data_val).astype(np.float32) - 4) / np.sqrt(2)
+        elif leakage_model == 'identity':
+            data_power = (data_val.astype(np.float32) - 127.5) / np.sqrt((256**2 - 1)/12)
         else:
             assert False
         data_power = np.float32(data_power)
