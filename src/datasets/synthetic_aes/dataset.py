@@ -24,7 +24,7 @@ class SyntheticAES(Dataset):
         num_leaking_masked_subbytes_cycles: int = 0, # Number of cycles at which the masked subbytes variable leaks.
         shuffle_locations: int = 1, # The cycle at which leakage happens will be randomly chosen from this number of possibilities.
         max_no_ops: int = 0, # Leakage will be randomly delayed by between 0 and this number of cycles.
-        lpf_beta: float = 0.0, # Traces will be discrete low-pass filtered according to x_lpf[t+1] = lpf_beta*x_lpf[t] + (1-lpf_beta)x[t+1].
+        lpf_beta: float = 0.5, # Traces will be discrete low-pass filtered according to x_lpf[t+1] = lpf_beta*x_lpf[t] + (1-lpf_beta)x[t+1].
         leakage_model: str = 'hamming_weight', # This function of the sensitive variable will be leaked. Options: ['identity', 'hamming_weight', 'hamming_distance']
         target_values: Union[str, Sequence[str]] = 'subbytes', # The sensitive variable to be targeted. Options: ['subbytes', 'mask', 'masked_subbytes']
         fixed_key: Optional[np.uint8] = None, # Instead of randomly sampling keys, fix the key to this value.
@@ -38,7 +38,8 @@ class SyntheticAES(Dataset):
         for key, val in locals().items():
             if key != 'self':
                 setattr(self, key, val)
-        if isinstance(self.target_values, int):
+        self.settings = {key: val for key, val in locals().items() if key != 'self'}
+        if isinstance(self.target_values, str):
             self.target_values = [self.target_values]
         if self.should_generate_data:
             self.generate_data()
@@ -105,22 +106,22 @@ class SyntheticAES(Dataset):
             )
             if self.lpf_beta > 0:
                 trace = apply_ema(trace, self.lpf_beta)
-            trace = trace[:, :LPF_BURN_IN_CYCLES*self.timesteps_per_cycle]
+            trace = trace[LPF_BURN_IN_CYCLES*self.timesteps_per_cycle:]
             traces[idx, ...] = trace
         metadata = {'key': keys, 'plaintext': plaintexts, 'subbytes': subbytes}
-        if self.leaking_mask_cycles > 0:
+        if self.num_leaking_mask_cycles > 0:
             metadata.update({'mask': masks})
-        if self.leaking_masked_subbytes_cycles > 0:
+        if self.num_leaking_masked_subbytes_cycles > 0:
             metadata.update({'masked_subbytes': masked_subbytes})
         return traces, metadata
     
     def __getitem__(self, idx):
         if self.infinite_dataset:
             trace, metadata = self.generate_datapoints(1 if isinstance(idx, int) else len(idx))
-            target = np.stack([metadata[key] for key in self.target_values])
+            target = np.stack([metadata[key] for key in self.target_values]).squeeze()
         else:
             trace = self.traces[idx, ...]
-            target = np.stack([self.metadata[key][idx] for key in self.target_values])
+            target = np.stack([self.metadata[key][idx] for key in self.target_values]).squeeze()
             metadata = {key: val[idx] for key, val in self.metadata.items()}
         if self.transform is not None:
             trace = self.transform(trace)
@@ -130,13 +131,18 @@ class SyntheticAES(Dataset):
     
     def __len__(self):
         return self.length
+    
+    def __repr__(self):
+        return '\n\t'.join((
+            f'{self.__class__.__name__}(',
+            *[f'{key}={val}' for key, val in self.settings.items()]
+        )) + '\n)'
 
 class SyntheticAESLike(SyntheticAES):
     def __init__(self,
         base_dataset: SyntheticAES,
         length: int = 10000,
         infinite_dataset: bool = False,
-        target_values: Union[str, Sequence[str]] = 'subbytes',
         fixed_key: Optional[np.uint8] = None,
         fixed_plaintext: Optional[np.uint8] = None,
         fixed_mask: Optional[np.uint8] = None,
