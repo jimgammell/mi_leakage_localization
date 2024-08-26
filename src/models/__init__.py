@@ -1,10 +1,11 @@
-from utils.constant import Constant
 from .lenet import LeNet5
+from .sca_cnn import SCA_CNN
 
-_MODEL_CONSTRUCTORS = Constant({
-    'lenet-5': LeNet5
-})
-AVAILABLE_MODELS = Constant(list(_MODEL_CONSTRUCTORS.keys()))
+_MODEL_CONSTRUCTORS = {
+    'lenet-5': LeNet5,
+    'sca-cnn': SCA_CNN
+}
+AVAILABLE_MODELS = list(_MODEL_CONSTRUCTORS.keys())
 
 def load(name, **kwargs):
     if not(name in AVAILABLE_MODELS):

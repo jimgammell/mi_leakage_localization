@@ -1,25 +1,23 @@
 from typing import *
 from copy import copy, deepcopy
 import numpy as np
-from numba import jit
 from torch.utils.data import Dataset, Subset
 
-from chunk_iterator import chunk_iterator
+from utils.chunk_iterator import chunk_iterator
 
-@jit(nopython=False)
 def calculate_snr(dataset: Dataset, targets: Union[str, Sequence[str]] = 'subbytes', chunk_size: int = 1024):
     base_dataset = dataset
     while isinstance(dataset, Subset):
         dataset = dataset.dataset
     if isinstance(targets, str):
         targets = [targets]
-        
+    
     orig_transform = copy(base_dataset.transform)
     orig_target_transform = copy(base_dataset.target_transform)
-    orig_ret_mdata = base_dataset.ret_mdata
+    orig_ret_mdata = base_dataset.return_metadata
     base_dataset.transform = None
     base_dataset.target_transform = None
-    base_dataset.ret_mdata = True
+    base_dataset.return_metadata = True
     
     per_target_means = {key: np.zeros((256, base_dataset.trace_length), dtype=np.float32) for key in targets}
     per_target_counts = {key: np.zeros((256,), dtype=int) for key in targets}
@@ -39,8 +37,8 @@ def calculate_snr(dataset: Dataset, targets: Union[str, Sequence[str]] = 'subbyt
             noise_variance[target] = (count/(count+1))*current_var + (1/(count+1))*(trace - mean)**2
     signal_variance = {key: np.var(val, axis=0) for key, val in per_target_means.items()}
     snr_vals = {key: signal_variance[key]/noise_variance[key] for key in signal_variance.keys()}
-            
+    
     base_dataset.transform = orig_transform
     base_dataset.target_transform = orig_target_transform
-    base_dataset.ret_mdata = orig_ret_mdata
+    base_dataset.return_metadata = orig_ret_mdata
     return snr_vals

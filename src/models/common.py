@@ -13,8 +13,6 @@ class Module(nn.Module):
             setattr(self, key, val)
         self.construct()
         self.init_weights()
-        if hasattr(self, 'input_shape'):
-            self.output_shape = self(torch.randn(1, *self.input_shape)).shape[1:]
     
     def construct(self):
         raise NotImplementedError
@@ -26,8 +24,6 @@ class Module(nn.Module):
         if not hasattr(self, 'param_count'):
             self.param_count = sum(p.numel() for p in self.parameters() if p.requires_grad)
         rv = []
-        if hasattr(self, 'input_shape') and hasattr(self, 'output_shape'):
-            rv.append(f'Input: {self.input_shape} -> Output: {self.output_shape}')
-        rv.append(f'Parameter count: {self.param_count}')
+        rv.append(f'Parameter count: {self.param_count:.4e}')
         rv = '\n'.join(rv)
         return rv

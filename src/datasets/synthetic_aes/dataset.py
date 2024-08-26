@@ -38,7 +38,7 @@ class SyntheticAES(Dataset):
         for key, val in locals().items():
             if key != 'self':
                 setattr(self, key, val)
-        self.settings = {key: val for key, val in locals().items() if key != 'self'}
+        self.settings = {key: val for key, val in locals().items() if key not in ('self', 'key', 'val')}
         if isinstance(self.target_values, str):
             self.target_values = [self.target_values]
         if self.should_generate_data:
@@ -127,7 +127,10 @@ class SyntheticAES(Dataset):
             trace = self.transform(trace)
         if self.target_transform is not None:
             target = self.target_transform(target)
-        return trace, target
+        if self.return_metadata:
+            return trace, target, metadata
+        else:
+            return trace, target
     
     def __len__(self):
         return self.length
