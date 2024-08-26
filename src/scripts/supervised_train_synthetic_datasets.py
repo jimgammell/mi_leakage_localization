@@ -3,20 +3,22 @@ from matplotlib import pyplot as plt
 from lightning import Trainer
 from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
+from lightning.pytorch.callbacks import LearningRateMonitor
 
 from _common import *
 import datasets
 from training_modules.supervised_classification import SupervisedClassificationModule
 from utils.recalibrate_batchnorm_stats import recalibrate_batchnorm_stats
+from utils.lightning_callbacks import GradientTracker
 
 TUNE_BATCH_SIZES = False
 TUNE_LEARNING_RATE = True
 
-data_module = datasets.load('synthetic-aes', train_batch_size=1024, eval_batch_size=10000)
+data_module = datasets.load('synthetic-aes', train_batch_size=1024, eval_batch_size=10000, aug=True, dataset_kwargs={'num_leaking_subbytes_cycles': 5})
 training_module = SupervisedClassificationModule(
     model_name='sca-cnn',
     optimizer_name='AdamW',
-    optimizer_kwargs={'lr': 2e-4},
+    optimizer_kwargs={'lr': 2e-4, 'weight_decay': 1e-2},
     lr_scheduler_name='CosineDecayLRSched',
     post_train_epoch_callbacks=[recalibrate_batchnorm_stats]
 )
@@ -26,7 +28,8 @@ trainer = Trainer(
     accelerator='gpu',
     devices=1,
     enable_checkpointing=True,
-    logger=TensorBoardLogger(get_trial_dir(), name='tensorboard')
+    logger=TensorBoardLogger(get_trial_dir(), name='tensorboard'),
+    callbacks=[LearningRateMonitor(logging_interval='step'), GradientTracker()]
 )
 tuner = Tuner(trainer)
 if TUNE_BATCH_SIZES:

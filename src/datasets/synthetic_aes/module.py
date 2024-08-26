@@ -8,6 +8,7 @@ import lightning as L
 
 from .dataset import SyntheticAES, SyntheticAESLike
 from utils.calculate_dataset_stats import calculate_dataset_stats
+from ..augmentation.additive_noise import AdditiveNoise
 
 class DataModule(L.LightningDataModule):
     def __init__(self,
@@ -40,7 +41,7 @@ class DataModule(L.LightningDataModule):
             transforms.Lambda(lambda x: torch.tensor(x[np.newaxis, :], dtype=torch.float32)),
             transforms.Lambda(lambda x: (x - self.data_mean) / self.data_var.sqrt())
         ]
-        aug_transform_mods = [] if self.aug else []
+        aug_transform_mods = [AdditiveNoise()] if self.aug else []
         train_transform = transforms.Compose([*basic_transform_mods, *aug_transform_mods])
         eval_transform = transforms.Compose(basic_transform_mods)
         target_transform = transforms.Lambda(lambda x: torch.tensor(x, dtype=torch.long))

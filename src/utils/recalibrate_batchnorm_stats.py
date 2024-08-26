@@ -9,6 +9,7 @@ def recalibrate_batchnorm_stats(lightning_module):
         if not isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
             continue
         module.reset_running_stats()
+        module.momentum = None
         module.train()
     for x, *_ in lightning_module.trainer.datamodule.train_dataloader(override_batch_size=lightning_module.trainer.datamodule.eval_batch_size):
         x = x.to(lightning_module.device)

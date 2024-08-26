@@ -25,7 +25,6 @@ class SupervisedClassificationModule(L.LightningModule):
         super().__init__()
         self.model = models.load(self.model_name, **self.model_kwargs)
         self.train_accuracy, self.val_accuracy, self.test_accuracy = map(lambda _: Accuracy(task='multiclass', num_classes=self.model.output_classes), range(3))
-        assert 'lr' in self.optimizer_kwargs.keys()
         if self.learning_rate is None:
             assert 'lr' in self.optimizer_kwargs.keys()
             self.learning_rate = self.optimizer_kwargs['lr']
@@ -60,7 +59,7 @@ class SupervisedClassificationModule(L.LightningModule):
             lr_scheduler = lr_scheduler_constructor(
                 optimizer, total_steps=self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader()), **self.lr_scheduler_kwargs
             )
-            rv.update({'lr_scheduler': lr_scheduler})
+            rv.update({'lr_scheduler': {'scheduler': lr_scheduler, 'interval': 'step'}})
         return rv
 
     def forward(self, inputs):
@@ -80,7 +79,6 @@ class SupervisedClassificationModule(L.LightningModule):
         self.train_accuracy(logits, targets)
         self.log('train-loss', loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train-acc', self.train_accuracy, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('learning-rate', self.trainer.optimizers[0].param_groups[0]['lr'], on_step=True, on_epoch=False, prog_bar=False)
         return loss
     
     def validation_step(self, batch, batch_idx):
