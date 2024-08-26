@@ -1,5 +1,5 @@
 from typing import *
-from copy import copy, deepcopy
+from copy import copy
 import numpy as np
 from torch.utils.data import Dataset, Subset
 

@@ -1,7 +1,8 @@
-from . import mnist
+from . import mnist, synthetic_aes
 
 _DATASET_MODULES = {
-    'mnist': mnist
+    'mnist': mnist,
+    'synthetic-aes': synthetic_aes.module
 }
 AVAILABLE_DATASETS = list(_DATASET_MODULES.keys())
 

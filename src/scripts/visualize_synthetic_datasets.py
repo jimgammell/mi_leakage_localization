@@ -24,9 +24,3 @@ for cycle in dataset.leaking_subbytes_cycles:
     ax.axvline(cycle*dataset.timesteps_per_cycle, color='red')
 ax.plot(snr, color='blue', linestyle='none', marker='.', markersize=2)
 fig.savefig(os.path.join(get_trial_dir(), 'snr.png'))
-
-model = models.load('sca-cnn')
-print(model)
-eg_input = torch.as_tensor(eg_trace[np.newaxis, np.newaxis, :])
-eg_output = model(eg_input)
-print(f'Model: {eg_input.shape} -> {eg_output.shape}')

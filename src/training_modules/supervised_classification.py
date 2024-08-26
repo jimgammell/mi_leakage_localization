@@ -1,0 +1,102 @@
+from typing import *
+import numpy as np
+import torch
+from torch import nn, optim
+import lightning as L
+from torchmetrics.classification import Accuracy
+
+import models
+import utils.lr_schedulers
+
+class SupervisedClassificationModule(L.LightningModule):
+    def __init__(self,
+        model_name: str,
+        optimizer_name: Union[str, optim.Optimizer] = 'Adam',
+        lr_scheduler_name: Optional[Union[str, optim.lr_scheduler.LRScheduler]] = None,
+        model_kwargs: dict = {},
+        optimizer_kwargs: dict = {},
+        lr_scheduler_kwargs: dict = {},
+        post_train_epoch_callbacks: list = [],
+        learning_rate: Optional[float] = None
+    ):
+        for key, val in locals().items():
+            if not key in ('self', 'key', 'val'):
+                setattr(self, key, val)
+        super().__init__()
+        self.model = models.load(self.model_name, **self.model_kwargs)
+        self.train_accuracy, self.val_accuracy, self.test_accuracy = map(lambda _: Accuracy(task='multiclass', num_classes=self.model.output_classes), range(3))
+        assert 'lr' in self.optimizer_kwargs.keys()
+        if self.learning_rate is None:
+            assert 'lr' in self.optimizer_kwargs.keys()
+            self.learning_rate = self.optimizer_kwargs['lr']
+    
+    def configure_optimizers(self):
+        if isinstance(self.optimizer_name, str):
+            optimizer_constructor = getattr(optim, self.optimizer_name)
+        else:
+            optimizer_constructor = self.optimizer_name
+        weight_decay = self.optimizer_kwargs['weight_decay'] if 'weight_decay' in self.optimizer_kwargs.keys() else 0.0
+        self.optimizer_kwargs = {key: val for key, val in self.optimizer_kwargs.items() if key not in ['lr', 'weight_decay']}
+        yes_weight_decay, no_weight_decay = [], []
+        for name, param in self.model.named_parameters():
+            if ('weight' in name) and not('norm' in name):
+                yes_weight_decay.append(param)
+            else:
+                no_weight_decay.append(param)
+        param_groups = [
+            {'params': yes_weight_decay, 'weight_decay': weight_decay},
+            {'params': no_weight_decay, 'weight_decay': 0.0}
+        ]
+        optimizer = optimizer_constructor(param_groups, lr=self.learning_rate, **self.optimizer_kwargs)
+        rv = {'optimizer': optimizer}
+        if self.lr_scheduler_name is not None:
+            if isinstance(self.lr_scheduler_name, str):
+                try:
+                    lr_scheduler_constructor = getattr(utils.lr_schedulers, self.lr_scheduler_name)
+                except:
+                    lr_scheduler_constructor = getattr(optim.lr_scheduler, self.lr_scheduler_name)
+            else:
+                lr_scheduler_constructor = self.lr_scheduler_name
+            lr_scheduler = lr_scheduler_constructor(
+                optimizer, total_steps=self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader()), **self.lr_scheduler_kwargs
+            )
+            rv.update({'lr_scheduler': lr_scheduler})
+        return rv
+
+    def forward(self, inputs):
+        return self.model(inputs)
+    
+    def _step(self, batch, batch_idx):
+        inputs, targets = batch
+        logits = self(inputs)
+        logits = logits.view(-1, logits.size(-1))
+        if len(targets.shape) > 1:
+            targets = targets.view(-1, targets.size(-1))
+        return logits, targets
+    
+    def training_step(self, batch, batch_idx):
+        logits, targets = self._step(batch, batch_idx)
+        loss = nn.functional.cross_entropy(logits, targets)
+        self.train_accuracy(logits, targets)
+        self.log('train-loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('train-acc', self.train_accuracy, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('learning-rate', self.trainer.optimizers[0].param_groups[0]['lr'], on_step=True, on_epoch=False, prog_bar=False)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        logits, targets = self._step(batch, batch_idx)
+        loss = nn.functional.cross_entropy(logits, targets)
+        self.val_accuracy(logits, targets)
+        self.log('val-loss', loss, on_step=True, on_epoch=False, prog_bar=True)
+        self.log('val-acc', self.val_accuracy, on_step=False, on_epoch=True, prog_bar=True)
+    
+    def test_step(self, batch, batch_idx):
+        logits, targets = self._step(batch, batch_idx)
+        loss = nn.functional.cross_entropy(logits, targets)
+        self.test_accuracy(logits, targets)
+        self.log('test-loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('test-acc', self.test_accuracy, on_step=False, on_epoch=True, prog_bar=True)
+    
+    def on_train_epoch_end(self):
+        for callback in self.post_train_epoch_callbacks:
+            callback(self)
