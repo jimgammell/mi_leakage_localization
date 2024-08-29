@@ -53,57 +53,79 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
     def _obfuscate_trace(self, trace, binary_noise):
         return torch.cat([binary_noise*trace, binary_noise], dim=1)
     
-    def _classifier_training_step(self, trace, target):
-        classifier_optimizer, _ = self.optimizers()
-        classifier_lr_scheduler, _ = self.lr_schedulers()
-        self.toggle_optimizer(classifier_optimizer)
-        binary_noise = self._sample_binary_noise(trace)
-        obfuscated_trace = self._obfuscate_trace(trace, binary_noise)
-        logits = self._compute_logits(obfuscated_trace)
-        loss = nn.functional.cross_entropy(logits, target)
-        classifier_optimizer.zero_grad()
-        self.manual_backward(loss)
-        classifier_optimizer.step()
-        classifier_lr_scheduler.step()
-        self.untoggle_optimizer(classifier_optimizer)
+    def _classifier_step(self, trace, target, train=False):
+        if train:
+            classifier_optimizer, _ = self.optimizers()
+            classifier_lr_scheduler, _ = self.lr_schedulers()
+            self.toggle_optimizer(classifier_optimizer)
+        with torch.set_grad_enabled(train):
+            binary_noise = self._sample_binary_noise(trace)
+            obfuscated_trace = self._obfuscate_trace(trace, binary_noise)
+            logits = self._compute_logits(obfuscated_trace)
+            loss = nn.functional.cross_entropy(logits, target)
+        if train:
+            classifier_optimizer.zero_grad()
+            self.manual_backward(loss)
+            classifier_optimizer.step()
+            classifier_lr_scheduler.step()
+            self.untoggle_optimizer(classifier_optimizer)
         return logits, loss
 
     @torch.no_grad()
-    def _obfuscator_training_step(self, trace, target):
+    def _obfuscator_step(self, trace, target, train=False):
         batch_size = target.size(0)
-        _, obfuscator_optimizer = self.optimizers()
-        _, obfuscator_lr_scheduler = self.lr_schedulers()
-        self.toggle_optimizer(obfuscator_optimizer)
+        if train:
+            _, obfuscator_optimizer = self.optimizers()
+            _, obfuscator_lr_scheduler = self.lr_schedulers()
+            self.toggle_optimizer(obfuscator_optimizer)
         obfuscation_weights = nn.functional.sigmoid(self.unsquashed_obfuscation_weights)
         l2_norm = obfuscation_weights.norm(p=2)**2
-        l2_norm_grad = obfuscation_weights*obfuscation_weights*(1-obfuscation_weights)
+        if train: l2_norm_grad = obfuscation_weights*obfuscation_weights*(1-obfuscation_weights)
         binary_noise = self._sample_binary_noise(trace)
         obfuscation_weights = obfuscation_weights.repeat(batch_size, *((len(trace.shape)-1)*[1]))
         obfuscated_trace = self._obfuscate_trace(trace, binary_noise)
         logits = self._compute_logits(obfuscated_trace)
         log_likelihood = -nn.functional.cross_entropy(logits, target, reduction='none')
-        log_likelihood_grad = (
-            log_likelihood*((1-binary_noise)*(1-obfuscation_weights) - binary_noise*obfuscation_weights)
-        ).mean(dim=0)
+        if train:
+            log_likelihood_grad = (
+                log_likelihood*((1-binary_noise)*(1-obfuscation_weights) - binary_noise*obfuscation_weights)
+            ).mean(dim=0)
         loss = 0.5*self.obfuscator_l2_norm_penalty*l2_norm + log_likelihood.mean()
-        grad = self.obfuscator_l2_norm_penalty*l2_norm_grad + log_likelihood_grad
-        self.unsquashed_obfuscation_weights.grad = grad
-        obfuscator_optimizer.step()
-        obfuscator_lr_scheduler.step()
-        self.untoggle_optimizer(obfuscator_optimizer)
+        if train:
+            grad = self.obfuscator_l2_norm_penalty*l2_norm_grad + log_likelihood_grad
+            self.unsquashed_obfuscation_weights.grad = grad
+            obfuscator_optimizer.step()
+            obfuscator_lr_scheduler.step()
+            self.untoggle_optimizer(obfuscator_optimizer)
         return loss
     
     def training_step(self, batch):
         trace, target = batch
         if len(target.shape) > 1:
             target = target.view(-1, target.size(-1))
-        classifier_logits, classifier_loss = self._classifier_training_step(trace, target)
+        classifier_logits, classifier_loss = self._classifier_step(trace, target, train=True)
         with torch.no_grad():
             classifier_clean_logits = self._compute_logits(torch.cat([trace, torch.zeros_like(trace)], dim=1))
-        obfuscator_loss = self._obfuscator_training_step(trace, target)
+        obfuscator_loss = self._obfuscator_step(trace, target, train=True)
         self.train_obfuscated_accuracy(classifier_logits, target)
         self.train_clean_accuracy(classifier_clean_logits, target)
-        self.log('classifier-train-loss', classifier_loss, on_epoch=True, prog_bar=True)
-        self.log('obfuscator-train-loss', obfuscator_loss, on_epoch=True, prog_bar=True)
+        self.log('classifier-train-loss', classifier_loss, on_epoch=True, prog_bar=False)
+        self.log('obfuscator-train-loss', obfuscator_loss, on_epoch=True, prog_bar=False)
         self.log('train-acc', self.train_obfuscated_accuracy, on_epoch=True, prog_bar=True)
         self.log('train-clean-acc', self.train_clean_accuracy, on_epoch=True, prog_bar=True)
+        self.log('obfuscation-weights', nn.functional.sigmoid(self.unsquashed_obfuscation_weights), on_epoch=True)
+    
+    def validation_step(self, batch):
+        trace, target = batch
+        if len(target.shape) > 1:
+            target = target.view(-1, target.size(-1))
+        classifier_logits, classifier_loss = self._classifier_step(trace, target)
+        with torch.no_grad():
+            classifier_clean_logits = self._compute_logits(torch.cat([trace, torch.zeros_like(trace)], dim=1))
+        obfuscator_loss = self._obfuscator_step(trace, target, train=True)
+        self.val_obfuscated_accuracy(classifier_logits, target)
+        self.val_clean_accuracy(classifier_clean_logits, target)
+        self.log('classifier-val-loss', classifier_loss, on_epoch=True, prog_bar=False)
+        self.log('obfuscator-val-loss', obfuscator_loss, on_epoch=True, prog_bar=False)
+        self.log('val-acc', self.val_obfuscated_accuracy, on_epoch=True, prog_bar=True)
+        self.log('val-clean-acc', self.val_clean_accuracy, on_epoch=True, prog_bar=True)

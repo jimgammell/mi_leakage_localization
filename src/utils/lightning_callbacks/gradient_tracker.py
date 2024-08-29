@@ -1,4 +1,4 @@
-from lightning.pytorch import Callback
+from lightning import Callback
 
 class GradientTracker(Callback):
     def on_after_backward(self, trainer, module):

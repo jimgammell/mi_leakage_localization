@@ -7,6 +7,7 @@ from torchmetrics.classification import Accuracy
 
 import models
 import utils.lr_schedulers
+from utils.metrics import Rank
 
 class SupervisedClassificationModule(L.LightningModule):
     def __init__(self,
@@ -25,6 +26,7 @@ class SupervisedClassificationModule(L.LightningModule):
         super().__init__()
         self.model = models.load(self.model_name, **self.model_kwargs)
         self.train_accuracy, self.val_accuracy, self.test_accuracy = map(lambda _: Accuracy(task='multiclass', num_classes=self.model.output_classes), range(3))
+        self.train_rank, self.val_rank, self.test_rank = map(lambda _: Rank(), range(3))
         if self.learning_rate is None:
             assert 'lr' in self.optimizer_kwargs.keys()
             self.learning_rate = self.optimizer_kwargs['lr']
@@ -77,23 +79,29 @@ class SupervisedClassificationModule(L.LightningModule):
         logits, targets = self._step(batch, batch_idx)
         loss = nn.functional.cross_entropy(logits, targets)
         self.train_accuracy(logits, targets)
+        self.train_rank(logits, targets)
         self.log('train-loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('train-acc', self.train_accuracy, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('train-acc', self.train_accuracy, on_step=False, on_epoch=True, prog_bar=False)
+        self.log('train-rank', self.train_rank, on_step=False, on_epoch=True, prog_bar=True)
         return loss
     
     def validation_step(self, batch, batch_idx):
         logits, targets = self._step(batch, batch_idx)
         loss = nn.functional.cross_entropy(logits, targets)
         self.val_accuracy(logits, targets)
+        self.val_rank(logits, targets)
         self.log('val-loss', loss, on_step=True, on_epoch=False, prog_bar=True)
-        self.log('val-acc', self.val_accuracy, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val-acc', self.val_accuracy, on_step=False, on_epoch=True, prog_bar=False)
+        self.log('val-rank', self.val_rank, on_step=False, on_epoch=True, prog_bar=True)
     
     def test_step(self, batch, batch_idx):
         logits, targets = self._step(batch, batch_idx)
         loss = nn.functional.cross_entropy(logits, targets)
         self.test_accuracy(logits, targets)
+        self.test_rank(logits, targets)
         self.log('test-loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('test-acc', self.test_accuracy, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('test-acc', self.test_accuracy, on_step=False, on_epoch=True, prog_bar=False)
+        self.log('test-rank', self.test_rank, on_step=False, on_epoch=True, prog_bar=True)
     
     def on_train_epoch_end(self):
         for callback in self.post_train_epoch_callbacks:
