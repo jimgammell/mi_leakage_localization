@@ -28,7 +28,7 @@ trainer = Trainer(
     accelerator='gpu',
     devices=1,
     enable_checkpointing=True,
-    logger=TensorBoardLogger(get_trial_dir(), name='tensorboard'),
+    logger=TensorBoardLogger(get_trial_dir(), name='lightning_output'),
     callbacks=[LearningRateMonitor(logging_interval='step'), GradientTracker()]
 )
 tuner = Tuner(trainer)

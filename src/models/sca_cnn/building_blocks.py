@@ -17,7 +17,7 @@ class Head(Module):
     def init_weights(self):
         for module in self.modules():
             if isinstance(module, nn.Linear):
-                nn.init.kaiming_uniform_(module.weight, nonlinearity='relu', mode='fan_in')
+                nn.init.xavier_uniform_(module.weight)
                 nn.init.constant_(module.bias, 0)
     
     def forward(self, x):
@@ -39,7 +39,7 @@ class Block(Module):
         self.pool = nn.AvgPool1d(self.pool_kernel_size)
     
     def init_weights(self):
-        nn.init.kaiming_uniform_(self.conv.weight, nonlinearity='relu', mode='fan_in')
+        nn.init.kaiming_uniform_(self.conv.weight)
         nn.init.constant_(self.conv.bias, 0)
         nn.init.constant_(self.norm.weight, 1)
         nn.init.constant_(self.norm.bias, 0)

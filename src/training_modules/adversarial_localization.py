@@ -37,9 +37,9 @@ class AdversarialLocalizationTrainer(L.LightningModule):
         self.automatic_optimization = False
         self.classifier = models.load(classifier_name, **self.classifier_kwargs)
         self.obfuscator = models.load(obfuscator_name, **self.obfuscator_kwargs)
-        for model_name in ('classifier', 'obfuscator'):
-            for phase_name in ('train', 'val', 'test'):
-                setattr(self, f'{phase_name}_{model_name}_accuracy', Accuracy(task='multitask', num_classes=self.classifier.output_classes))
+        for phase_name in ('train', 'val'):
+            for target_name in ('clean', 'obfuscated'):
+                setattr(self, f'{phase_name}_{target_name}_accuracy', Accuracy(task='multitask', num_classes=self.classifier.output_classes))
     
     def _configure_optimizers(self, model_name: str):
         optimizer_name = getattr(self, f'{model_name}_optimizer_name')
@@ -47,6 +47,7 @@ class AdversarialLocalizationTrainer(L.LightningModule):
         lr_scheduler_name = getattr(self, f'{model_name}_lr_scheduler_name')
         lr_scheduler_kwargs = getattr(self, f'{model_name}_lr_scheduler_kwargs')
         learning_rate = getattr(self, f'{model_name}_learning_rate')
+        update_prob = getattr(self, f'{model_name}_update_prob')
         if learning_rate is None:
             assert 'lr' in optimizer_kwargs.keys()
             learning_rate = optimizer_kwargs['lr']
@@ -78,7 +79,7 @@ class AdversarialLocalizationTrainer(L.LightningModule):
                 except:
                     lr_scheduler_constructor = getattr(optim.lr_scheduler, lr_scheduler_name)
             lr_scheduler = lr_scheduler_constructor(
-                optimizer, total_steps=self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader()), **lr_scheduler_kwargs
+                optimizer, total_steps=int(update_prob*self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader())), **lr_scheduler_kwargs
             )
             rv.update({'lr_scheduler': {'scheduler': lr_scheduler, 'interval': 'step'}})
         return rv
@@ -100,9 +101,9 @@ class AdversarialLocalizationTrainer(L.LightningModule):
             logits = self.classifier(obfuscated_trace)
             logits = logits.view(-1, logits.size(-1))
             loss = nn.functional.cross_entropy(logits, target)
-            self.train_classifier_accuracy(logits, target)
-            self.log('classifier-loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-            self.log('classifier-acc', self.train_classifier_accuracy, on_step=False, on_epoch=True, prog_bar=True)
+            self.train_obfuscated_accuracy(logits, target)
+            self.log('classifier-train-loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+            self.log('train-acc', self.train_obfuscated_accuracy, on_step=False, on_epoch=True, prog_bar=True)
             classifier_optimizer.zero_grad()
             self.manual_backward(loss)
             classifier_optimizer.step()
@@ -117,13 +118,18 @@ class AdversarialLocalizationTrainer(L.LightningModule):
                 0.5*self.obfuscator_l2_norm_penalty*nn.functional.mse_loss(trace - obfuscated_trace, torch.zeros_like(trace))
                 - nn.functional.cross_entropy(logits, target)
             )
-            self.train_obfuscator_accuracy(logits, target)
-            self.log('obfuscator-loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-            self.log('obfuscator-acc', self.train_obfuscator_accuracy, on_step=False, on_epoch=True, prog_bar=True)
+            self.log('obfuscator-train-loss', loss, on_step=False, on_epoch=True, prog_bar=True)
             obfuscator_optimizer.zero_grad()
             self.manual_backward(loss)
             obfuscator_optimizer.step()
             self.untoggle_optimizer(obfuscator_optimizer)
+        
+        with torch.no_grad():
+            logits = self.classifier(trace)
+            loss = nn.functional.cross_entropy(logits, target)
+            self.train_clean_accuracy(logits, target)
+            self.log('classifier-clean-train-loss', loss, on_step=False, on_epoch=True, prog_bar=False)
+            self.log('clean-train-acc', self.train_clean_accuracy, on_step=False, on_epoch=True, prog_bar=False)
     
     def validation_step(self, batch):
         trace, target = batch
@@ -134,3 +140,15 @@ class AdversarialLocalizationTrainer(L.LightningModule):
         obfuscated_logits = self.classifier(obfuscated_trace)
         clean_loss = nn.functional.cross_entropy(clean_logits, target)
         obfuscated_loss = nn.functional.cross_entropy(obfuscated_logits, target)
+        obfuscated_loss = nn.functional.cross_entropy(obfuscated_logits, target)
+        obfuscator_loss = (
+            0.5*self.obfuscator_l2_norm_penalty*nn.functional.mse_loss(trace - obfuscated_trace, torch.zeros_like(trace))
+            - nn.functional.cross_entropy(obfuscated_logits, target)
+        )
+        self.val_clean_accuracy(clean_logits, target)
+        self.val_obfuscated_accuracy(obfuscated_logits, target)
+        self.log('classifier-val-loss', obfuscated_loss, on_step=False, on_epoch=True, prog_bar=False)
+        self.log('classifier-clean-val-loss', clean_loss, on_step=False, on_epoch=True, prog_bar=False)
+        self.log('obfuscator-val-loss', obfuscator_loss, on_step=False, on_epoch=True, prog_bar=False)
+        self.log('val-acc', self.val_obfuscated_accuracy, on_step=False, on_epoch=True, prog_bar=False)
+        self.log('val-clean-acc', self.val_clean_accuracy, on_step=False, on_epoch=True, prog_bar=False)

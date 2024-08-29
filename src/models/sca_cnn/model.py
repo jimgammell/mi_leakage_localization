@@ -9,13 +9,13 @@ from .building_blocks import *
 
 class SCA_CNN(Module):
     def __init__(self,
-        input_shape=(1, 1000),
-        output_classes=256,
-        base_channels=32,
-        head_count=1,
-        block_count=3,
-        head_kwargs={},
-        block_kwargs={}
+        input_shape: Sequence[int] = (1, 1000),
+        output_classes: int = 256,
+        base_channels: int = 32,
+        head_count: int = 1,
+        block_count: int = 3,
+        head_kwargs: dict = {},
+        block_kwargs: dict = {}
     ):
         super().__init__(**{key: val for key, val in locals().items() if key not in ('self', 'key', 'val')})
     
