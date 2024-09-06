@@ -5,8 +5,14 @@ import time
 import datetime
 from typing import *
 import random
+from matplotlib import pyplot as plt
 import numpy as np
 import torch
+
+plt.rcParams['font.size'] = 10
+plt.rcParams['font.family'] = 'Times New Roman'
+plt.rcParams['text.usetex'] = True
+plt.rcParams['text.latex.preamble'] = r'\usepackage{times}'
 
 if torch.cuda.is_available():
     torch.backends.cudnn.benchmark = True
@@ -48,7 +54,7 @@ def set_trial_name(name: str):
 def rename_trial(name: str):
     global _trial_name
     new_trial_dir = os.path.join(OUTPUT_DIR, name)
-    shutil.copytree(get_trial_dir(), new_trial_dir)
+    shutil.copytree(get_trial_dir(), new_trial_dir, dirs_exist_ok=True)
     shutil.rmtree(get_trial_dir())
     _trial_name = name
 

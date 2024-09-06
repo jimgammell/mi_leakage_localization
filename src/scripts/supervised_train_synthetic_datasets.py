@@ -8,7 +8,6 @@ from lightning.pytorch.callbacks import LearningRateMonitor
 from _common import *
 import datasets
 from training_modules.supervised_classification import SupervisedClassificationModule
-from utils.recalibrate_batchnorm_stats import recalibrate_batchnorm_stats
 from utils.lightning_callbacks import GradientTracker, MultiTraceRankTracker, RecalibrateBatchnorm
 
 TUNE_BATCH_SIZES = False

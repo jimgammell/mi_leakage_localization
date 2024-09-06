@@ -119,6 +119,9 @@ class SyntheticAES(Dataset):
     def __getitem__(self, idx):
         if self.infinite_dataset:
             trace, metadata = self.generate_datapoints(1 if isinstance(idx, int) else len(idx))
+            if isinstance(idx, int):
+                trace = trace[0, ...]
+                metadata = {key: val[0] for key, val in metadata.items()}
             target = np.stack([metadata[key] for key in self.target_values]).squeeze()
         else:
             trace = self.traces[idx, ...]

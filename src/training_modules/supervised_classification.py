@@ -17,7 +17,6 @@ class SupervisedClassificationModule(L.LightningModule):
         model_kwargs: dict = {},
         optimizer_kwargs: dict = {},
         lr_scheduler_kwargs: dict = {},
-        post_train_epoch_callbacks: list = [],
         learning_rate: Optional[float] = None
     ):
         for key, val in locals().items():
@@ -102,7 +101,3 @@ class SupervisedClassificationModule(L.LightningModule):
         self.log('test-loss', loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log('test-acc', self.test_accuracy, on_step=False, on_epoch=True, prog_bar=False)
         self.log('test-rank', self.test_rank, on_step=False, on_epoch=True, prog_bar=True)
-    
-    def on_train_epoch_end(self):
-        for callback in self.post_train_epoch_callbacks:
-            callback(self)

@@ -25,7 +25,7 @@ if clargs.name is not None:
         if clargs.overwrite:
             shutil.rmtree(os.path.join(OUTPUT_DIR, clargs.name))
         else:
-            assert False, f'Directory already exists: `{os.path.join(OUTPUT_DIR, clargs.name)}`'
+            pass # assert False, f'Directory already exists: `{os.path.join(OUTPUT_DIR, clargs.name)}`'
     rename_trial(clargs.name)
 set_verbosity(not clargs.quiet)
 

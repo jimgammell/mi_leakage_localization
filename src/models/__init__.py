@@ -3,7 +3,7 @@ from .lenet import LeNet5
 from .sca_cnn import SCA_CNN
 
 _MODEL_CONSTRUCTORS = {
-    'multilayer_perceptron': MultilayerPerceptron,
+    'multilayer-perceptron': MultilayerPerceptron,
     'lenet-5': LeNet5,
     'sca-cnn': SCA_CNN
 }

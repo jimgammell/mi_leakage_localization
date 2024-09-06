@@ -22,15 +22,15 @@ class MultilayerPerceptron(Module):
         modules = []
         in_dims = np.prod(self.input_shape)
         if self.hidden_layers > 0:
-            out_dims = self.hidden_dim
+            out_dims = self.hidden_dims
             for layer_idx in range(self.hidden_layers):
                 layer = nn.Linear(in_dims, out_dims)
                 modules.append((f'layer_{layer_idx+1}', layer))
                 modules.append((f'act_{layer_idx+1}', self.hidden_activation()))
                 in_dims = out_dims
-                out_dims = self.hidden_dim
+                out_dims = self.hidden_dims
         out_dims = self.output_classes
-        modules.append((f'layer_{layer_idx+1 if "layer_idx" in locals().keys() else 1}', nn.Linear(in_dims, out_dims)))
+        modules.append((f'layer_{self.hidden_layers+1 if "layer_idx" in locals().keys() else 1}', nn.Linear(in_dims, out_dims)))
         self.model = nn.Sequential(OrderedDict(modules))
     
     def init_weights(self):
