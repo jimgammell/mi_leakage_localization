@@ -2,9 +2,10 @@ import torch
 from torch import nn
 
 from ..common import *
+from ..soft_xor_layer import SoftXOR
 
 class Head(Module):
-    def __init__(self, input_dims, output_dims, hidden_dims=256, activation_constructor=nn.ELU):
+    def __init__(self, input_dims, output_dims, hidden_dims=256, activation_constructor=nn.ELU, xor_output=False):
         super().__init__(**{key: val for key, val in locals().items() if key not in ('self', 'key', 'val')})
     
     def construct(self):
@@ -12,20 +13,24 @@ class Head(Module):
         self.act_1 = self.activation_constructor()
         self.dense_2 = nn.Linear(self.hidden_dims, self.hidden_dims)
         self.act_2 = self.activation_constructor()
-        self.dense_3 = nn.Linear(self.hidden_dims, self.output_dims)
+        if self.xor_output:
+            self.output = SoftXOR(self.hidden_dims, int(np.log(self.output_dims)/np.log(2)))
+        else:
+            self.output = nn.Linear(self.hidden_dims, self.output_dims)
     
     def init_weights(self):
         for module in self.modules():
             if isinstance(module, nn.Linear):
                 nn.init.xavier_uniform_(module.weight)
-                nn.init.constant_(module.bias, 0)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
     
     def forward(self, x):
         x = self.dense_1(x)
         x = self.act_1(x)
         x = self.dense_2(x)
         x = self.act_2(x)
-        x = self.dense_3(x)
+        x = self.output(x)
         return x
 
 class Block(Module):

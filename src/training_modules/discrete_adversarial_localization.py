@@ -3,6 +3,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import torch
 from torch import nn, optim
+from torch.utils.data import Subset
 import lightning as L
 from torchmetrics.classification import Accuracy
 
@@ -229,7 +230,18 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         self.trainer.logger.experiment.add_histogram('obfuscation-weights-hist', obfuscation_weights, self.trainer.current_epoch)
         fig, ax = plt.subplots(1, 1, figsize=(4, 4))
         ax.set_ylim(0, 1)
-        ax.plot(obfuscation_weights.detach().cpu().numpy(), color='blue')
+        train_dataset = self.trainer.datamodule.train_dataloader().dataset
+        while isinstance(train_dataset, Subset):
+            train_dataset = train_dataset.dataset
+        if hasattr(train_dataset, 'leaking_timestep_count_1o') and (train_dataset.leaking_timestep_count_1o > 0):
+            for cycle in train_dataset.leaking_subbytes_cycles:
+                ax.axvline(cycle, color='red')
+        if hasattr(train_dataset, 'leaking_timestep_count_2o') and (train_dataset.leaking_timestep_count_2o > 0):
+            for cycle in train_dataset.leaking_mask_cycles:
+                ax.axvline(cycle, color='green')
+            for cycle in train_dataset.leaking_masked_subbytes_cycles:
+                ax.axvline(cycle, color='orange')
+        ax.plot(obfuscation_weights.detach().cpu().numpy(), color='blue', linestyle='none', marker='.', markersize=2)
         ax.set_xlabel('Timestep')
         ax.set_ylabel('Obfuscation weight')
         fig.tight_layout()

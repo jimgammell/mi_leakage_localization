@@ -26,7 +26,7 @@ class DataModule(L.LightningDataModule):
         dataloader_kwargs: dict = {}
     ):
         for key, val in locals().items():
-            if key != 'self':
+            if key not in ('self', 'key', 'val'):
                 setattr(self, key, val)
         super().__init__()
     
@@ -42,18 +42,18 @@ class DataModule(L.LightningDataModule):
             transforms.Lambda(lambda x: torch.tensor(x[np.newaxis, :], dtype=torch.float32)),
             transforms.Lambda(lambda x: (x - self.data_mean) / self.data_var.sqrt())
         ]
-        aug_transform_mods = [AdditiveNoise()] if self.aug else []
+        aug_transform_mods = [AdditiveNoise(std=0.5)] if self.aug else []
         train_transform = transforms.Compose([*basic_transform_mods, *aug_transform_mods])
         eval_transform = transforms.Compose(basic_transform_mods)
         target_transform = transforms.Lambda(lambda x: torch.tensor(x, dtype=torch.long))
         self.train_dataset.transform = train_transform
         self.train_dataset.target_transform = target_transform
         if stage == 'fit':
-            self.val_dataset = SyntheticAESLike(self.train_dataset, length=self.val_dataset_size, fixed_key=NUMPY_RNG.integers(256).astype(np.uint8))
+            self.val_dataset = SyntheticAESLike(self.train_dataset, epoch_length=self.val_dataset_size, fixed_key=NUMPY_RNG.integers(256).astype(np.uint32))
             self.val_dataset.transform = eval_transform
             self.val_dataset.target_transform = target_transform
         elif stage == 'test':
-            self.test_dataset = SyntheticAESLike(self.test_dataset, length=self.test_dataset_size, fixed_key=NUMPY_RNG.integers(256).astype(np.uint8))
+            self.test_dataset = SyntheticAESLike(self.test_dataset, epoch_length=self.test_dataset_size, fixed_key=NUMPY_RNG.integers(256).astype(np.uint32))
             self.test_dataset.transform = eval_transform
             self.test_dataset.target_transform = target_transform
         if not 'num_workers' in self.dataloader_kwargs.keys():

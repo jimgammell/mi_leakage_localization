@@ -5,6 +5,7 @@ import torch
 from torch import nn
 
 from .common import *
+from .soft_xor_layer import SoftXOR
 
 class MultilayerPerceptron(Module):
     def __init__(self,
@@ -12,7 +13,8 @@ class MultilayerPerceptron(Module):
         output_classes: int = 256,
         hidden_dims: int = 512,
         hidden_layers: int = 3,
-        hidden_activation: Union[str, nn.Module] = nn.SELU
+        hidden_activation: Union[str, nn.Module] = nn.SELU,
+        xor_output: bool = False
     ):
         if isinstance(hidden_activation, str):
             hidden_activation = getattr(nn, hidden_activation)
@@ -30,14 +32,15 @@ class MultilayerPerceptron(Module):
                 in_dims = out_dims
                 out_dims = self.hidden_dims
         out_dims = self.output_classes
-        modules.append((f'layer_{self.hidden_layers+1 if "layer_idx" in locals().keys() else 1}', nn.Linear(in_dims, out_dims)))
+        modules.append((f'layer_{self.hidden_layers+1 if "layer_idx" in locals().keys() else 1}', nn.Linear(in_dims, out_dims) if not self.xor_output else SoftXOR(in_dims, int(np.log(out_dims)/np.log(2)))))
         self.model = nn.Sequential(OrderedDict(modules))
     
     def init_weights(self):
         for module in self.modules():
             if isinstance(module, nn.Linear):
                 nn.init.xavier_uniform_(module.weight)
-                nn.init.constant_(module.bias, 0.)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0.)
     
     def forward(self, x):
         x = torch.flatten(x, start_dim=1)
