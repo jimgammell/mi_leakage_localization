@@ -50,7 +50,7 @@ class SyntheticAES(Dataset):
     
     def generate_data(self):
         leaking_cycles = NUMPY_RNG.choice(
-            self.timesteps_per_trace, self.shuffle_locs*(self.leaking_timestep_count_1o + 2*self.leaking_timestep_count_2o), replace=False
+            self.timesteps_per_trace-self.max_no_ops, self.shuffle_locs*(self.leaking_timestep_count_1o + 2*self.leaking_timestep_count_2o), replace=False
         )
         self.leaking_subbytes_cycles = leaking_cycles[:self.shuffle_locs*self.leaking_timestep_count_1o]
         self.leaking_mask_cycles = leaking_cycles[self.shuffle_locs*self.leaking_timestep_count_1o:-self.shuffle_locs*self.leaking_timestep_count_2o]
