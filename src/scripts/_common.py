@@ -1,8 +1,9 @@
 import os
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(sys.path[0], '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..')))
 import argparse
 import torch
+from torch import multiprocessing
 
 from common import *
 
@@ -16,10 +17,12 @@ parser.add_argument('--device', type=str, default='cpu', choices=available_devic
 parser.add_argument('--name', type=str, default=None, action='store', help='Specify the trial name.')
 parser.add_argument('--overwrite', default=False, action='store_true', help='If there is already an output directory with the specified name, delete it before proceeding.')
 parser.add_argument('--quiet', default=False, action='store_true', help='Disable printing to the terminal for this trial.')
+parser.add_argument('--part', default=None, action='store', type=int)
 clargs = parser.parse_args()
 
 DEVICE = clargs.device
 SEED = set_seed(clargs.seed)
+PART = clargs.part
 if clargs.name is not None:
     if os.path.exists(os.path.join(OUTPUT_DIR, clargs.name)):
         if clargs.overwrite:

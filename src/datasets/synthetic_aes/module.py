@@ -53,11 +53,11 @@ class DataModule(L.LightningDataModule):
             self.val_dataset.transform = eval_transform
             self.val_dataset.target_transform = target_transform
         elif stage == 'test':
-            self.test_dataset = SyntheticAESLike(self.test_dataset, epoch_length=self.test_dataset_size, fixed_key=NUMPY_RNG.integers(256).astype(np.uint32))
+            self.test_dataset = SyntheticAESLike(self.train_dataset, epoch_length=self.test_dataset_size, fixed_key=NUMPY_RNG.integers(256).astype(np.uint32))
             self.test_dataset.transform = eval_transform
             self.test_dataset.target_transform = target_transform
         if not 'num_workers' in self.dataloader_kwargs.keys():
-            self.dataloader_kwargs['num_workers'] = os.cpu_count() // 2
+            self.dataloader_kwargs['num_workers'] = os.cpu_count() // 10
     
     def train_dataloader(self, override_batch_size=None):
         return DataLoader(
