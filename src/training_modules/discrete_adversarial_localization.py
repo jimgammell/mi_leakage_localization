@@ -18,6 +18,8 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         classifier_optimizer_name: Union[str, optim.Optimizer],
         obfuscator_optimizer_name: Union[str, optim.Optimizer],
         obfuscator_l2_norm_penalty: float = 1.0,
+        classifier_step_prob: float = 1.0,
+        obfuscator_step_prob: float = 1.0,
         log_likelihood_baseline_ema: Optional[float] = None,
         classifier_lr_scheduler_name: Optional[Union[str, optim.lr_scheduler.LRScheduler]] = None,
         obfuscator_lr_scheduler_name: Optional[Union[str, optim.lr_scheduler.LRScheduler]] = None,
@@ -189,10 +191,10 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         trace, target = batch
         if len(target.shape) > 1:
             target = target.view(-1, target.size(-1))
-        classifier_logits, classifier_loss = self._classifier_step(trace, target, train=True)
+        classifier_logits, classifier_loss = self._classifier_step(trace, target, train=np.random.rand() < self.classifier_step_prob)
         with torch.no_grad():
             classifier_clean_logits = self._compute_logits(torch.cat([trace, torch.zeros_like(trace)], dim=1))
-        obfuscator_loss = self._obfuscator_step(trace, target, train=True, first_batch=batch_idx==0)
+        obfuscator_loss = self._obfuscator_step(trace, target, train=np.random.randn() < self.obfuscator_step_prob, first_batch=batch_idx==0)
         self.train_obfuscated_accuracy(classifier_logits, target)
         self.train_clean_accuracy(classifier_clean_logits, target)
         self.train_obfuscated_rank(classifier_logits, target)

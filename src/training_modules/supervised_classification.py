@@ -71,12 +71,15 @@ class SupervisedClassificationModule(L.LightningModule):
         logits = self(inputs)
         logits = logits.view(-1, logits.size(-1))
         if len(targets.shape) > 1:
+            loss_multiplier = targets.size(-2)
             targets = targets.view(-1, targets.size(-1))
-        return logits, targets
+        else:
+            loss_multiplier = 1
+        return logits, targets, loss_multiplier
     
     def training_step(self, batch, batch_idx):
-        logits, targets = self._step(batch, batch_idx)
-        loss = nn.functional.cross_entropy(logits, targets)
+        logits, targets, loss_multiplier = self._step(batch, batch_idx)
+        loss = loss_multiplier*nn.functional.cross_entropy(logits, targets)
         self.train_accuracy(logits, targets)
         self.train_rank(logits, targets)
         self.log('train-loss', loss, on_step=False, on_epoch=True, prog_bar=True)
@@ -85,8 +88,8 @@ class SupervisedClassificationModule(L.LightningModule):
         return loss
     
     def validation_step(self, batch, batch_idx):
-        logits, targets = self._step(batch, batch_idx)
-        loss = nn.functional.cross_entropy(logits, targets)
+        logits, targets, loss_multiplier = self._step(batch, batch_idx)
+        loss = loss_multiplier*nn.functional.cross_entropy(logits, targets)
         self.val_accuracy(logits, targets)
         self.val_rank(logits, targets)
         self.log('val-loss', loss, on_step=True, on_epoch=False, prog_bar=True)
@@ -94,8 +97,8 @@ class SupervisedClassificationModule(L.LightningModule):
         self.log('val-rank', self.val_rank, on_step=False, on_epoch=True, prog_bar=True)
     
     def test_step(self, batch, batch_idx):
-        logits, targets = self._step(batch, batch_idx)
-        loss = nn.functional.cross_entropy(logits, targets)
+        logits, targets, loss_multiplier = self._step(batch, batch_idx)
+        loss = loss_multiplier*nn.functional.cross_entropy(logits, targets)
         self.test_accuracy(logits, targets)
         self.test_rank(logits, targets)
         self.log('test-loss', loss, on_step=False, on_epoch=True, prog_bar=True)

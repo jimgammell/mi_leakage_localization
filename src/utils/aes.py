@@ -23,6 +23,10 @@ AES_SBOX = np.array([
             0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16
 ], dtype=np.uint8)
 
+AES_INVERSE_SBOX = np.empty_like(AES_SBOX)
+for x in range(256):
+    AES_INVERSE_SBOX[AES_SBOX[x]] = x
+
 @jit(nopython=True)
 def subbytes_to_keys(model_output, plaintext):
     probs = model_output[AES_SBOX[np.arange(256, dtype=numba.uint8) ^ plaintext]]

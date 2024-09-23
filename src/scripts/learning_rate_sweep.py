@@ -20,12 +20,12 @@ from utils.template_attack import TemplateAttack
 TIMESTEPS_PER_TRACE = 1000
 TRAIN_BATCH_SIZE = 256
 EVAL_BATCH_SIZE = 2048
-MAX_EPOCHS = 100
+MAX_EPOCHS = 1000
 
-classifier_learning_rates = np.logspace(-5, -1, 20)
-obfuscator_learning_rates = np.logspace(-5, -1, 20)
+classifier_learning_rates = np.logspace(-5, -1, 5)
+obfuscator_learning_rates = np.logspace(-4, -2, 5)
 if PART is not None:
-    obfuscator_learning_rates = obfuscator_learning_rates[2*PART:2*PART+2]
+    obfuscator_learning_rates = [obfuscator_learning_rates[PART]]
 
 data_module = datasets.load(
     'synthetic-aes',
@@ -37,7 +37,8 @@ data_module = datasets.load(
         'max_no_ops': 2,
         'shuffle_locs': 2,
         'lpf_beta': 0.9,
-        'residual_var': 0.5
+        'residual_var': 0.5,
+        'infinite_dataset': False
     }
 )
 data_module.setup('fit')
@@ -58,11 +59,13 @@ def run_trial(config):
         classifier_name='multilayer-perceptron',
         classifier_optimizer_name='AdamW',
         obfuscator_optimizer_name='AdamW',
-        obfuscator_l2_norm_penalty=1e-2,
+        obfuscator_l2_norm_penalty=1e-1,
         classifier_kwargs={'input_shape': (2, TIMESTEPS_PER_TRACE), 'xor_output': False},
         classifier_optimizer_kwargs={'lr': classifier_learning_rate},
         obfuscator_optimizer_kwargs={'lr': obfuscator_learning_rate},
-        obfuscator_batch_size_multiplier=8
+        obfuscator_batch_size_multiplier=8,
+        classifier_step_prob=0.1,
+        obfuscator_step_prob=1.0
     )
     trainer = Trainer(
         max_epochs=MAX_EPOCHS,
@@ -83,28 +86,39 @@ def run_trial(config):
     classifier_val_loss = ea.Scalars('classifier-val-loss')
     obfuscator_train_loss = ea.Scalars('obfuscator-train-loss_epoch')
     obfuscator_val_loss = ea.Scalars('obfuscator-val-loss')
+    classifier_train_rank = ea.Scalars('train-rank')
+    classifier_val_rank = ea.Scalars('val-rank')
     with open(os.path.join(logging_dir, 'training_curves.pickle'), 'wb') as f:
         pickle.dump({
             'classifier_train_loss': classifier_train_loss, 'classifier_val_loss': classifier_val_loss,
-            'obfuscator_train_loss': obfuscator_train_loss, 'obfuscator_val_loss': obfuscator_val_loss
+            'obfuscator_train_loss': obfuscator_train_loss, 'obfuscator_val_loss': obfuscator_val_loss,
+            'train_rank': classifier_train_rank, 'val_rank': classifier_val_rank
         }, f)
-    fig, ax = plt.subplots(figsize=(4, 4))
-    ax.plot(
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+    axes[0].plot(
         [x.step for x in classifier_train_loss], [x.value for x in classifier_train_loss], color='red', linestyle='--', label='classifier-train'
     )
-    ax.plot(
+    axes[0].plot(
         [x.step for x in classifier_val_loss], [x.value for x in classifier_val_loss], color='red', linestyle='-', label='classifier-val'
     )
-    tax = ax.twinx()
+    tax = axes[0].twinx()
     tax.plot(
         [x.step for x in obfuscator_train_loss], [x.value for x in obfuscator_val_loss], color='blue', linestyle='--', label='obfuscator-train'
     )
     tax.plot(
         [x.step for x in obfuscator_val_loss], [x.value for x in obfuscator_val_loss], color='blue', linestyle='-', label='obfuscator-val'
     )
-    ax.set_xlabel('Training step')
-    ax.set_ylabel('Classifier loss')
+    axes[0].set_xlabel('Training step')
+    axes[0].set_ylabel('Classifier loss')
     tax.set_ylabel('Obfuscator loss')
+    axes[1].plot(
+        [x.step for x in classifier_train_rank], [x.value for x in classifier_train_rank], color='red', linestyle='--', label='classifier-train'
+    )
+    axes[1].plot(
+        [x.step for x in classifier_val_rank], [x.value for x in classifier_val_rank], color='red', linestyle='-', label='classifier-val'
+    )
+    axes[1].set_xlabel('Training step')
+    axes[1].set_ylabel('Rank')
     fig.savefig(os.path.join(logging_dir, 'training_curves.pdf'))
         
     fig, ax = plt.subplots(figsize=(4, 4))
