@@ -1,10 +1,21 @@
 import os
 import numpy as np
+from numba import jit
 import h5py
 import torch
 from torch.utils.data import Dataset
 
 from utils.aes import *
+
+@jit(nopython=True)
+def to_key_preds(int_var_preds, args, constants=None):
+    if args.ndim == 1:
+        ciphertext_11 = args[0]
+        ciphertext_7 = args[1]
+    elif args.ndim == 2:
+        ciphertext_11 = args[:, 0]
+        ciphertext_7 = args[:, 1]
+    return int_var_preds[AES_INVERSE_SBOX[np.arange(256, dtype=np.uint8) ^ ciphertext_11] ^ ciphertext_7]
 
 class AES_HD(Dataset):
     def __init__(self,
@@ -34,8 +45,10 @@ class AES_HD(Dataset):
             self.ciphertexts = np.load(os.path.join(self.root, 'AES_HD_dataset', 'attack_ciphertext_AES_HD.npy')).astype(np.uint8)
         self.metadata = {
             'ciphertext': self.ciphertexts,
+            'ciphertext_11': self.ciphertexts[:, 11],
+            'ciphertext_7': self.ciphertexts[:, 7],
             'last_state': self.targets,
-            'key': np.zeros_like(self.ciphertexts)
+            'key': np.zeros_like(self.targets)
         }
         self.dataset_length = len(self.traces)
         assert self.dataset_length == len(self.targets) == len(self.ciphertexts)

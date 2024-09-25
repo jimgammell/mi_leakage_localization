@@ -1,8 +1,13 @@
 import os
 import numpy as np
+from numba import jit
 from torch.utils.data import Dataset
 
 from utils.aes import *
+
+@jit(nopython=True)
+def to_key_preds(int_var_preds, plaintext, constants=None):
+    return int_var_preds[AES_SBOX[np.arange(256, dtype=np.uint8) ^ plaintext]]
 
 class AES_RD(Dataset):
     def __init__(self,
@@ -23,11 +28,11 @@ class AES_RD(Dataset):
         if self.train:
             self.traces = np.load(os.path.join(self.root, 'AES_RD_dataset', 'profiling_traces_AES_RD.npy')).astype(np.float32)
             self.targets = np.load(os.path.join(self.root, 'AES_RD_dataset', 'profiling_labels_AES_RD.npy')).astype(np.uint8)
-            self.plaintexts = np.load(os.path.join(self.root, 'AES_RD_dataset', 'profiling_plaintext_AES_RD.npy')).astype(np.uint8)
+            self.plaintexts = np.load(os.path.join(self.root, 'AES_RD_dataset', 'profiling_plaintext_AES_RD.npy'))[:, 0].astype(np.uint8)
         else:
             self.traces = np.load(os.path.join(self.root, 'AES_RD_dataset', 'attack_traces_AES_RD.npy')).astype(np.float32)
             self.targets = np.load(os.path.join(self.root, 'AES_RD_dataset', 'attack_labels_AES_RD.npy')).astype(np.uint8)
-            self.plaintexts = np.load(os.path.join(self.root, 'AES_RD_dataset', 'attack_plaintext_AES_RD.npy')).astype(np.uint8)
+            self.plaintexts = np.load(os.path.join(self.root, 'AES_RD_dataset', 'attack_plaintext_AES_RD.npy'))[:, 0].astype(np.uint8)
         self.key = np.load(os.path.join(self.root, 'AES_RD_dataset', 'key.npy')).astype(np.uint8)
         self.metadata = {
             'subbytes': self.targets,

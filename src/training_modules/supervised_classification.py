@@ -17,7 +17,8 @@ class SupervisedClassificationModule(L.LightningModule):
         model_kwargs: dict = {},
         optimizer_kwargs: dict = {},
         lr_scheduler_kwargs: dict = {},
-        learning_rate: Optional[float] = None
+        learning_rate: Optional[float] = None,
+        additive_noise_augmentation: float = 0.0
     ):
         for key, val in locals().items():
             if not key in ('self', 'key', 'val'):
@@ -66,8 +67,10 @@ class SupervisedClassificationModule(L.LightningModule):
     def forward(self, inputs):
         return self.model(inputs)
     
-    def _step(self, batch, batch_idx):
+    def _step(self, batch, batch_idx, aug=False):
         inputs, targets = batch
+        if aug:
+            inputs = inputs + self.additive_noise_augmentation*torch.randn_like(inputs)
         logits = self(inputs)
         logits = logits.view(-1, logits.size(-1))
         if len(targets.shape) > 1:
@@ -78,7 +81,7 @@ class SupervisedClassificationModule(L.LightningModule):
         return logits, targets, loss_multiplier
     
     def training_step(self, batch, batch_idx):
-        logits, targets, loss_multiplier = self._step(batch, batch_idx)
+        logits, targets, loss_multiplier = self._step(batch, batch_idx, aug=True)
         loss = loss_multiplier*nn.functional.cross_entropy(logits, targets)
         self.train_accuracy(logits, targets)
         self.train_rank(logits, targets)

@@ -1,10 +1,15 @@
 import os
 import h5py
 import numpy as np
+from numba import jit
 import torch
 from torch.utils.data import Dataset
 
 from utils.aes import *
+
+@jit(nopython=True)
+def to_key_preds(int_var_preds, plaintext, constants=None):
+    return int_var_preds[AES_SBOX[np.arange(256, dtype=np.uint8) ^ plaintext]]
 
 class ASCADv1(Dataset):
     def __init__(self,
@@ -63,16 +68,16 @@ class ASCADv1(Dataset):
             else:
                 traces = traces[:, np.newaxis, :]
             metadata = {
-                'plaintext': np.array(database_file['metadata']['plaintext'][indices, :], dtype=np.uint8),
-                'ciphertext': np.array(database_file['metadata']['ciphertext'][indices, :], dtype=np.uint8),
-                'key': np.array(database_file['metadata']['key'][indices, :], dtype=np.uint8),
-                'masks': np.array(database_file['metadata']['masks'][indices, :], dtype=np.uint8)
+                'plaintext': np.array(database_file['metadata']['plaintext'][indices, self.target_byte], dtype=np.uint8),
+                'ciphertext': np.array(database_file['metadata']['ciphertext'][indices, self.target_byte], dtype=np.uint8),
+                'key': np.array(database_file['metadata']['key'][indices, self.target_byte], dtype=np.uint8),
+                'masks': np.array(database_file['metadata']['masks'][indices], dtype=np.uint8)
             }
         return traces, metadata
     
     def _load_datapoints_from_ram(self, indices):
         traces = self.traces[indices, :, :]
-        metadata = {key: val[indices, :] for key, val in self.metadata.items()}
+        metadata = {key: val[indices] for key, val in self.metadata.items()}
         return traces, metadata
     
     def load_datapoints(self, indices):
@@ -82,19 +87,19 @@ class ASCADv1(Dataset):
         key = metadata['key']
         plaintext = metadata['plaintext']
         masks = metadata['masks']
-        if key.ndim > 1:
+        if key.ndim > 0:
             batch_size = key.shape[0]
             assert plaintext.shape[0] == batch_size
             assert masks.shape[0] == batch_size
         else:
             batch_size = 1
-            key = key[np.newaxis, :]
-            plaintext = plaintext[np.newaxis, :]
+            key = np.array([key])
+            plaintext = np.array([plaintext])
             masks = masks[np.newaxis, :]
         assert all((key.shape[0] == batch_size, plaintext.shape[0] == batch_size, masks.shape[0] == batch_size))
         r_in = masks[:, -2, np.newaxis]
         r_out = masks[:, -1, np.newaxis]
-        r = np.concatenate([np.zeros((batch_size, 2), dtype=np.uint8), masks[:, :-2]], axis=1)
+        r = np.concatenate([np.zeros((batch_size, 2), dtype=np.uint8), masks[:, :-2]], axis=1)[..., self.target_byte]
         aux_metadata = {
             'subbytes': AES_SBOX[key ^ plaintext],
             'subbytes__r': AES_SBOX[key ^ plaintext] ^ r,
@@ -106,21 +111,25 @@ class ASCADv1(Dataset):
         targets = []
         for target_val in self.target_values:
             if target_val == 'subbytes':
-                target = aux_metadata['subbytes'][:, self.target_byte]
+                target = aux_metadata['subbytes']
             elif target_val == 'subbytes__r':
-                target = aux_metadata['subbytes__r'][:, self.target_byte]
+                target = aux_metadata['subbytes__r']
             elif target_val == 'subbytes__r_out':
-                target = aux_metadata['subbytes__r_out'][:, self.target_byte]
+                target = aux_metadata['subbytes__r_out']
             elif target_val == 'r_in':
                 target = aux_metadata['r_in']
             elif target_val == 'r_out':
                 target = aux_metadata['r_out']
             elif target_val == 'r':
-                target = aux_metadata['r'][:, self.target_byte]
+                target = aux_metadata['r']
             else:
                 assert False
             targets.append(target.squeeze())
-        return np.stack(targets, axis=1), aux_metadata
+        if batch_size > 1:
+            targets = np.stack(targets, axis=1)
+        else:
+            targets = np.stack(targets).squeeze()
+        return targets, aux_metadata
     
     def __getitem__(self, indices):
         indices = self.data_indices[indices]

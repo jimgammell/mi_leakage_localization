@@ -1,9 +1,13 @@
-from . import mnist, synthetic_aes, simple_gaussian
+from . import mnist, synthetic_aes, simple_gaussian, dpav4, aes_hd, aes_rd, ascadv1
 
 _DATASET_MODULES = {
     'mnist': mnist,
     'synthetic-aes': synthetic_aes.module,
-    'simple-gaussian': simple_gaussian
+    'simple-gaussian': simple_gaussian,
+    'dpav4': dpav4.module,
+    'aes-hd': aes_hd.module,
+    'aes-rd': aes_rd.module,
+    'ascadv1f': ascadv1.module
 }
 AVAILABLE_DATASETS = list(_DATASET_MODULES.keys())
 

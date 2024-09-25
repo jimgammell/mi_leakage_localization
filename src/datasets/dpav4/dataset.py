@@ -1,7 +1,23 @@
 import os
 import numpy as np
+from numba import jit
 import torch
 from torch.utils.data import Dataset
+
+from utils.aes import *
+
+@jit(nopython=True)
+def to_key_preds(int_var_preds, args, constants):
+    if args.ndim == 1:
+        plaintext = args[0]
+        offset = args[1]
+    elif args.ndim == 2:
+        plaintext = args[:, 0]
+        offset = args[:, 1]
+    else:
+        assert False
+    mask = constants[0]
+    return int_var_preds[AES_SBOX[np.arange(256, dtype=np.uint8) ^ plaintext] ^ mask[(offset+1)%16]]
 
 class DPAv4(Dataset):
     def __init__(self,
@@ -32,9 +48,11 @@ class DPAv4(Dataset):
         self.metadata = {
             'subbytes': self.targets,
             'plaintext': self.plaintexts[:, 0],
-            'key': self.key[0] * np.ones_like(self.targets),
-            'mask': self.mask[0] * np.ones_like(self.targets)
+            'key': self.key[0] * np.ones_like(self.targets)
         }
+        if not self.train:
+            self.offset = np.load(os.path.join(self.root, 'DPAv4_dataset', 'attack_offset_dpav4.npy'))[:, 0].astype(np.uint8)
+            self.metadata.update({'offset': self.offset})
         self.dataset_length = len(self.traces)
         self.data_shape = self.traces[0].shape
         self.timesteps_per_trace = self.data_shape[-1]
@@ -46,7 +64,7 @@ class DPAv4(Dataset):
         if self.transform is not None:
             trace = self.transform(trace)
         if self.target_transform is not None:
-            target = self.transform(target)
+            target = self.target_transform(target)
         if self.return_metadata:
             return trace, target, metadata
         else:

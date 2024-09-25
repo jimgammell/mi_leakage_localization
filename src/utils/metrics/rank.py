@@ -42,8 +42,8 @@ def get_rank(logits: Union[torch.Tensor, np.ndarray], targets: Union[torch.Tenso
     return rank
 
 @torch.no_grad()
-def _process_dataloader_for_rank_accumulation(lightning_module):
-    dataloader = lightning_module.trainer.datamodule.val_dataloader()
+def _process_dataloader_for_rank_accumulation(lightning_module, metadata_keys=['plaintext',], constants=None):
+    dataloader = lightning_module.trainer.datamodule.test_dataloader()
     model = lightning_module.model
     device = lightning_module.device
     dataset = dataloader.dataset
@@ -56,7 +56,7 @@ def _process_dataloader_for_rank_accumulation(lightning_module):
     
     predictions = np.empty((len(dataset), 256), dtype=np.float32)
     keys = np.empty((len(dataset),), dtype=np.uint8)
-    plaintexts = np.empty((len(dataset),), dtype=np.uint8)
+    args = [np.empty((len(dataset),), dtype=np.uint8) for _ in metadata_keys]
     model.eval()
     for batch_idx, (traces, _, metadata) in enumerate(dataloader):
         start_idx = batch_idx*batch_size
@@ -65,22 +65,24 @@ def _process_dataloader_for_rank_accumulation(lightning_module):
         logits = model(traces).cpu().squeeze(1)
         prediction = nn.functional.log_softmax(logits, dim=-1)
         _keys = metadata['key']
-        _plaintexts = metadata['plaintext']
         predictions[start_idx:end_idx, ...] = prediction.numpy()
         keys[start_idx:end_idx] = _keys.numpy()
-        plaintexts[start_idx:end_idx] = _plaintexts.numpy()
+        for idx, metadata_key in enumerate(metadata_keys):
+            args[idx][start_idx:end_idx] = metadata[metadata_key].numpy()
+    if constants is not None:
+        constants = [getattr(base_dataset, constant_key) for constant_key in constants]
     
     base_dataset.return_metadata = orig_ret_mdata
-    return predictions, keys, plaintexts
+    return predictions, keys, args, constants
 
 @numba.jit(nopython=True)
-def _accumulate_ranks(model_outputs, keys, plaintexts, indices):
+def _accumulate_ranks(model_outputs, keys, args, constants, indices, int_var_to_key_fn=subbytes_to_keys):
     attack_count, trace_count = indices.shape
     rank_over_time = np.empty((attack_count, trace_count), dtype=np.int32)
     for attack_idx in range(attack_count):
         predictions = np.zeros((trace_count, 256), dtype=np.float32)
         for res_idx, trace_idx in enumerate(indices[attack_idx, :]):
-            key_probs = subbytes_to_keys(model_outputs[trace_idx], plaintexts[trace_idx])
+            key_probs = int_var_to_key_fn(model_outputs[trace_idx], args[trace_idx], constants)
             if res_idx == 0:
                 predictions[res_idx] = key_probs
             else:
@@ -89,10 +91,13 @@ def _accumulate_ranks(model_outputs, keys, plaintexts, indices):
         rank_over_time[attack_idx, :] = ranks
     return rank_over_time
 
-def accumulate_ranks(lightning_module, attack_count=1000, traces_per_attack=1000):
-    predictions, keys, plaintexts = _process_dataloader_for_rank_accumulation(lightning_module)
+def accumulate_ranks(lightning_module, attack_count=1000, traces_per_attack=1000, int_var_to_key_fn=subbytes_to_keys, args=['plaintext',], constants=None):
+    predictions, keys, args, constants = _process_dataloader_for_rank_accumulation(lightning_module, metadata_keys=args, constants=constants)
+    args = np.stack(args, axis=1)
+    if traces_per_attack > len(predictions):
+        traces_per_attack = len(predictions)
     indices = np.stack([NUMPY_RNG.choice(len(predictions), traces_per_attack, replace=False) for _ in range(attack_count)])
-    rank_over_time = _accumulate_ranks(predictions, keys, plaintexts, indices)
+    rank_over_time = _accumulate_ranks(predictions, keys, args, constants, indices, int_var_to_key_fn=int_var_to_key_fn)
     return rank_over_time
 
 class Rank(Metric):
