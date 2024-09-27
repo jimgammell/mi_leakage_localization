@@ -35,6 +35,9 @@ _trial_name = None
 _verbose = None
 _seed = None
 
+PLOT_KWARGS = {'rasterized': True}
+SAVEFIG_KWARGS = {'dpi': 300}
+
 def get_trial_name():
     assert _trial_name is not None
     return _trial_name

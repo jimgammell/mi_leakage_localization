@@ -65,7 +65,7 @@ def fit_covs(traces, targets, means):
         cov = diff.T @ diff / (trace_count - 1)
         cov = 0.5*(cov + cov.T) # ensure it is symmetric
         D, U = np.linalg.eigh(cov)
-        D[D <= 0] = 0 # ensure it is positive semi-definite
+        D[D <= 1e-8] = 1e-8 # ensure it is positive semi-definite
         cov = U @ np.diag(D) @ U.T
         covs[byte, ...] = cov
     assert np.all(np.isfinite(covs))

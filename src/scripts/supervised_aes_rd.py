@@ -16,9 +16,9 @@ import datasets
 from training_modules.supervised_classification import SupervisedClassificationModule
 
 ROOT = os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads', 'aes_rd')
-RUN_STATISTICAL_EVALUATIONS = False
+RUN_STATISTICAL_EVALUATIONS = True
 RUN_LR_SWEEP = False
-EVAL_LR_SWEEP = True
+EVAL_LR_SWEEP = False
 
 profiling_dataset = AES_RD(
     root=ROOT, train=True
@@ -30,30 +30,30 @@ attack_dataset = AES_RD(
 if RUN_STATISTICAL_EVALUATIONS:
     cpa = calculate_cpa(profiling_dataset, targets=['subbytes'])
     fig, ax = plt.subplots(figsize=(4, 4))
-    ax.plot(cpa[('subbytes', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1)
+    ax.plot(cpa[('subbytes', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
     ax.set_xlabel('Timestep')
     ax.set_ylabel('CPA')
     ax.set_title('$Y$')
     fig.tight_layout()
-    fig.savefig(os.path.join(get_trial_dir(), 'cpa.pdf'))
+    fig.savefig(os.path.join(get_trial_dir(), 'cpa.pdf'), **SAVEFIG_KWARGS)
 
     snr = calculate_snr(profiling_dataset, targets=['subbytes'])
     fig, ax = plt.subplots(figsize=(4, 4))
-    ax.plot(snr[('subbytes', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1)
+    ax.plot(snr[('subbytes', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
     ax.set_xlabel('Timestep')
     ax.set_ylabel('SNR')
     ax.set_title('$Y$')
     fig.tight_layout()
-    fig.savefig(os.path.join(get_trial_dir(), 'snr.pdf'))
+    fig.savefig(os.path.join(get_trial_dir(), 'snr.pdf'), **SAVEFIG_KWARGS)
 
     sosd = calculate_sosd(profiling_dataset, targets=['subbytes'])
     fig, ax = plt.subplots(figsize=(4, 4))
-    ax.plot(sosd[('subbytes', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1)
+    ax.plot(sosd[('subbytes', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
     ax.set_xlabel('Timestep')
     ax.set_ylabel('SOSD')
     ax.set_title('$Y$')
     fig.tight_layout()
-    fig.savefig(os.path.join(get_trial_dir(), 'sosd.pdf'))
+    fig.savefig(os.path.join(get_trial_dir(), 'sosd.pdf'), **SAVEFIG_KWARGS)
 
 data_module = datasets.load('aes-rd', train_batch_size=256, eval_batch_size=2048, root=ROOT)
 learning_rates = np.logspace(-7, -3, 20)

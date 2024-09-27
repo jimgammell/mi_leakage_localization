@@ -41,3 +41,8 @@ print(f'\tOutput directory: {OUTPUT_DIR}')
 print(f'\tTrial directory: {get_trial_dir()}')
 print(f'\tDevice: {DEVICE}')
 print(f'\tRandom seed: {SEED}')
+
+def extract_trace(trace):
+    x = np.array([u.step for u in trace])
+    y = np.array([u.value for u in trace])
+    return (x, y)

@@ -20,7 +20,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         obfuscator_l2_norm_penalty: float = 1.0,
         classifier_step_prob: float = 1.0,
         obfuscator_step_prob: float = 1.0,
-        log_likelihood_baseline_ema: Optional[float] = None,
+        log_likelihood_baseline_ema: Optional[float] = 0.9,
         classifier_lr_scheduler_name: Optional[Union[str, optim.lr_scheduler.LRScheduler]] = None,
         obfuscator_lr_scheduler_name: Optional[Union[str, optim.lr_scheduler.LRScheduler]] = None,
         classifier_kwargs: dict = {},

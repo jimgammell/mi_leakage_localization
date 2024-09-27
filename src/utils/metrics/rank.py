@@ -42,10 +42,12 @@ def get_rank(logits: Union[torch.Tensor, np.ndarray], targets: Union[torch.Tenso
     return rank
 
 @torch.no_grad()
-def _process_dataloader_for_rank_accumulation(lightning_module, metadata_keys=['plaintext',], constants=None):
+def _process_dataloader_for_rank_accumulation(lightning_module, metadata_keys=['plaintext',], constants=None, skip_forward_passes=False):
     dataloader = lightning_module.trainer.datamodule.test_dataloader()
-    model = lightning_module.model
-    device = lightning_module.device
+    if not skip_forward_passes:
+        model = lightning_module.model
+        device = lightning_module.device
+        model.eval()
     dataset = dataloader.dataset
     base_dataset = dataset
     while isinstance(base_dataset, Subset):
@@ -57,15 +59,15 @@ def _process_dataloader_for_rank_accumulation(lightning_module, metadata_keys=['
     predictions = np.empty((len(dataset), 256), dtype=np.float32)
     keys = np.empty((len(dataset),), dtype=np.uint8)
     args = [np.empty((len(dataset),), dtype=np.uint8) for _ in metadata_keys]
-    model.eval()
     for batch_idx, (traces, _, metadata) in enumerate(dataloader):
         start_idx = batch_idx*batch_size
         end_idx = min((batch_idx+1)*batch_size, len(dataset))
-        traces = traces.to(device)
-        logits = model(traces).cpu().squeeze(1)
-        prediction = nn.functional.log_softmax(logits, dim=-1)
+        if not skip_forward_passes:
+            traces = traces.to(device)
+            logits = model(traces).cpu().squeeze(1)
+            prediction = nn.functional.log_softmax(logits, dim=-1)
+            predictions[start_idx:end_idx, ...] = prediction.numpy()
         _keys = metadata['key']
-        predictions[start_idx:end_idx, ...] = prediction.numpy()
         keys[start_idx:end_idx] = _keys.numpy()
         for idx, metadata_key in enumerate(metadata_keys):
             args[idx][start_idx:end_idx] = metadata[metadata_key].numpy()

@@ -17,8 +17,8 @@ from training_modules.supervised_classification import SupervisedClassificationM
 
 ROOT = os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads', 'aes_hd')
 RUN_STATISTICAL_EVALUATIONS = True
-RUN_LR_SWEEP = True
-EVAL_LR_SWEEP = True
+RUN_LR_SWEEP = False
+EVAL_LR_SWEEP = False
 
 profiling_dataset = AES_HD(
     root=ROOT, train=True
@@ -30,30 +30,30 @@ attack_dataset = AES_HD(
 if RUN_STATISTICAL_EVALUATIONS:
     cpa = calculate_cpa(profiling_dataset, targets=['last_state'])
     fig, ax = plt.subplots(figsize=(4, 4))
-    ax.plot(cpa[('last_state', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1)
+    ax.plot(cpa[('last_state', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
     ax.set_xlabel('Timestep')
     ax.set_ylabel('CPA')
     ax.set_title('$Y$')
     fig.tight_layout()
-    fig.savefig(os.path.join(get_trial_dir(), 'cpa.pdf'))
+    fig.savefig(os.path.join(get_trial_dir(), 'cpa.pdf'), **SAVEFIG_KWARGS)
 
     snr = calculate_snr(profiling_dataset, targets=['last_state'])
     fig, ax = plt.subplots(figsize=(4, 4))
-    ax.plot(snr[('last_state', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1)
+    ax.plot(snr[('last_state', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
     ax.set_xlabel('Timestep')
     ax.set_ylabel('SNR')
     ax.set_title('$Y$')
     fig.tight_layout()
-    fig.savefig(os.path.join(get_trial_dir(), 'snr.pdf'))
+    fig.savefig(os.path.join(get_trial_dir(), 'snr.pdf'), **SAVEFIG_KWARGS)
 
     sosd = calculate_sosd(profiling_dataset, targets=['last_state'])
     fig, ax = plt.subplots(figsize=(4, 4))
-    ax.plot(sosd[('last_state', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1)
+    ax.plot(sosd[('last_state', None)].squeeze(), color='blue', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
     ax.set_xlabel('Timestep')
     ax.set_ylabel('SOSD')
     ax.set_title('$Y$')
     fig.tight_layout()
-    fig.savefig(os.path.join(get_trial_dir(), 'sosd.pdf'))
+    fig.savefig(os.path.join(get_trial_dir(), 'sosd.pdf'), **SAVEFIG_KWARGS)
 
 data_module = datasets.load('aes-hd', train_batch_size=256, eval_batch_size=2048, root=ROOT)
 learning_rates = np.logspace(-7, -3, 20)
@@ -111,42 +111,45 @@ if EVAL_LR_SWEEP:
     fig, axes = plt.subplots(4, 5, figsize=(2*5, 2*4), sharey=True)
     final_ranks = []
     for (learning_rate, ax) in zip(learning_rates, axes.flatten()):
-        logging_dir = os.path.join(get_trial_dir(), f'lr_{learning_rate}')
-        training_module = SupervisedClassificationModule.load_from_checkpoint(
-            os.path.join(logging_dir, 'final_checkpoint.ckpt'),
-            model_name='sca-cnn',
-            optimizer_name='AdamW',
-            model_kwargs={'input_shape': (1, profiling_dataset.timesteps_per_trace)},
-            optimizer_kwargs={'lr': learning_rate},
-            additive_noise_augmentation=0.25
-        )
-        trainer = Trainer(
-            max_epochs=1000,
-            default_root_dir=logging_dir,
-            accelerator='gpu',
-            devices=1,
-            logger=TensorBoardLogger(logging_dir, name='lightning_output')
-        )
-        trainer.test(training_module, datamodule=data_module)
-        with open(os.path.join(logging_dir, 'training_curves.pickle'), 'rb') as f:
-            training_curves = pickle.load(f)
-        val_rank = training_curves['val_rank']
-        final_rank = [x.value for x in val_rank][-1]
-        final_ranks.append(final_rank)
-        rank_over_time = accumulate_ranks(training_module, int_var_to_key_fn=to_key_preds, args=['ciphertext_11', 'ciphertext_7'], traces_per_attack=np.inf)
-        ax.plot(np.arange(1, rank_over_time.shape[1]+1), np.median(rank_over_time, axis=0), color='blue')
-        ax.fill_between(
-            np.arange(1, rank_over_time.shape[1]+1), np.percentile(rank_over_time, 25, axis=0), np.percentile(rank_over_time, 75, axis=0),
-            color='blue', alpha=0.25
-        )
-        ax.set_xlabel('Traces seen')
-        ax.set_ylabel('Correct-key rank')
-        ax.set_xscale('log')
-        ax.set_title(f'Learning rate: {learning_rate:.02e}')
+        try:
+            logging_dir = os.path.join(get_trial_dir(), f'lr_{learning_rate}')
+            training_module = SupervisedClassificationModule.load_from_checkpoint(
+                os.path.join(logging_dir, 'final_checkpoint.ckpt'),
+                model_name='sca-cnn',
+                optimizer_name='AdamW',
+                model_kwargs={'input_shape': (1, profiling_dataset.timesteps_per_trace)},
+                optimizer_kwargs={'lr': learning_rate},
+                additive_noise_augmentation=0.25
+            )
+            trainer = Trainer(
+                max_epochs=1000,
+                default_root_dir=logging_dir,
+                accelerator='gpu',
+                devices=1,
+                logger=TensorBoardLogger(logging_dir, name='lightning_output')
+            )
+            trainer.test(training_module, datamodule=data_module)
+            with open(os.path.join(logging_dir, 'training_curves.pickle'), 'rb') as f:
+                training_curves = pickle.load(f)
+            val_rank = training_curves['val_rank']
+            final_rank = [x.value for x in val_rank][-1]
+            final_ranks.append(final_rank)
+            rank_over_time = accumulate_ranks(training_module, int_var_to_key_fn=to_key_preds, args=['ciphertext_11', 'ciphertext_7'], traces_per_attack=np.inf)
+            ax.plot(np.arange(1, rank_over_time.shape[1]+1), np.median(rank_over_time, axis=0), color='blue')
+            ax.fill_between(
+                np.arange(1, rank_over_time.shape[1]+1), np.percentile(rank_over_time, 25, axis=0), np.percentile(rank_over_time, 75, axis=0),
+                color='blue', alpha=0.25
+            )
+            ax.set_xlabel('Traces seen')
+            ax.set_ylabel('Correct-key rank')
+            ax.set_xscale('log')
+            ax.set_title(f'Learning rate: {learning_rate:.02e}')
+        except:
+            continue
     fig.tight_layout()
     fig.savefig(os.path.join(get_trial_dir(), 'rank_over_time.pdf'))
     fig, ax = plt.subplots(1, 1, figsize=(4, 4))
-    ax.plot(learning_rates, final_ranks, color='blue')
+    ax.plot(learning_rates[:len(final_ranks)], final_ranks, color='blue')
     ax.set_xscale('log')
     ax.set_xlabel('Learning rate')
     ax.set_ylabel('Mean correct key rank')
