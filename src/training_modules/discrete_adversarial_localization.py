@@ -30,7 +30,8 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         obfuscator_lr_scheduler_kwargs: dict = {},
         classifier_learning_rate: Optional[float] = None,
         obfuscator_learning_rate: Optional[float] = None,
-        obfuscator_batch_size_multiplier: int = 1 # In general the obfuscator can be trained with a larger batch size than the discriminator. We will use the same training data but more binary noise samples.
+        obfuscator_batch_size_multiplier: int = 1, # In general the obfuscator can be trained with a larger batch size than the discriminator. We will use the same training data but more binary noise samples.
+        normalize_erasure_probs_for_classifier: bool = False
     ):
         for key, val in locals().items():
             if key not in ('key', 'val', 'self', '__class__'):
@@ -118,9 +119,14 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         return logits
     
     @torch.no_grad()
-    def _sample_binary_noise(self, trace: torch.Tensor):
+    def _sample_binary_noise(self, trace: torch.Tensor, normalize: bool = False):
         batch_size = trace.size(0)
-        return (1-nn.functional.sigmoid(self.unsquashed_obfuscation_weights)).repeat(batch_size, *((len(trace.shape)-1)*[1])).bernoulli()
+        erasure_probs = nn.functional.sigmoid(self.unsquashed_obfuscation_weights)
+        if normalize and (erasure_probs.var() > 0):
+            erasure_probs = (erasure_probs - erasure_probs.min()) / (erasure_probs.max() - erasure_probs.min())
+            erasure_probs = 0.2 + 0.6*erasure_probs
+        binary_noise = (1 - erasure_probs).repeat(batch_size, *((len(trace.shape)-1)*[1])).bernoulli()
+        return binary_noise
     
     @torch.no_grad()
     def _obfuscate_trace(self, trace, binary_noise):
@@ -133,7 +139,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
                 classifier_lr_scheduler, _ = self.lr_schedulers()
             self.toggle_optimizer(classifier_optimizer)
         with torch.set_grad_enabled(train):
-            binary_noise = self._sample_binary_noise(trace)
+            binary_noise = self._sample_binary_noise(trace, self.normalize_erasure_probs_for_classifier)
             obfuscated_trace = self._obfuscate_trace(trace, binary_noise)
             logits = self._compute_logits(obfuscated_trace)
             loss = nn.functional.cross_entropy(logits, target)

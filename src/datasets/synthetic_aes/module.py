@@ -48,14 +48,12 @@ class DataModule(L.LightningDataModule):
         target_transform = transforms.Lambda(lambda x: torch.tensor(x, dtype=torch.long))
         self.train_dataset.transform = train_transform
         self.train_dataset.target_transform = target_transform
-        if stage == 'fit':
-            self.val_dataset = SyntheticAESLike(self.train_dataset, epoch_length=self.val_dataset_size, fixed_key=NUMPY_RNG.integers(256).astype(np.uint32))
-            self.val_dataset.transform = eval_transform
-            self.val_dataset.target_transform = target_transform
-        elif stage == 'test':
-            self.test_dataset = SyntheticAESLike(self.train_dataset, epoch_length=self.test_dataset_size, fixed_key=NUMPY_RNG.integers(256).astype(np.uint32))
-            self.test_dataset.transform = eval_transform
-            self.test_dataset.target_transform = target_transform
+        self.val_dataset = SyntheticAESLike(self.train_dataset, epoch_length=self.val_dataset_size, fixed_key=NUMPY_RNG.integers(256).astype(np.uint32))
+        self.val_dataset.transform = eval_transform
+        self.val_dataset.target_transform = target_transform
+        self.test_dataset = SyntheticAESLike(self.train_dataset, epoch_length=self.test_dataset_size, fixed_key=NUMPY_RNG.integers(256).astype(np.uint32))
+        self.test_dataset.transform = eval_transform
+        self.test_dataset.target_transform = target_transform
         if not 'num_workers' in self.dataloader_kwargs.keys():
             self.dataloader_kwargs['num_workers'] = os.cpu_count() // 10
     

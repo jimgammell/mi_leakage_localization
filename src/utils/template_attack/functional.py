@@ -7,7 +7,11 @@ from torch.utils.data import Subset, Dataset
 from utils.chunk_iterator import chunk_iterator
 
 @torch.no_grad()
-def extract_dataset(dataset: Dataset, points_of_interest: Sequence[int], target_key: str = 'subbytes', target_byte: Optional[int] = None):
+def extract_dataset(
+    dataset: Dataset, points_of_interest: Sequence[int],
+    metadata_keys: Union[str, Sequence[str]] = 'subbytes',
+    target_byte: Optional[int] = None
+):
     base_dataset = dataset
     while isinstance(base_dataset, Subset):
         base_dataset = base_dataset.dataset
@@ -18,27 +22,22 @@ def extract_dataset(dataset: Dataset, points_of_interest: Sequence[int], target_
     datapoint_count = len(dataset)
     poi_count = len(points_of_interest)
     traces = np.full((datapoint_count, poi_count), np.nan, dtype=np.float32)
-    targets = np.zeros((datapoint_count,), dtype=np.uint8)
-    plaintexts = np.zeros((datapoint_count,), dtype=np.uint8)
-    keys = np.zeros((datapoint_count,), dtype=np.uint8)
-    for datapoint_idx, (trace, _, metadata) in enumerate(chunk_iterator(dataset)):
-        target = metadata[target_key]
-        plaintext = metadata['plaintext']
-        key = metadata['key']
-        if target_byte is not None:
-            target = target[target_byte]
-            plaintext = plaintext[target_byte]
-            key = key[target_byte]
+    if isinstance(metadata_keys, str):
+        metadata_keys = [metadata_keys]
+    metadata = {key: np.zeros((datapoint_count,), dtype=np.uint8) for key in metadata_keys}
+    for datapoint_idx, (trace, _, _metadata) in enumerate(chunk_iterator(dataset)):
+        for key in metadata_keys:
+            mval = _metadata[key]
+            if target_byte is not None:
+                mval = mval[target_byte]
+            metadata[key][datapoint_idx] = mval
         trace = trace.squeeze()
         trace = trace[points_of_interest]
-        targets[datapoint_idx] = target
-        plaintexts[datapoint_idx] = plaintext
-        keys[datapoint_idx] = key
         traces[datapoint_idx, :] = trace
     base_dataset.transform = orig_transform
     base_dataset.return_metadata = orig_ret_mdata
-    assert np.all(np.isfinite(traces))
-    return traces, targets, plaintexts, keys
+    assert all(np.isfinite(traces))
+    return traces, metadata
 
 @jit(nopython=True)
 def mean_with_axis(array, axis):

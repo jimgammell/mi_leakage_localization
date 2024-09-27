@@ -21,6 +21,7 @@ class AES_HD(Dataset):
     def __init__(self,
         root=None,
         train=True,
+        extended_version=False,
         target_values='last_state',
         transform=None,
         target_transform=None
@@ -28,6 +29,7 @@ class AES_HD(Dataset):
         super().__init__()
         self.root = root
         self.train = train
+        self.extended_version = extended_version
         self.target_values = [target_values] if isinstance(target_values, str) else target_values
         self.transform = transform
         self.target_transform = target_transform
@@ -35,21 +37,39 @@ class AES_HD(Dataset):
         self.construct()
     
     def construct(self):
-        if self.train:
-            self.traces = np.load(os.path.join(self.root, 'AES_HD_dataset', 'profiling_traces_AES_HD.npy')).astype(np.float32)
-            self.targets = np.load(os.path.join(self.root, 'AES_HD_dataset', 'profiling_labels_AES_HD.npy')).astype(np.uint8)
-            self.ciphertexts = np.load(os.path.join(self.root, 'AES_HD_dataset', 'profiling_ciphertext_AES_HD.npy')).astype(np.uint8)
+        if not self.extended_version:
+            if self.train:
+                self.traces = np.load(os.path.join(self.root, 'AES_HD_dataset', 'profiling_traces_AES_HD.npy')).astype(np.float32)
+                self.targets = np.load(os.path.join(self.root, 'AES_HD_dataset', 'profiling_labels_AES_HD.npy')).astype(np.uint8)
+                self.ciphertexts = np.load(os.path.join(self.root, 'AES_HD_dataset', 'profiling_ciphertext_AES_HD.npy')).astype(np.uint8)
+            else:
+                self.traces = np.load(os.path.join(self.root, 'AES_HD_dataset', 'attack_traces_AES_HD.npy')).astype(np.float32)
+                self.targets = np.load(os.path.join(self.root, 'AES_HD_dataset', 'attack_labels_AES_HD.npy')).astype(np.uint8)
+                self.ciphertexts = np.load(os.path.join(self.root, 'AES_HD_dataset', 'attack_ciphertext_AES_HD.npy')).astype(np.uint8)
+            self.metadata = {
+                'ciphertext': self.ciphertexts,
+                'ciphertext_11': self.ciphertexts[:, 11],
+                'ciphertext_7': self.ciphertexts[:, 7],
+                'last_state': self.targets,
+                'key': np.zeros_like(self.targets)  #self.keys[:, 7]
+            }
         else:
-            self.traces = np.load(os.path.join(self.root, 'AES_HD_dataset', 'attack_traces_AES_HD.npy')).astype(np.float32)
-            self.targets = np.load(os.path.join(self.root, 'AES_HD_dataset', 'attack_labels_AES_HD.npy')).astype(np.uint8)
-            self.ciphertexts = np.load(os.path.join(self.root, 'AES_HD_dataset', 'attack_ciphertext_AES_HD.npy')).astype(np.uint8)
-        self.metadata = {
-            'ciphertext': self.ciphertexts,
-            'ciphertext_11': self.ciphertexts[:, 11],
-            'ciphertext_7': self.ciphertexts[:, 7],
-            'last_state': self.targets,
-            'key': np.zeros_like(self.targets)
-        }
+            with h5py.File(os.path.join(self.root, 'aes_hd_ext.h5'), 'r') as f:
+                if self.train:
+                    dataset = f['Profiling_traces']
+                else:
+                    dataset = f['Attack_traces']
+                self.traces = np.array(dataset['traces'], dtype=np.float32)
+                self.plaintexts = np.array(dataset['metadata']['plaintext'], dtype=np.uint8)
+                self.ciphertexts = np.array(dataset['metadata']['ciphertext'], dtype=np.uint8)
+            self.targets = AES_INVERSE_SBOX[np.zeros_like(self.ciphertexts[:, 11]) ^ self.ciphertexts[:, 11]] ^ self.ciphertexts[:, 7]
+            self.metadata = {
+                'ciphertext': self.ciphertexts,
+                'ciphertext_11': self.ciphertexts[:, 11],
+                'ciphertext_7': self.ciphertexts[:, 7],
+                'last_state': self.targets,
+                'key': np.zeros_like(self.targets)
+            }
         self.dataset_length = len(self.traces)
         assert self.dataset_length == len(self.targets) == len(self.ciphertexts)
         self.data_shape = self.traces[0].shape

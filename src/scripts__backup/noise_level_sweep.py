@@ -69,6 +69,7 @@ for data_var in data_vars:
                 enable_checkpointing=True
             )
             trainer.fit(training_module, datamodule=data_module)
+            trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             
             ea = event_accumulator.EventAccumulator(os.path.join(logging_dir, 'lightning_output', 'lightning_logs', 'version_0'))
             ea.Reload()
@@ -90,6 +91,7 @@ for data_var in data_vars:
                     'obfuscator-val-loss': obfuscator_val_loss,
                     'train-rank': train_rank,
                     'val-rank': val_rank,
+                    'erasure_probs': erasure_probs,
                     'leaking_prob': leaking_prob,
                     'nonleaking_probs': nonleaking_probs
                 }, f)

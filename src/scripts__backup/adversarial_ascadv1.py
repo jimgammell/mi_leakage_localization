@@ -27,8 +27,8 @@ attack_dataset = ASCADv1(
 )
 
 data_module = datasets.load('ascadv1f', train_batch_size=256, eval_batch_size=2048, root=ROOT)
-learning_rates = [1e-4, 1e-5, 1e-6]
-lambdas = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1e0]
+learning_rates = [1e-5, 1e-6]
+lambdas = [1e-2, 1e-1, 1e0]
 if RUN_SWEEPS:
     for lbda in lambdas:
         for learning_rate in learning_rates:
@@ -42,7 +42,8 @@ if RUN_SWEEPS:
                 log_likelihood_baseline_ema=0.9,
                 classifier_learning_rate=learning_rate,
                 obfuscator_learning_rate=1e-3,
-                obfuscator_batch_size_multiplier=8
+                obfuscator_batch_size_multiplier=8,
+                normalize_erasure_probs_for_classifier=True
             )
             trainer = Trainer(
                 max_epochs=1000,
@@ -82,7 +83,7 @@ if RUN_SWEEPS:
             fig, ax = plt.subplots(figsize=(4, 4))
             erasure_probs = nn.functional.sigmoid(training_module.unsquashed_obfuscation_weights).detach().cpu().numpy().squeeze()
             ax.plot(erasure_probs, color='blue', linestyle='none', marker='.')
-            ax.set_ylim(0, 1)
+            ax.set_yscale('log')
             fig.tight_layout()
             fig.savefig(os.path.join(logging_dir, 'erasure_probs.pdf'))
 

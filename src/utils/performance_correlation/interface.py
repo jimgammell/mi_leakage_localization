@@ -31,11 +31,14 @@ class MeasurePerformanceCorrelation:
         measurement_count = len(self.leakage_measurements)
         performance_metrics = np.full((attack_seed_count, measurement_count-poi_count+1), np.nan, dtype=np.float32)
         ranking = self.leakage_measurements.argsort()
-        for measurement_idx in range(measurement_count-poi_count+1):
-            points_of_interest = ranking[measurement_idx:measurement_idx+poi_count]
-            template_attack = TemplateAttack(points_of_interest, target_key='subbytes')
-            template_attack.profile(self.profiling_dataset)
-            rank_over_time = template_attack.attack(self.attack_dataset, n_repetitions=attack_seed_count, n_traces=1)
-            performance_metrics[:, measurement_idx] = rank_over_time.mean(axis=-1)
+        for target_key in self.target_keys:
+            _performance_metrics = []
+            for measurement_idx in range(measurement_count-poi_count+1):
+                points_of_interest = ranking[measurement_idx:measurement_idx+poi_count]
+                template_attack = TemplateAttack(points_of_interest, target_key=target_key)
+                template_attack.profile(self.profiling_dataset)
+                rank_over_time = template_attack.attack(self.attack_dataset, n_repetitions=attack_seed_count, n_traces=1)
+                _performance_metrics.append(rank_over_time.mean(axis=-1))
+            performance_metrics[:, measurement_idx] = _performance_metrics[np.argmax([x.mean() for x in _performance_metrics])]
         correlation = soft_kendall_tau(performance_metrics, np.arange(performance_metrics.shape[1]))
         return correlation, performance_metrics

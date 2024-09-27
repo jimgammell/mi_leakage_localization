@@ -44,13 +44,11 @@ class DataModule(L.LightningDataModule):
         target_transform = transforms.Lambda(lambda x: torch.tensor(x, dtype=torch.long))
         self.train_dataset.transform = transform
         self.train_dataset.target_transform = target_transform
-        if stage == 'fit':
-            self.train_indices = np.random.choice(len(self.train_dataset), int(0.9*len(self.train_dataset)), replace=False)
-            self.val_indices = np.array([x for x in np.arange(len(self.train_dataset)) if not(x in self.train_indices)])
-            self.val_dataset = Subset(self.train_dataset, self.val_indices)
-            self.train_dataset = Subset(self.train_dataset, self.train_indices)
-        elif stage == 'test':
-            self.test_dataset = AES_HD(self.root, train=False, transform=transform, target_transform=target_transform)
+        self.train_indices = np.random.choice(len(self.train_dataset), int(0.9*len(self.train_dataset)), replace=False)
+        self.val_indices = np.array([x for x in np.arange(len(self.train_dataset)) if not(x in self.train_indices)])
+        self.val_dataset = Subset(self.train_dataset, self.val_indices)
+        self.train_dataset = Subset(self.train_dataset, self.train_indices)
+        self.test_dataset = AES_HD(self.root, train=False, transform=transform, target_transform=target_transform)
         if not 'num_workers' in self.dataloader_kwargs.keys():
             self.dataloader_kwargs['num_workers'] = os.cpu_count()//10
     

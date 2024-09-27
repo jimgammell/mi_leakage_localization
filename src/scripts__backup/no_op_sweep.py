@@ -7,7 +7,7 @@ TRAIN_BATCH_SIZE = 1024
 EVAL_BATCH_SIZE = 10000
 MAX_EPOCHS = 100
 
-shuffle_vals = [1, 2, 4, 8, 16, 32, 64]
+no_op_vals = [0, 1, 2, 4, 8, 16, 32]
 lambda_vals = [1e-2, 1e-1, 1e0]
 seeds = [0, 1, 2]
 
@@ -25,7 +25,7 @@ from _common import *
 import datasets
 from training_modules import AdversarialLocalizationModule
 
-for shuffle_val in shuffle_vals:
+for no_op_val in no_op_vals:
     for seed in seeds:
         data_module = datasets.load(
             'synthetic-aes',
@@ -39,8 +39,8 @@ for shuffle_val in shuffle_vals:
                 'timesteps_per_trace': TIMESTEPS_PER_TRACE,
                 'leaking_timestep_count_1o': 1,
                 'leaking_timestep_count_2o': 0,
-                'shuffle_locs': shuffle_val,
-                'max_no_ops': 0,
+                'shuffle_locs': 1,
+                'max_no_ops': no_op_val,
                 'infinite_dataset': True, # we'll evaluate overfitting using the real datasets
                 'data_var': 1.0,
                 'residual_var': 1.0,
@@ -48,7 +48,7 @@ for shuffle_val in shuffle_vals:
             }
         )
         for lambda_val in lambda_vals:
-            logging_dir = os.path.join(get_trial_dir(), f'shuffle_locs={shuffle_val}__lambda={lambda_val}__seed={seed}')
+            logging_dir = os.path.join(get_trial_dir(), f'no_ops={no_op_val}__lambda={lambda_val}__seed={seed}')
             os.makedirs(logging_dir, exist_ok=True)
             training_module = AdversarialLocalizationModule(
                 classifier_name='multilayer-perceptron',
@@ -69,6 +69,7 @@ for shuffle_val in shuffle_vals:
                 enable_checkpointing=True
             )
             trainer.fit(training_module, datamodule=data_module)
+            trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             
             ea = event_accumulator.EventAccumulator(os.path.join(logging_dir, 'lightning_output', 'lightning_logs', 'version_0'))
             ea.Reload()
@@ -79,7 +80,7 @@ for shuffle_val in shuffle_vals:
             train_rank = extract_trace(ea.Scalars('train-rank'))
             val_rank = extract_trace(ea.Scalars('val-rank'))
             erasure_probs = nn.functional.sigmoid(training_module.unsquashed_obfuscation_weights).detach().cpu().numpy().squeeze()
-            leaking_timesteps = data_module.train_dataset.leaking_subbytes_cycles
+            leaking_timesteps = [data_module.train_dataset.leaking_subbytes_cycles[0]+x for x in range(data_module.train_dataset.max_no_ops+1)]
             leaking_prob = erasure_probs[leaking_timesteps]
             nonleaking_probs = erasure_probs[np.array([x for x in np.arange(len(erasure_probs)) if x not in leaking_timesteps])]
             with open(os.path.join(logging_dir, 'results.pickle'), 'wb') as f:
@@ -90,6 +91,7 @@ for shuffle_val in shuffle_vals:
                     'obfuscator-val-loss': obfuscator_val_loss,
                     'train-rank': train_rank,
                     'val-rank': val_rank,
+                    'erasure_probs': erasure_probs,
                     'leaking_prob': leaking_prob,
                     'nonleaking_probs': nonleaking_probs
                 }, f)
@@ -116,11 +118,13 @@ for shuffle_val in shuffle_vals:
             axes[1].set_ylabel('Correct-key rank')
             axes[2].set_ylabel('Obfuscator loss')
             fig.tight_layout()
-            fig.savefig(os.path.join(logging_dir, f'shuffle_locs={shuffle_val}__lambda={lambda_val}__seed={seed}.pdf'))
+            fig.savefig(os.path.join(logging_dir, f'no_ops={no_op_val}__lambda={lambda_val}__seed={seed}.pdf'))
             
             fig, ax = plt.subplots(figsize=(4, 4))
-            for idx, leaking_timestep in enumerate(leaking_timesteps):
-                ax.axvline(leaking_timestep, color='orange', label='Leaking point' if idx == 0 else None)
+            if len(leaking_timesteps) > 1:
+                ax.axvspan(leaking_timesteps[0], leaking_timesteps[-1], color='orange', alpha=0.25, label='Leaking point')
+            else:
+                ax.axvline(leaking_timesteps[0], color='orange', label='Leaking points')
             ax.plot(lambda_val*erasure_probs, color='blue', marker='.', linestyle='none', markersize=3, label='$\lambda \gamma_t^*$')
             ax.set_xlabel('$t$')
             ax.set_ylabel('$\lambda \gamma_t^*$')

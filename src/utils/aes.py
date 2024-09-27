@@ -28,6 +28,5 @@ for x in range(256):
     AES_INVERSE_SBOX[AES_SBOX[x]] = x
 
 @jit(nopython=True)
-def subbytes_to_keys(model_output, plaintext):
-    probs = model_output[AES_SBOX[np.arange(256, dtype=numba.uint8) ^ plaintext]]
-    return probs
+def subbytes_to_keys(int_var_preds, plaintext, constants=None):
+    return int_var_preds[AES_SBOX[np.arange(256, dtype=np.uint8) ^ plaintext]]
