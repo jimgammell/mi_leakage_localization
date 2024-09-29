@@ -28,7 +28,7 @@ attack_dataset = ASCADv1(
 
 data_module = datasets.load('ascadv1f', train_batch_size=BATCH_SIZE, eval_batch_size=10000, root=ROOT)
 
-norm_penalties = [1e-3] #[1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2]
+norm_penalties = [1e-1] #[1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2]
 for norm_penalty in norm_penalties:
     logging_dir = os.path.join(get_trial_dir(), f'lambda={norm_penalty}')
     training_module = AdversarialLocalizationModule(

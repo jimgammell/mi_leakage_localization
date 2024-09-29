@@ -2,19 +2,21 @@
 
 import torch
 from torch import nn
+from torch.utils.data import DataLoader
 
-def compute_gradvis(training_module, dataloader):
+def compute_gradvis(training_module, dataset):
     model = training_module.model
     model.eval()
     model.requires_grad_(False)
+    dataloader = DataLoader(dataset, batch_size=256)
     count = 0
     trace_shape = model.input_shape
     attribution_map = torch.zeros(*trace_shape, device=training_module.device)
     for trace, target in dataloader:
-        trace, target = trace.to(model.device), target.to(model.device)
+        trace, target = trace.to(training_module.device), target.to(training_module.device)
         batch_size = trace.size(0)
         trace.requires_grad = True
-        logits = model(trace)
+        logits = model(trace).squeeze()
         loss = nn.functional.cross_entropy(logits, target)
         model.zero_grad()
         loss.backward()
