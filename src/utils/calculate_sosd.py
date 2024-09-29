@@ -5,22 +5,11 @@ from torch.utils.data import Dataset, Subset
 
 from utils.chunk_iterator import chunk_iterator
 
-def calculate_sosd(dataset: Dataset, targets: Union[str, Sequence[str]] = 'subbytes', bytes=None, chunk_size: int = 1024):
-    base_dataset = dataset
-    while isinstance(base_dataset, Subset):
-        base_dataset = base_dataset.dataset
+def calculate_sosd(dataset: Dataset, base_dataset: Dataset, targets: Union[str, Sequence[str]] = 'subbytes', bytes=None, chunk_size: int = 1024):
     if isinstance(targets, str):
         targets = [targets]
     if (bytes is None) or isinstance(bytes, int):
         bytes = [bytes]
-    
-    orig_transform = copy(base_dataset.transform)
-    orig_target_transform = copy(base_dataset.target_transform)
-    orig_ret_mdata = base_dataset.return_metadata
-    base_dataset.transform = None
-    base_dataset.target_transform = None
-    base_dataset.return_metadata = True
-    
     per_target_means = {(key, byte): np.zeros((256, base_dataset.timesteps_per_trace), dtype=np.float32) for key in targets for byte in bytes}
     per_target_counts = {(key, byte): np.zeros((256,), dtype=int) for key in targets for byte in bytes}
     for trace, _, metadata in chunk_iterator(dataset, chunk_size=chunk_size):
@@ -39,8 +28,4 @@ def calculate_sosd(dataset: Dataset, targets: Union[str, Sequence[str]] = 'subby
             for i in range(256):
                 for j in range(i+1, 256):
                     sosd[(target, byte)] += (per_target_means[(target, byte)][i, :] - per_target_means[(target, byte)][j, :])**2
-    
-    base_dataset.transform = orig_transform
-    base_dataset.target_transform = orig_target_transform
-    base_dataset.return_metadata = orig_ret_mdata
     return sosd

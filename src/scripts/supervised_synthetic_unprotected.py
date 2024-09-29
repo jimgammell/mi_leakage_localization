@@ -74,7 +74,7 @@ if RUN_LR_SWEEP:
         axes[1].set_ylabel('Rank')
         fig.tight_layout()
         fig.savefig(os.path.join(logging_dir, 'training_curves.png'))
-                
+        
         fig, ax = plt.subplots(figsize=(4, 4))
         ax.plot(np.median(rank_over_time, axis=0), color='blue')
         ax.fill_between(np.arange(1, rank_over_time.shape[-1]+1), np.percentile(rank_over_time, 25, axis=0), np.percentile(rank_over_time, 75, axis=0), color='blue', alpha=0.25)

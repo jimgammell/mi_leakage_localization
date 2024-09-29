@@ -8,22 +8,11 @@ from utils.chunk_iterator import chunk_iterator
 def hamming_weight(x):
     return np.unpackbits(x).astype(np.float32).sum()
 
-def calculate_cpa(dataset: Dataset, targets: Union[str, Sequence[str]] = 'subbytes', bytes=None, chunk_size: int = 1024):
-    base_dataset = dataset
-    while isinstance(base_dataset, Subset):
-        base_dataset = base_dataset.dataset
+def calculate_cpa(dataset: Dataset, base_dataset: Dataset, targets: Union[str, Sequence[str]] = 'subbytes', bytes=None, chunk_size: int = 1024):
     if isinstance(targets, str):
         targets = [targets]
     if (bytes is None) or isinstance(bytes, int):
         bytes = [bytes]
-    
-    orig_transform = copy(base_dataset.transform)
-    orig_target_transform = copy(base_dataset.target_transform)
-    orig_ret_mdata = base_dataset.return_metadata
-    base_dataset.transform = None
-    base_dataset.target_transform = None
-    base_dataset.return_metadata = True
-    
     mean_trace = np.zeros((base_dataset.timesteps_per_trace,), dtype=np.float32)
     mean_hamming_weight = {(key, byte): 0. for key in targets for byte in bytes}
     current_count = 0
@@ -60,8 +49,4 @@ def calculate_cpa(dataset: Dataset, targets: Union[str, Sequence[str]] = 'subbyt
                 )
         current_count += 1
     cpa = {(key, byte): unnormalized_correlation[(key, byte)] / np.sqrt(trace_variance * hw_variance[(key, byte)]) for key in targets for byte in bytes}
-    
-    base_dataset.transform = orig_transform
-    base_dataset.target_transform = orig_target_transform
-    base_dataset.return_metadata = orig_ret_mdata
     return cpa

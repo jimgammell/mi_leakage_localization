@@ -31,7 +31,8 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         classifier_learning_rate: Optional[float] = None,
         obfuscator_learning_rate: Optional[float] = None,
         obfuscator_batch_size_multiplier: int = 1, # In general the obfuscator can be trained with a larger batch size than the discriminator. We will use the same training data but more binary noise samples.
-        normalize_erasure_probs_for_classifier: bool = False
+        normalize_erasure_probs_for_classifier: bool = False,
+        additive_noise_augmentation: float = 0.0
     ):
         for key, val in locals().items():
             if key not in ('key', 'val', 'self', '__class__'):
@@ -122,9 +123,8 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
     def _sample_binary_noise(self, trace: torch.Tensor, normalize: bool = False):
         batch_size = trace.size(0)
         erasure_probs = nn.functional.sigmoid(self.unsquashed_obfuscation_weights)
-        if normalize and (erasure_probs.var() > 0):
-            erasure_probs = (erasure_probs - erasure_probs.min()) / (erasure_probs.max() - erasure_probs.min())
-            erasure_probs = 0.2 + 0.6*erasure_probs
+        if normalize:
+            erasure_probs = 0.5*torch.ones_like(erasure_probs)
         binary_noise = (1 - erasure_probs).repeat(batch_size, *((len(trace.shape)-1)*[1])).bernoulli()
         return binary_noise
     
@@ -140,6 +140,8 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
             self.toggle_optimizer(classifier_optimizer)
         with torch.set_grad_enabled(train):
             binary_noise = self._sample_binary_noise(trace, self.normalize_erasure_probs_for_classifier)
+            if train:
+                trace = trace + self.additive_noise_augmentation*torch.randn_like(trace)
             obfuscated_trace = self._obfuscate_trace(trace, binary_noise)
             logits = self._compute_logits(obfuscated_trace)
             loss = nn.functional.cross_entropy(logits, target)
@@ -237,7 +239,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         obfuscation_weights = nn.functional.sigmoid(self.unsquashed_obfuscation_weights).squeeze()
         self.trainer.logger.experiment.add_histogram('obfuscation-weights-hist', obfuscation_weights, self.trainer.current_epoch)
         fig, ax = plt.subplots(1, 1, figsize=(4, 4))
-        ax.set_ylim(0, 1)
+        ax.set_ylim(0, self.obfuscator_l2_norm_penalty)
         train_dataset = self.trainer.datamodule.train_dataloader().dataset
         while isinstance(train_dataset, Subset):
             train_dataset = train_dataset.dataset
@@ -249,7 +251,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
                 ax.axvline(cycle, color='green')
             for cycle in train_dataset.leaking_masked_subbytes_cycles:
                 ax.axvline(cycle, color='orange')
-        ax.plot(obfuscation_weights.detach().cpu().numpy(), color='blue', linestyle='none', marker='.', markersize=2)
+        ax.plot(self.obfuscator_l2_norm_penalty*obfuscation_weights.detach().cpu().numpy(), color='blue', linestyle='none', marker='.', markersize=2)
         ax.set_xlabel('Timestep')
         ax.set_ylabel('Obfuscation weight')
         fig.tight_layout()
