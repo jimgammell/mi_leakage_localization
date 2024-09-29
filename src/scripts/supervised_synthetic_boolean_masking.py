@@ -14,7 +14,7 @@ from training_modules.supervised_classification import SupervisedClassificationM
 
 RUN_LR_SWEEP = True
 TIMESTEPS_PER_TRACE = 500
-STEP_COUNT = 20000
+STEP_COUNT = 100000
 
 data_module = datasets.load(
     'synthetic-aes',
@@ -33,7 +33,7 @@ data_module = datasets.load(
         lpf_beta=0.9
     )
 )
-learning_rates = [1e-8, 3e-8, 1e-7, 3e-7, 1e-6, 3e-6, 1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2, 1e-1]
+learning_rates = [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
 if RUN_LR_SWEEP:
     for learning_rate in learning_rates:
         logging_dir = os.path.join(get_trial_dir(), f'learning_rate={learning_rate}')
