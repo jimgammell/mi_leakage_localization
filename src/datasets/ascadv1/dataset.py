@@ -97,9 +97,9 @@ class ASCADv1(Dataset):
             plaintext = np.array([plaintext])
             masks = masks[np.newaxis, :]
         assert all((key.shape[0] == batch_size, plaintext.shape[0] == batch_size, masks.shape[0] == batch_size))
-        r_in = masks[:, -2, np.newaxis]
-        r_out = masks[:, -1, np.newaxis]
-        r = np.concatenate([np.zeros((batch_size, 2), dtype=np.uint8), masks[:, :-2]], axis=1)[..., self.target_byte]
+        r_in = masks[:, -2, np.newaxis].squeeze()
+        r_out = masks[:, -1, np.newaxis].squeeze()
+        r = np.concatenate([np.zeros((batch_size, 2), dtype=np.uint8), masks[:, :-2]], axis=1)[..., self.target_byte].squeeze()
         aux_metadata = {
             'subbytes': AES_SBOX[key ^ plaintext],
             'subbytes__r': AES_SBOX[key ^ plaintext] ^ r,

@@ -36,7 +36,7 @@ def extract_dataset(
         traces[datapoint_idx, :] = trace
     base_dataset.transform = orig_transform
     base_dataset.return_metadata = orig_ret_mdata
-    assert all(np.isfinite(traces))
+    assert np.all(np.isfinite(traces))
     return traces, metadata
 
 @jit(nopython=True)

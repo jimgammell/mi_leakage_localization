@@ -15,7 +15,7 @@ from utils.aes import subbytes_to_keys
 from training_modules import AdversarialLocalizationModule
 
 TIMESTEPS_PER_TRACE = 500
-STEP_COUNT = 10000
+STEP_COUNT = 50000
 
 data_module = datasets.load(
     'synthetic-aes',
@@ -34,7 +34,7 @@ data_module = datasets.load(
         lpf_beta=0.9
     )
 )
-norm_penalties = [6e-3, 2e-2, 6e-2, 2e-1, 2e0, 6e0, 2e1]
+norm_penalties = [1e-4, 0.1, 0.2, 0.3, 0.4, 0.5, 1e3]
 for norm_penalty in norm_penalties:
     logging_dir = os.path.join(get_trial_dir(), f'lambda={norm_penalty}')
     training_module = AdversarialLocalizationModule(
@@ -43,7 +43,7 @@ for norm_penalty in norm_penalties:
         classifier_optimizer_name='AdamW',
         obfuscator_optimizer_name='AdamW',
         classifier_optimizer_kwargs={'lr': 1e-3},
-        obfuscator_optimizer_kwargs={'lr': 5e-4},
+        obfuscator_optimizer_kwargs={'lr': 1e-3},
         obfuscator_l2_norm_penalty=norm_penalty,
         obfuscator_batch_size_multiplier=8,
         normalize_erasure_probs_for_classifier=True

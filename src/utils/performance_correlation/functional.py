@@ -25,16 +25,17 @@ def prob_geq(a_mean, a_var, b_mean, b_var):
 
 @jit(nopython=True)
 def _calculate_tau(x_mean, x_var, y_mean, y_var, count):
-    sum_coeff, abs_coeff = 0., 0.
+    sum_coeff = 0.
+    _count = 0
     for i in range(count):
         for j in range(i+1, count):
             p_xigxj = prob_geq(x_mean[i], x_var[i], x_mean[j], x_var[j])
             p_yigyj = prob_geq(y_mean[i], y_var[i], y_mean[j], y_var[j])
             p_conc = p_xigxj*p_yigyj + (1-p_xigxj)*(1-p_yigyj)
-            coeff = 2*(p_conc) - 1
+            coeff = 2*p_conc - 1
             sum_coeff += coeff
-            abs_coeff += np.abs(coeff)
-    tau = sum_coeff / abs_coeff
+            _count = _count + 1
+    tau = sum_coeff / _count
     return tau
 
 def soft_kendall_tau(x, y):

@@ -35,12 +35,21 @@ class TemplateAttack:
         predictions = log_p_x_given_y + self.log_p_y
         return predictions
     
+    def get_ranks(self, attack_dataset):
+        traces, metadata = extract_dataset(attack_dataset, self.points_of_interest, metadata_keys=self.target_key, target_byte=self.target_byte)
+        log_p_x_given_y = get_log_p_x_given_y(traces, self.means, self.Ls)
+        predictions = log_p_x_given_y + self.log_p_y
+        for key, targets in metadata.items():
+            sorted_indices = np.argsort(-predictions, axis=1)
+            ranks = np.array([np.where(sorted_indices[idx] == targets[idx])[0][0] for idx in range(len(predictions))])
+        return ranks
+    
     def attack(self, attack_dataset: Dataset, n_repetitions=100, n_traces: Optional[int] = None, arg_keys=[], int_var_to_key_fn=subbytes_to_keys):
         if n_traces is None:
             n_traces = len(attack_dataset)
         assert len(attack_dataset) >= n_traces
         assert self.has_profiled()
-        traces, metadata = extract_dataset(attack_dataset, self.points_of_interest, metadata_keys=[*[arg_keys], 'key'])
+        traces, metadata = extract_dataset(attack_dataset, self.points_of_interest, metadata_keys=[*arg_keys, 'key'])
         args = np.stack([metadata[arg_key] for arg_key in arg_keys], axis=-1)
         log_p_x_given_y = get_log_p_x_given_y(traces, self.means, self.Ls)
         indices = np.stack([np.random.choice(len(attack_dataset), n_traces, replace=False) for _ in range(n_repetitions)])

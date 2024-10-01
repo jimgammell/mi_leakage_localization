@@ -24,17 +24,17 @@ data_module = datasets.load(
     aug=False,
     dataset_kwargs=dict(
         timesteps_per_trace=TIMESTEPS_PER_TRACE,
-        leaking_timestep_count_1o=1,
-        leaking_timestep_count_2o=0,
-        shuffle_locs=9,
+        leaking_timestep_count_1o=0,
+        leaking_timestep_count_2o=1,
+        shuffle_locs=1,
         max_no_ops=0,
         infinite_dataset=True,
         data_var=1.0,
-        residual_var=1.0,
+        residual_var=0.5,
         lpf_beta=0.9
     )
 )
-norm_penalties = [1e-7, 2.5e-4, 1e-3, 4e-1, 1e1]
+norm_penalties = [0.01, 0.1, 1.0]
 for norm_penalty in norm_penalties:
     logging_dir = os.path.join(get_trial_dir(), f'lambda={norm_penalty}')
     training_module = AdversarialLocalizationModule(
@@ -42,7 +42,7 @@ for norm_penalty in norm_penalties:
         classifier_kwargs={'input_shape': (2, TIMESTEPS_PER_TRACE)},
         classifier_optimizer_name='AdamW',
         obfuscator_optimizer_name='AdamW',
-        classifier_optimizer_kwargs={'lr': 1e-4},
+        classifier_optimizer_kwargs={'lr': 2e-4},
         obfuscator_optimizer_kwargs={'lr': 1e-3},
         obfuscator_l2_norm_penalty=norm_penalty,
         obfuscator_batch_size_multiplier=8,
@@ -84,8 +84,7 @@ for norm_penalty in norm_penalties:
     fig.savefig(os.path.join(logging_dir, 'training_curves.pdf'))
 
     fig, ax = plt.subplots(figsize=(4, 4))
-    for cycle in data_module.train_dataset.leaking_subbytes_cycles:
-        ax.axvline(cycle, color='orange')
+    ax.axvline(data_module.train_dataset.leaking_subbytes_cycles, color='orange')
     ax.plot(training_module.obfuscator_l2_norm_penalty*erasure_probs, color='blue', linestyle='none', marker='.')
     ax.set_ylim(0, training_module.obfuscator_l2_norm_penalty)
     ax.set_xlabel('Timestep $t$')
