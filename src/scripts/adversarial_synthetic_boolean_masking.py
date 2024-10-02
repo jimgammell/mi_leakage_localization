@@ -15,7 +15,7 @@ from utils.aes import subbytes_to_keys
 from training_modules import AdversarialLocalizationModule
 
 TIMESTEPS_PER_TRACE = 500
-STEP_COUNT = 50000
+STEP_COUNT = 200000
 
 data_module = datasets.load(
     'synthetic-aes',
@@ -34,7 +34,7 @@ data_module = datasets.load(
         lpf_beta=0.9
     )
 )
-norm_penalties = [0.01, 0.1, 1.0]
+norm_penalties = [1e-3]
 for norm_penalty in norm_penalties:
     logging_dir = os.path.join(get_trial_dir(), f'lambda={norm_penalty}')
     training_module = AdversarialLocalizationModule(
@@ -67,27 +67,31 @@ for norm_penalty in norm_penalties:
     with open(os.path.join(logging_dir, 'results.pickle'), 'wb') as f:
         pickle.dump({'training_curves': training_curves, 'erasure_probs': erasure_probs, 'train_dataset': data_module.train_dataset}, f)
 
-    fig, axes = plt.subplots(1, 3, figsize=(8, 4))
-    axes[0].plot(*training_curves['classifier-train-loss_epoch'], color='red', linestyle='--')
-    axes[0].plot(*training_curves['classifier-val-loss'], color='red', linestyle='-')
-    axes[1].plot(*training_curves['train-rank'], color='red', linestyle='--')
-    axes[1].plot(*training_curves['val-rank'], color='red', linestyle='-')
-    axes[2].plot(*training_curves['obfuscator-train-loss_epoch'], color='blue', linestyle='--')
-    axes[2].plot(*training_curves['obfuscator-val-loss'], color='blue', linestyle='-')
-    axes[0].set_xlabel('Training step')
-    axes[0].set_ylabel('Classifier loss')
-    axes[1].set_xlabel('Training step')
-    axes[1].set_ylabel('Mean rank')
-    axes[2].set_xlabel('Training step')
-    axes[2].set_ylabel('Obfuscator loss')
-    fig.tight_layout()
-    fig.savefig(os.path.join(logging_dir, 'training_curves.pdf'))
+    try:
+        fig, axes = plt.subplots(1, 3, figsize=(8, 4))
+        axes[0].plot(*training_curves['classifier-train-loss_epoch'], color='red', linestyle='--')
+        axes[0].plot(*training_curves['classifier-val-loss'], color='red', linestyle='-')
+        axes[1].plot(*training_curves['train-rank'], color='red', linestyle='--')
+        axes[1].plot(*training_curves['val-rank'], color='red', linestyle='-')
+        axes[2].plot(*training_curves['obfuscator-train-loss_epoch'], color='blue', linestyle='--')
+        axes[2].plot(*training_curves['obfuscator-val-loss'], color='blue', linestyle='-')
+        axes[0].set_xlabel('Training step')
+        axes[0].set_ylabel('Classifier loss')
+        axes[1].set_xlabel('Training step')
+        axes[1].set_ylabel('Mean rank')
+        axes[2].set_xlabel('Training step')
+        axes[2].set_ylabel('Obfuscator loss')
+        fig.tight_layout()
+        fig.savefig(os.path.join(logging_dir, 'training_curves.pdf'))
 
-    fig, ax = plt.subplots(figsize=(4, 4))
-    ax.axvline(data_module.train_dataset.leaking_subbytes_cycles, color='orange')
-    ax.plot(training_module.obfuscator_l2_norm_penalty*erasure_probs, color='blue', linestyle='none', marker='.')
-    ax.set_ylim(0, training_module.obfuscator_l2_norm_penalty)
-    ax.set_xlabel('Timestep $t$')
-    ax.set_ylabel('Leakage assessment $\lambda \gamma_t^*$')
-    fig.tight_layout()
-    fig.savefig(os.path.join(logging_dir, 'leakage_assessment.pdf'))
+        fig, ax = plt.subplots(figsize=(4, 4))
+        ax.axvline(data_module.train_dataset.leaking_mask_cycles[0], color='red')
+        ax.axvline(data_module.train_dataset.leaking_masked_subbytes_cycles[0], color='purple')
+        ax.plot(training_module.obfuscator_l2_norm_penalty*erasure_probs, color='blue', linestyle='none', marker='.')
+        ax.set_ylim(0, training_module.obfuscator_l2_norm_penalty)
+        ax.set_xlabel('Timestep $t$')
+        ax.set_ylabel('Leakage assessment $\lambda \gamma_t^*$')
+        fig.tight_layout()
+        fig.savefig(os.path.join(logging_dir, 'leakage_assessment.pdf'))
+    except:
+        pass
