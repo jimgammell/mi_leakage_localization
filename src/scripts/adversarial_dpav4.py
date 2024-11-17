@@ -12,6 +12,7 @@ from datasets.dpav4 import DPAv4, to_key_preds
 from utils.metrics.rank import accumulate_ranks
 import datasets
 from training_modules import AdversarialLocalizationModule
+from utils.performance_correlation import MeasurePerformanceCorrelation
 
 ROOT = os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization','downloads', 'dpav4')
 STEP_COUNT = 100000
@@ -28,8 +29,8 @@ attack_dataset = DPAv4(
 
 data_module = datasets.load('dpav4', train_batch_size=BATCH_SIZE, eval_batch_size=1024, root=ROOT)
 
-norm_penalties = [5e-2] #[1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2]
-seeds = [0, 1, 2, 3, 4]
+norm_penalties = [1e-6, 1e-5, 1e-4] + list(np.logspace(-3, -1, 10)) + [1e0, 1e1, 1e2] # [5e-2]
+seeds = [0]
 for seed in seeds:
     for norm_penalty in norm_penalties:
         logging_dir = os.path.join(get_trial_dir(), f'lambda={norm_penalty}__seed={seed}')
@@ -62,8 +63,15 @@ for seed in seeds:
             key: extract_trace(ea.Scalars(key)) for key in ['classifier-train-loss_epoch', 'classifier-val-loss', 'obfuscator-train-loss_epoch', 'obfuscator-val-loss']
         }
         erasure_probs = nn.functional.sigmoid(training_module.unsquashed_obfuscation_weights).detach().cpu().numpy().squeeze()
+        metric = MeasurePerformanceCorrelation(erasure_probs, data_module.train_dataset, data_module.val_dataset, target_keys='SubBytes')
+        performance_correlation, performance_means, performance_stds = metric.measure_performance(fast=False)
+        print(f'Norm penalty: {norm_penalty}, performance correlation: {performance_correlation}')
+        
         with open(os.path.join(logging_dir, 'results.pickle'), 'wb') as f:
-            pickle.dump({'training_curves': training_curves, 'erasure_probs': erasure_probs}, f)
+            pickle.dump({
+                'training_curves': training_curves, 'erasure_probs': erasure_probs, 'performance_correlation': performance_correlation,
+                'performance_means': performance_means, 'performance_stds': performance_stds
+            }, f)
 
         fig, axes = plt.subplots(1, 2, figsize=(8, 4))
         axes[0].plot(*training_curves['classifier-train-loss_epoch'], color='red', linestyle='--')

@@ -36,14 +36,16 @@ class ASCADv1(Dataset):
         self.return_metadata = False
         if raw_traces:
             raise NotImplementedError
-        if variable_keys:
-            raise NotImplementedError
         
         self.construct()
     
     def construct(self):
         if self.variable_keys:
-            assert False
+            self.data_path = os.path.join(self.root, f'ascad-variable-desync{self.desync}.h5' if self.desync > 0 else 'ascad-variable.h5')
+            if self.train:
+                self.data_indices = np.arange(0, 200000)
+            else:
+                self.data_indices = np.arange(0, 100000)
         else:
             self.data_path = os.path.join(self.root, f'ascadv1f_d{self.desync}.h5')
             if self.train:
@@ -69,7 +71,6 @@ class ASCADv1(Dataset):
                 traces = traces[:, np.newaxis, :]
             metadata = {
                 'plaintext': np.array(database_file['metadata']['plaintext'][indices, self.target_byte], dtype=np.uint8),
-                'ciphertext': np.array(database_file['metadata']['ciphertext'][indices, self.target_byte], dtype=np.uint8),
                 'key': np.array(database_file['metadata']['key'][indices, self.target_byte], dtype=np.uint8),
                 'masks': np.array(database_file['metadata']['masks'][indices], dtype=np.uint8)
             }
@@ -99,7 +100,10 @@ class ASCADv1(Dataset):
         assert all((key.shape[0] == batch_size, plaintext.shape[0] == batch_size, masks.shape[0] == batch_size))
         r_in = masks[:, -2, np.newaxis].squeeze()
         r_out = masks[:, -1, np.newaxis].squeeze()
-        r = np.concatenate([np.zeros((batch_size, 2), dtype=np.uint8), masks[:, :-2]], axis=1)[..., self.target_byte].squeeze()
+        if not self.variable_keys:
+            r = np.concatenate([np.zeros((batch_size, 2), dtype=np.uint8), masks[:, :-2]], axis=1)[..., self.target_byte].squeeze()
+        else:
+            r = masks[:, :-2][..., self.target_byte].squeeze()
         aux_metadata = {
             'subbytes': AES_SBOX[key ^ plaintext],
             'subbytes__r': AES_SBOX[key ^ plaintext] ^ r,

@@ -20,6 +20,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         obfuscator_l2_norm_penalty: float = 1.0,
         classifier_step_prob: float = 1.0,
         obfuscator_step_prob: float = 1.0,
+        split_training_steps: Optional[int] = None, # If not None, we will first train classifier only for this number of steps, then train obfuscator only for this number of steps.
         log_likelihood_baseline_ema: Optional[float] = 0.9,
         classifier_lr_scheduler_name: Optional[Union[str, optim.lr_scheduler.LRScheduler]] = None,
         obfuscator_lr_scheduler_name: Optional[Union[str, optim.lr_scheduler.LRScheduler]] = None,
@@ -41,8 +42,8 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
                 setattr(self, key, val)
         super().__init__()
         self.automatic_optimization = False
-        self.classifier = models.load(classifier_name, **self.classifier_kwargs)
-        self.unsquashed_obfuscation_weights = nn.Parameter(torch.zeros(self.classifier.input_shape[0]//2, *self.classifier.input_shape[1:], dtype=torch.float32), requires_grad=True)
+        self.classifier = models.load(classifier_name, noise_conditional=True, **self.classifier_kwargs)
+        self.unsquashed_obfuscation_weights = nn.Parameter(torch.zeros(self.classifier.input_shape[0], *self.classifier.input_shape[1:], dtype=torch.float32), requires_grad=True)
         if self.log_likelihood_baseline_ema is not None:
             self.register_buffer('log_likelihood_mean', torch.tensor(0.))
         for phase_name in ('train', 'val'):
@@ -100,9 +101,18 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         else:
             optimizer = optimizer_constructor([model], lr=learning_rate, **optimizer_kwargs)
         if lr_scheduler_constructor is not None:
-            lr_scheduler = lr_scheduler_constructor(
-                optimizer, total_steps=self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader()), **lr_scheduler_kwargs
-            )
+            if self.split_training_steps is None:
+                lr_scheduler = lr_scheduler_constructor(
+                    optimizer, total_steps=self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader()), **lr_scheduler_kwargs
+                )
+            elif prefix == 'classifier':
+                lr_scheduler = lr_scheduler_constructor(
+                    optimizer, total_steps=self.split_training_steps, **lr_scheduler_kwargs
+                )
+            elif prefix == 'obfuscator':
+                lr_scheduler = lr_scheduler_constructor(
+                    optimizer, total_steps=self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader()) - self.split_training_steps, **lr_scheduler_kwargs
+                )
         else:
             lr_scheduler = None
         rv = {'optimizer': optimizer}
@@ -114,8 +124,8 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         rv = (self._configure_optimizers('classifier'), self._configure_optimizers('obfuscator'))
         return rv
     
-    def _compute_logits(self, trace: torch.Tensor):
-        logits = self.classifier(trace)
+    def _compute_logits(self, trace: torch.Tensor, noise: torch.Tensor):
+        logits = self.classifier(trace, noise)
         logits = logits.view(-1, logits.size(-1))
         return logits
     
@@ -128,9 +138,9 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         binary_noise = (1 - erasure_probs).repeat(batch_size, *((len(trace.shape)-1)*[1])).bernoulli()
         return binary_noise
     
-    @torch.no_grad()
-    def _obfuscate_trace(self, trace, binary_noise):
-        return torch.cat([binary_noise*trace, binary_noise], dim=1)
+    #@torch.no_grad()
+    #def _obfuscate_trace(self, trace, binary_noise):
+    #    return torch.cat([binary_noise*trace, binary_noise], dim=1)
     
     def _classifier_step(self, trace, target, train=False):
         if train:
@@ -142,9 +152,9 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
             binary_noise = self._sample_binary_noise(trace, self.normalize_erasure_probs_for_classifier)
             if train:
                 trace = trace + self.additive_noise_augmentation*torch.randn_like(trace)
-            obfuscated_trace = self._obfuscate_trace(trace, binary_noise)
-            logits = self._compute_logits(obfuscated_trace)
-            loss = nn.functional.cross_entropy(logits, target)
+            #obfuscated_trace = self._obfuscate_trace(trace, binary_noise)
+            logits = self._compute_logits(binary_noise*trace, binary_noise)
+            loss = nn.functional.cross_entropy(logits, target, label_smoothing=0.0)
         if train:
             classifier_optimizer.zero_grad()
             self.manual_backward(loss)
@@ -162,16 +172,19 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         if train:
             _, obfuscator_optimizer = self.optimizers()
             if self.obfuscator_lr_scheduler_name is not None:
-                _, obfuscator_lr_scheduler = self.lr_schedulers()
+                scheduler_rv = self.lr_schedulers()
+                if self.classifier_lr_scheduler_name is not None:
+                    obfuscator_lr_scheduler = scheduler_rv[-1]
+                else:
+                    obfuscator_lr_scheduler = scheduler_rv
             self.toggle_optimizer(obfuscator_optimizer)
         obfuscation_weights = nn.functional.sigmoid(self.unsquashed_obfuscation_weights)
         l2_norm = obfuscation_weights.norm(p=2)**2
         if train: l2_norm_grad = obfuscation_weights*obfuscation_weights*(1-obfuscation_weights)
         binary_noise = self._sample_binary_noise(trace)
         obfuscation_weights = obfuscation_weights.repeat(batch_size, *((len(trace.shape)-1)*[1]))
-        obfuscated_trace = self._obfuscate_trace(trace, binary_noise)
-        logits = self._compute_logits(obfuscated_trace)
-        log_likelihood = -nn.functional.cross_entropy(logits, target, reduction='none')
+        logits = self._compute_logits(binary_noise*trace, binary_noise)
+        log_likelihood = -nn.functional.cross_entropy(logits, target, reduction='none', label_smoothing=0.0)
         if train:
             ll = log_likelihood.view(-1, *((len(trace.shape)-1)*[1]))
             if self.log_likelihood_baseline_ema is not None:
@@ -196,13 +209,25 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         return loss
     
     def training_step(self, batch, batch_idx):
+        if not hasattr(self, 'step_count'):
+            self.step_count = 0
         trace, target = batch
         if len(target.shape) > 1:
             target = target.view(-1, target.size(-1))
-        classifier_logits, classifier_loss = self._classifier_step(trace, target, train=np.random.rand() < self.classifier_step_prob)
+        if self.split_training_steps is not None:
+            if self.step_count < self.split_training_steps:
+                train_classifier = True
+                train_obfuscator = False
+            else:
+                train_classifier = False
+                train_obfuscator = True
+        else:
+            train_classifier = np.random.rand() < self.classifier_step_prob
+            train_obfuscator = np.random.rand() < self.obfuscator_step_prob
+        classifier_logits, classifier_loss = self._classifier_step(trace, target, train=train_classifier)
         with torch.no_grad():
-            classifier_clean_logits = self._compute_logits(torch.cat([trace, torch.zeros_like(trace)], dim=1))
-        obfuscator_loss = self._obfuscator_step(trace, target, train=np.random.randn() < self.obfuscator_step_prob, first_batch=batch_idx==0)
+            classifier_clean_logits = self._compute_logits(trace, torch.zeros_like(trace))
+        obfuscator_loss = self._obfuscator_step(trace, target, train=train_obfuscator, first_batch=batch_idx==0)
         self.train_obfuscated_accuracy(classifier_logits, target)
         self.train_clean_accuracy(classifier_clean_logits, target)
         self.train_obfuscated_rank(classifier_logits, target)
@@ -215,6 +240,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         self.log('train-clean-rank', self.train_clean_rank, on_epoch=True, on_step=False, prog_bar=False)
         self.log('min-obf-weight', nn.functional.sigmoid(self.unsquashed_obfuscation_weights).min(), on_epoch=True, on_step=False, prog_bar=False)
         self.log('max-obf-weight', nn.functional.sigmoid(self.unsquashed_obfuscation_weights).max(), on_epoch=True, on_step=False, prog_bar=False)
+        self.step_count += 1
     
     def validation_step(self, batch):
         trace, target = batch
@@ -222,7 +248,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
             target = target.view(-1, target.size(-1))
         classifier_logits, classifier_loss = self._classifier_step(trace, target)
         with torch.no_grad():
-            classifier_clean_logits = self._compute_logits(torch.cat([trace, torch.zeros_like(trace)], dim=1))
+            classifier_clean_logits = self._compute_logits(trace, torch.zeros_like(trace))
         obfuscator_loss = self._obfuscator_step(trace, target)
         self.val_obfuscated_accuracy(classifier_logits, target)
         self.val_clean_accuracy(classifier_clean_logits, target)
