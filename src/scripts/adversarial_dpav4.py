@@ -36,7 +36,7 @@ for seed in seeds:
         logging_dir = os.path.join(get_trial_dir(), f'lambda={norm_penalty}__seed={seed}')
         training_module = AdversarialLocalizationModule(
             classifier_name='sca-cnn',
-            classifier_kwargs={'input_shape': (2, profiling_dataset.timesteps_per_trace)},
+            classifier_kwargs={'input_shape': (1, profiling_dataset.timesteps_per_trace)},
             classifier_optimizer_name='AdamW',
             obfuscator_optimizer_name='AdamW',
             classifier_optimizer_kwargs={'lr': 6e-6},

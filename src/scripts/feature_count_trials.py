@@ -33,7 +33,7 @@ def extract_trace(trace):
 DATASET_SIZE = 10000
 TOTAL_FEATURE_COUNT = 100
 TRAINING_EPOCHS = 100
-L2_NORM_PENALTY = 0.1*np.log(2)
+L2_NORM_PENALTY = np.log(2)
 SAVE_DIR = os.path.join(OUTPUT_DIR, 'feature_count_trials')
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -49,7 +49,8 @@ if not os.path.exists(os.path.join(SAVE_DIR, 'results.pickle')):
                 'datapoint_count': DATASET_SIZE,
                 'random_feature_count': TOTAL_FEATURE_COUNT - easy_feature_count,
                 'easy_feature_count': easy_feature_count,
-                'no_hard_feature': True
+                'no_hard_feature': True,
+                'easy_feature_sigma': 100.
             }
             train_dataset = TwoSpiralsDataset(**dataset_kwargs)
             val_dataset = TwoSpiralsDataset(**dataset_kwargs)
