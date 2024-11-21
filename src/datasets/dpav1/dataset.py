@@ -22,4 +22,7 @@ class DPAv1(Dataset):
         self.keys = []
         self.plaintexts = []
         self.ciphertexts = []
-        
+        for filename in os.listdir(base_dir):
+            if not filename.split('.')[-1] == 'bin':
+                continue
+            path = os.path.join(base_dir, filename)

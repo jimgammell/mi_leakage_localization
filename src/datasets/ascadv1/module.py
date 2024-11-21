@@ -30,7 +30,7 @@ class DataModule(L.LightningDataModule):
         super().__init__()
     
     def setup(self, stage: str):
-        self.train_dataset = ASCADv1(root=self.root, train=True)
+        self.train_dataset = ASCADv1(root=self.root, train=True, **self.dataset_kwargs)
         if (self.data_mean is None) or (self.data_var is None):
             self.data_mean, self.data_var = calculate_dataset_stats(self.train_dataset)
         self.data_mean, self.data_var = map(
@@ -48,7 +48,7 @@ class DataModule(L.LightningDataModule):
         self.val_indices = np.array([x for x in np.arange(len(self.train_dataset)) if not(x in self.train_indices)])
         self.val_dataset = Subset(self.train_dataset, self.val_indices)
         self.train_dataset = Subset(self.train_dataset, self.train_indices)
-        self.test_dataset = ASCADv1(self.root, train=False, transform=transform, target_transform=target_transform)
+        self.test_dataset = ASCADv1(self.root, train=False, transform=transform, target_transform=target_transform, **self.dataset_kwargs)
         if not 'num_workers' in self.dataloader_kwargs.keys():
             self.dataloader_kwargs['num_workers'] = max(os.cpu_count()//10, 1)
     

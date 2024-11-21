@@ -7,11 +7,20 @@ from datasets.dpav4 import DPAv4
 from datasets.aes_pt_v2 import AES_PTv2
 from datasets.aes_hd import AES_HD
 from datasets.ed25519_wolfssl import ED25519
+from datasets.one_truth_prevails import OneTruthPrevails
 from utils.calculate_cpa import calculate_cpa
 from utils.calculate_snr import calculate_snr
 from utils.calculate_sosd import calculate_sosd
 
+set_verbosity(True)
+
 experiments = {
+    'one_truth_prevails': {
+        'constructor': OneTruthPrevails,
+        'root': os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads', 'one_truth_prevails'),
+        'kwargs': {'mmap_profiling_dataset': True},
+        'target': ['label']
+    },
     'ascadv1-fixed': {
         'constructor': ASCADv1,
         'root': os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads', 'ascadv1'),

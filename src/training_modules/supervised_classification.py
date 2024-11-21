@@ -30,6 +30,7 @@ class SupervisedClassificationModule(L.LightningModule):
         if self.learning_rate is None:
             assert 'lr' in self.optimizer_kwargs.keys()
             self.learning_rate = self.optimizer_kwargs['lr']
+        self.epochs_seen = 0
     
     def configure_optimizers(self):
         if isinstance(self.optimizer_name, str):
