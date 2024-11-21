@@ -37,8 +37,8 @@ TRAINING_EPOCHS = 100
 SAVE_DIR = os.path.join(OUTPUT_DIR, 'lambda_sweep_xor')
 os.makedirs(SAVE_DIR, exist_ok=True)
 SIGMA = 1e1
-SEED_COUNT = 5
-LAMBDA_VALS = np.log(2) * np.concatenate([np.logspace(-6, -2, 20), np.logspace(-2, 2, 60), np.logspace(2, 6, 20)])
+SEED_COUNT = 1
+LAMBDA_VALS = np.log(2) * np.concatenate([np.logspace(-2, 2, 100)])
 if not os.path.exists(os.path.join(SAVE_DIR, 'results.pickle')):
     all_vals = np.full((len(LAMBDA_VALS), SEED_COUNT, 4), np.nan, dtype=float)
     for seed in range(SEED_COUNT):
@@ -48,7 +48,7 @@ if not os.path.exists(os.path.join(SAVE_DIR, 'results.pickle')):
         std = train_dataset.x.std(axis=0)
         transform = lambda x: (x - mean) / std
         train_dataset.transform = val_dataset.transform = transform
-        data_module = TwoSpiralsDataModule(train_dataset=train_dataset, eval_dataset=val_dataset, train_batch_size=256)
+        data_module = TwoSpiralsDataModule(train_dataset=train_dataset, eval_dataset=val_dataset, train_batch_size=1024)
         logging_dir = os.path.join(SAVE_DIR, f'classifiers_pretrain__seed_{seed}.ckpt')
         if os.path.exists(logging_dir):
             shutil.rmtree(logging_dir)
@@ -57,11 +57,11 @@ if not os.path.exists(os.path.join(SAVE_DIR, 'results.pickle')):
             classifier_name='multilayer-perceptron',
             classifier_kwargs={'input_shape': (3+RANDOM_FEATURE_COUNT,), 'output_classes': 2},
             classifier_optimizer_name='AdamW',
-            obfuscator_optimizer_name='AdamW',
+            obfuscator_optimizer_name='LBFGS',
             obfuscator_l2_norm_penalty=np.log(2),
             split_training_steps=TRAINING_EPOCHS*len(data_module.train_dataloader()),
             classifier_optimizer_kwargs={'lr': 2e-4},
-            obfuscator_optimizer_kwargs={'lr': 1e-2},
+            obfuscator_optimizer_kwargs={'lr': 0.1},
             obfuscator_batch_size_multiplier=8,
             normalize_erasure_probs_for_classifier=True,
             additive_noise_augmentation=0.0
@@ -85,17 +85,17 @@ if not os.path.exists(os.path.join(SAVE_DIR, 'results.pickle')):
                 classifier_name='multilayer-perceptron',
                 classifier_kwargs={'input_shape': (3+RANDOM_FEATURE_COUNT,), 'output_classes': 2},
                 classifier_optimizer_name='AdamW',
-                obfuscator_optimizer_name='AdamW',
+                obfuscator_optimizer_name='LBFGS',
                 obfuscator_l2_norm_penalty=lambda_val,
                 split_training_steps=0,
                 classifier_optimizer_kwargs={'lr': 2e-4},
-                obfuscator_optimizer_kwargs={'lr': 1e-2},
+                obfuscator_optimizer_kwargs={'lr': 0.1},
                 obfuscator_batch_size_multiplier=8,
                 normalize_erasure_probs_for_classifier=True,
                 additive_noise_augmentation=0.0
             )
             trainer = Trainer(
-                max_epochs=5*TRAINING_EPOCHS,
+                max_epochs=10,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
                 devices=1,
@@ -124,12 +124,13 @@ ax.set_xlabel('Norm penalty: $\lambda$')
 ax.set_ylabel('ALL (ours): $\lambda \gamma_t^*$')
 ax.plot(LAMBDA_VALS, LAMBDA_VALS, color='black', linestyle='--', label='$\lambda$ (saturation value)')
 for feature_idx, kwargs in zip(range(4), kwargss):
-    ax.plot(LAMBDA_VALS, np.median(all_vals[:, :, feature_idx], axis=1)/(10), marker='.', linestyle='none', markersize=2, **kwargs)
-    ax.fill_between(LAMBDA_VALS, all_vals[:, :, feature_idx].min(axis=1)/(10), all_vals[:, :, feature_idx].max(axis=1)/(10), alpha=0.25, **kwargs)
+    ax.plot(LAMBDA_VALS, np.median(all_vals[:, :, feature_idx], axis=1), marker='.', linestyle='none', markersize=2, **kwargs)
+    ax.fill_between(LAMBDA_VALS, all_vals[:, :, feature_idx].min(axis=1), all_vals[:, :, feature_idx].max(axis=1), alpha=0.25, **kwargs)
 ax.set_yscale('log')
 handles = [mlines.Line2D([], [], **kwargs) for kwargs in kwargss]
 handles.append(mlines.Line2D([], [], color='gray', label='Median (5 seeds)'))
 handles.append(mpatches.Patch(color='gray', label='Min -- Max (5 seeds)', alpha=0.25))
 ax.legend(handles=handles, loc='lower right')
+ax.set_ylim(1e-5, 1e2)
 fig.tight_layout()
 fig.savefig(os.path.join(SAVE_DIR, 'lambda_sweep.pdf'))

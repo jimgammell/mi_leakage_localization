@@ -4,6 +4,9 @@ import pickle
 from _common import *
 from datasets.ascadv1 import ASCADv1
 from datasets.dpav4 import DPAv4
+from datasets.aes_pt_v2 import AES_PTv2
+from datasets.aes_hd import AES_HD
+from datasets.ed25519_wolfssl import ED25519
 from utils.calculate_cpa import calculate_cpa
 from utils.calculate_snr import calculate_snr
 from utils.calculate_sosd import calculate_sosd
@@ -27,11 +30,31 @@ experiments = {
         'kwargs': {},
         'target': ['subbytes']
     },
-    'aes-ptv2': {
-        'constructor': AES_PTv2,
-        'root': os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads', 'aes_pt_v2'),
-        'kwargs': {'devices': ['D1', 'D2', 'D3', 'D4'], 'countermeasure': 'Unprotected'},
-        'target': ['subbytes', 'r_out', 'subbytes__r_out']
+    'aes_hd': {
+        'constructor': AES_HD,
+        'root': os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads', 'aes_hd'),
+        'kwargs': {},
+        'target': ['label']
+    },
+    'aes_hd_ext': {
+        'constructor': AES_HD,
+        'root': os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads', 'aes_hd_ext'),
+        'kwargs': {'extended_version': True},
+        'target': ['label']
+    },
+    'one_trace_is_all_it_takes': {
+        'constructor': ED25519,
+        'root': os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads', 'one_trace_is_all_it_takes'),
+        'kwargs': {},
+        'target': ['label']
+    },
+    **{
+        f'aes-ptv2-D{dev_num}': {
+            'constructor': AES_PTv2,
+            'root': os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads', 'aes_pt_v2'),
+            'kwargs': {'devices': [f'D{dev_num}'], 'countermeasure': 'Unprotected'},
+            'target': ['subbytes']
+        } for dev_num in [1, 2, 3, 4]
     }
 }
 

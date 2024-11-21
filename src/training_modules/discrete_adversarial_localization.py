@@ -88,7 +88,8 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         else:
             weight_decay = 0.0
         optimizer_kwargs = {key: val for key, val in optimizer_kwargs.items() if key not in ('lr', 'weight_decay')}
-        optimizer_kwargs.update({'weight_decay': 0.0})
+        if optimizer_constructor not in [optim.LBFGS]:
+            optimizer_kwargs.update({'weight_decay': 0.0})
         if prefix == 'classifier':
             yes_weight_decay, no_weight_decay = [], []
             for name, param in model.named_parameters():
@@ -166,6 +167,59 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
 
     @torch.no_grad()
     def _obfuscator_step(self, trace, target, train=False, first_batch=False):
+        trace = trace.repeat(self.obfuscator_batch_size_multiplier, *((len(trace.shape)-1)*[1]))
+        target = target.repeat(self.obfuscator_batch_size_multiplier, *((len(target.shape)-1)*[1]))
+        batch_size = target.size(0)
+        loss_rv = None
+
+        def closure():
+            nonlocal loss_rv
+            self.unsquashed_obfuscation_weights.data = torch.clamp(self.unsquashed_obfuscation_weights.data, min=-1e6, max=1e6)
+            obfuscation_weights = nn.functional.sigmoid(self.unsquashed_obfuscation_weights)
+            l2_norm = obfuscation_weights.norm(p=2)**2
+            binary_noise = self._sample_binary_noise(trace)
+            logits = self._compute_logits(binary_noise*trace, binary_noise)
+            log_likelihood = -nn.functional.cross_entropy(logits, target, reduction='none')
+            loss = 0.5*self.obfuscator_l2_norm_penalty*l2_norm + log_likelihood.mean()
+            if train: # manually compute gradient
+                l2_norm_grad = obfuscation_weights*obfuscation_weights*(1-obfuscation_weights)
+                obfuscation_weights = obfuscation_weights.repeat(batch_size, *((len(trace.shape)-1)*[1]))
+                log_likelihood = log_likelihood.view(-1, *((len(trace.shape)-1)*[1]))
+                if self.log_likelihood_baseline_ema is not None:
+                    if not hasattr(self, 'log_likelihood_mean'):
+                        self.log_likelihood_mean = log_likelihood.mean()
+                    else:
+                        self.log_likelihood_mean = (
+                            self.log_likelihood_baseline_ema*self.log_likelihood_mean + (1-self.log_likelihood_baseline_ema)*log_likelihood.mean()
+                        )
+                    log_likelihood -= self.log_likelihood_mean
+                log_likelihood_grad = (
+                    log_likelihood*((1-binary_noise)*(1-obfuscation_weights) - binary_noise*obfuscation_weights)
+                ).mean(dim=0)
+                grad = self.obfuscator_l2_norm_penalty*l2_norm_grad + log_likelihood_grad
+                self.unsquashed_obfuscation_weights.grad = grad
+            loss_rv = loss
+            return loss
+
+        if train:
+            _, obfuscator_optimizer = self.optimizers()
+            if self.obfuscator_lr_scheduler_name is not None:
+                scheduler_rv = self.lr_schedulers()
+                if self.classifier_lr_scheduler_name is not None:
+                    obfuscator_lr_scheduler = scheduler_rv[-1]
+                else:
+                    obfuscator_lr_scheduler = scheduler_rv
+            self.toggle_optimizer(obfuscator_optimizer)
+            obfuscator_optimizer.step(closure)
+            if self.obfuscator_lr_scheduler_name is not None:
+                obfuscator_lr_scheduler.step()
+            self.untoggle_optimizer(obfuscator_optimizer)
+        if loss_rv is None:
+            closure()
+        return loss_rv
+    
+    @torch.no_grad()
+    def _dontuse_obfuscator_step(self, trace, target, train=False, first_batch=False):
         trace = trace.repeat(self.obfuscator_batch_size_multiplier, *((len(trace.shape)-1)*[1]))
         target = target.repeat(self.obfuscator_batch_size_multiplier, *((len(target.shape)-1)*[1]))
         batch_size = target.size(0)

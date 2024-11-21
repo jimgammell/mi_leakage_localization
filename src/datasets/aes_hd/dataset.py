@@ -7,6 +7,10 @@ from torch.utils.data import Dataset
 
 from utils.aes import *
 
+# Note: labels are given by AES_INVERSE_SBOX[ciphertexts[:, 11]] ^ ciphertexts[:, 7] -- I think this is backwards from what a few papers state
+
+KEY = np.array([0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c], dtype=np.uint8)
+
 @jit(nopython=True)
 def to_key_preds(int_var_preds, args, constants=None):
     if args.ndim == 1:
@@ -47,11 +51,12 @@ class AES_HD(Dataset):
                 self.targets = np.load(os.path.join(self.root, 'AES_HD_dataset', 'attack_labels_AES_HD.npy')).astype(np.uint8)
                 self.ciphertexts = np.load(os.path.join(self.root, 'AES_HD_dataset', 'attack_ciphertext_AES_HD.npy')).astype(np.uint8)
             self.metadata = {
+                'label': self.targets,
                 'ciphertext': self.ciphertexts,
                 'ciphertext_11': self.ciphertexts[:, 11],
                 'ciphertext_7': self.ciphertexts[:, 7],
                 'last_state': self.targets,
-                'key': np.zeros_like(self.targets)  #self.keys[:, 7]
+                'key': np.zeros_like(self.targets) # Not the actual key, but the output of the key schedule at this point in the algorithm
             }
         else:
             with h5py.File(os.path.join(self.root, 'aes_hd_ext.h5'), 'r') as f:
@@ -62,8 +67,9 @@ class AES_HD(Dataset):
                 self.traces = np.array(dataset['traces'], dtype=np.float32)
                 self.plaintexts = np.array(dataset['metadata']['plaintext'], dtype=np.uint8)
                 self.ciphertexts = np.array(dataset['metadata']['ciphertext'], dtype=np.uint8)
-            self.targets = AES_INVERSE_SBOX[np.zeros_like(self.ciphertexts[:, 11]) ^ self.ciphertexts[:, 11]] ^ self.ciphertexts[:, 7]
+            self.targets = AES_INVERSE_SBOX[self.ciphertexts[:, 11]] ^ self.ciphertexts[:, 7]
             self.metadata = {
+                'label': self.targets,
                 'ciphertext': self.ciphertexts,
                 'ciphertext_11': self.ciphertexts[:, 11],
                 'ciphertext_7': self.ciphertexts[:, 7],
