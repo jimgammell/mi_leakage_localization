@@ -9,18 +9,16 @@ from tensorboard.backend.event_processing import event_accumulator
 from lightning.pytorch.callbacks import ModelCheckpoint
 
 from _common import *
-from datasets.one_truth_prevails import OneTruthPrevails, OneTruthPrevails_DataModule
+from datasets.ed25519_wolfssl import ED25519, ED25519_DataModule
 from training_modules.supervised_classification import SupervisedClassificationModule
 from utils.localization_via_interpretability import compute_gradvis, compute_input_x_gradient, compute_feature_ablation_map
 
 LEARNING_RATES = np.logspace(-6, -2, 25)
-EPOCHS = 1
-TRAIN_PROP = 0.999
+EPOCHS = 10
 
 min_val_ranks = []
-data_module = OneTruthPrevails_DataModule(
-    root=os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads', 'one_truth_prevails'),
-    train_prop=TRAIN_PROP
+data_module = ED25519_DataModule(
+    root=os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads', 'one_trace_is_all_it_takes')
 )
 data_module.setup('')
 
@@ -37,12 +35,15 @@ for learning_rate in LEARNING_RATES:
         training_module = SupervisedClassificationModule(
             model_name='sca-cnn',
             optimizer_name='AdamW',
-            model_kwargs={'input_shape': (1, data_module.train_dataset.dataset.timesteps_per_trace), 'output_classes': 2},
-            optimizer_kwargs={'lr': learning_rate}
+            model_kwargs={
+                'input_shape': (1, data_module.train_dataset.dataset.timesteps_per_trace),
+                'output_classes': 16
+            },
+            optimizer_kwargs={'lr': learning_rate},
+            additive_noise_augmentation=0.0
         )
         trainer = Trainer(
             max_epochs=EPOCHS,
-            val_check_interval=int(100*TRAIN_PROP),
             default_root_dir=logging_dir,
             accelerator='gpu',
             devices=1,
@@ -95,7 +96,6 @@ else:
         model_kwargs={'input_shape': (1, data_module.train_dataset.dataset.timesteps_per_trace)},
         optimizer_kwargs={'lr': optimal_learning_rate}
     )
-    training_module = torch.compile(training_module)
     checkpoint = ModelCheckpoint(
         filename='best',
         monitor='val-rank',

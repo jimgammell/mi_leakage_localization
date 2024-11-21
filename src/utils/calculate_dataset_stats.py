@@ -6,8 +6,8 @@ from utils.chunk_iterator import chunk_iterator
 
 def calculate_dataset_stats(dataset: Dataset, chunk_size: int = 1024, calc_var=True):
     base_dataset = dataset
-    while isinstance(dataset, Subset):
-        dataset = dataset.dataset
+    while isinstance(base_dataset, Subset):
+        base_dataset = base_dataset.dataset
     
     orig_transform = copy(base_dataset.transform)
     base_dataset.transform = None

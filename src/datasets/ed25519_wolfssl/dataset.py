@@ -29,6 +29,7 @@ class ED25519(Dataset):
         assert self.dataset_length == len(self.labels)
         self.data_shape = self.traces[0].shape
         self.timesteps_per_trace = np.prod(self.data_shape)
+        self.return_metadata = False
 
     def __getitem__(self, indices):
         trace = self.traces[indices, ...]
