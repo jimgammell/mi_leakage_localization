@@ -12,7 +12,7 @@ from _common import *
 from datasets.aes_pt_v2 import AES_PTv2, AES_PTv2_DataModule
 from training_modules.supervised_classification import SupervisedClassificationModule
 
-DEVICE_IDS = ['D1', 'D2', 'D3', 'D4']
+DEVICE_IDS = ['D1']
 LEARNING_RATES = np.logspace(-6, -2, 25)
 EPOCHS = 100
 

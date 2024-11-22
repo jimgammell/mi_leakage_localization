@@ -133,10 +133,11 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
     @torch.no_grad()
     def _sample_binary_noise(self, trace: torch.Tensor, normalize: bool = False):
         batch_size = trace.size(0)
-        erasure_probs = nn.functional.sigmoid(self.unsquashed_obfuscation_weights)
         if normalize:
-            erasure_probs = 0.5*torch.ones_like(erasure_probs)
-        binary_noise = (1 - erasure_probs).repeat(batch_size, *((len(trace.shape)-1)*[1])).bernoulli()
+            erasure_probs = 0.5*torch.ones_like(trace)
+        else:
+            erasure_probs = nn.functional.sigmoid(self.unsquashed_obfuscation_weights).repeat(batch_size, *(len(trace.shape[1:])*[1]))
+        binary_noise = (1 - erasure_probs).bernoulli()
         return binary_noise
     
     #@torch.no_grad()
@@ -294,6 +295,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         self.log('train-clean-rank', self.train_clean_rank, on_epoch=True, on_step=False, prog_bar=False)
         self.log('min-obf-weight', nn.functional.sigmoid(self.unsquashed_obfuscation_weights).min(), on_epoch=True, on_step=False, prog_bar=False)
         self.log('max-obf-weight', nn.functional.sigmoid(self.unsquashed_obfuscation_weights).max(), on_epoch=True, on_step=False, prog_bar=False)
+        self.log('mean-obf-weight', nn.functional.sigmoid(self.unsquashed_obfuscation_weights).mean(), on_epoch=True, on_step=False, prog_bar=False)
         self.step_count += 1
     
     def validation_step(self, batch):

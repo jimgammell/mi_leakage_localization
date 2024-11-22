@@ -14,7 +14,7 @@ from training_modules.supervised_classification import SupervisedClassificationM
 from utils.localization_via_interpretability import compute_gradvis, compute_input_x_gradient, compute_feature_ablation_map
 
 LEARNING_RATES = np.logspace(-6, -2, 25)
-EPOCHS = 10
+EPOCHS = 100
 
 min_val_ranks = []
 data_module = AES_HD_DataModule(
@@ -38,10 +38,10 @@ for learning_rate in LEARNING_RATES:
             model_kwargs={
                 'input_shape': (1, data_module.train_dataset.dataset.timesteps_per_trace),
                 'output_classes': 256,
-                'head_kwargs': {'hidden_dims': 16}
+                'head_kwargs': {'hidden_dims': 64}
             },
             optimizer_kwargs={'lr': learning_rate},
-            additive_noise_augmentation=0.0
+            additive_noise_augmentation=1.0
         )
         training_module.model = torch.compile(training_module.model)
         trainer = Trainer(
@@ -98,7 +98,6 @@ else:
         model_kwargs={'input_shape': (1, data_module.train_dataset.dataset.timesteps_per_trace)},
         optimizer_kwargs={'lr': optimal_learning_rate}
     )
-    training_module = torch.compile(training_module)
     checkpoint = ModelCheckpoint(
         filename='best',
         monitor='val-rank',

@@ -8,7 +8,8 @@ class ED25519(Dataset):
         root=None,
         train=True,
         transform=None,
-        target_transform=None
+        target_transform=None,
+        countermeasure='Unprotected'
     ):
         super().__init__()
         self.root = root

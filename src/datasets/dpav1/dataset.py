@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 from torch.utils.data import Dataset
 
@@ -25,4 +26,7 @@ class DPAv1(Dataset):
         for filename in os.listdir(base_dir):
             if not filename.split('.')[-1] == 'bin':
                 continue
+            key = re.search(r"k=([0-9a-f]+)", filename).group(1)
+            plaintext = re.search(r"m=([0-9a-f]+)", filename).group(1)
+            ciphertext = re.search(r"c=([0-9a-f]+)", filename).group(1)
             path = os.path.join(base_dir, filename)
