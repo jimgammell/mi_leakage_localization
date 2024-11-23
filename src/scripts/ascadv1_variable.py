@@ -17,7 +17,7 @@ from training_modules.discrete_adversarial_localization import DiscreteAdversari
 from utils.localization_via_interpretability import compute_gradvis, compute_input_x_gradient, compute_feature_ablation_map
 
 LEARNING_RATES = np.logspace(-6, -2, 25)
-LAMBDA_VALS = np.logspace(-2, -1, 25)
+LAMBDA_VALS = np.logspace(-4, -2, 25)
 EPOCHS = 100
 
 def get_training_curves(logging_dir):
@@ -228,7 +228,7 @@ if training_curves is None:
         obfuscator_batch_size_multiplier=8,
         normalize_erasure_probs_for_classifier=True,
         obfuscator_l2_norm_penalty=1.0,
-        split_training_steps=EPOCHS*len(data_module.train_dataloader()),
+        split_training_steps=2*EPOCHS*len(data_module.train_dataloader()),
         additive_noise_augmentation=1.0
     )
     checkpoint = ModelCheckpoint(
@@ -238,7 +238,7 @@ if training_curves is None:
         mode='min'
     )
     trainer = Trainer(
-        max_epochs=EPOCHS,
+        max_epochs=2*EPOCHS,
         default_root_dir=logging_dir,
         accelerator='gpu',
         devices=1,
@@ -283,14 +283,14 @@ for lambda_val in LAMBDA_VALS:
             classifier_optimizer_name='AdamW',
             classifier_optimizer_kwargs={'lr': optimal_learning_rate},
             obfuscator_optimizer_name='AdamW',
-            obfuscator_optimizer_kwargs={'lr': 1e-1},
+            obfuscator_optimizer_kwargs={'lr': 1e-2},
             obfuscator_batch_size_multiplier=8,
-            normalize_erasure_probs_for_classifier=True,
+            normalize_erasure_probs_for_classifier=False,
             obfuscator_l2_norm_penalty=lambda_val,
-            split_training_steps=0
+            additive_noise_augmentation=1.0
         )
         trainer = Trainer(
-            max_epochs=EPOCHS,
+            max_epochs=10,
             default_root_dir=logging_dir,
             accelerator='gpu',
             devices=1,

@@ -48,7 +48,8 @@ class DPAv4(Dataset):
         self.metadata = {
             'subbytes': self.targets,
             'plaintext': self.plaintexts[:, 0],
-            'key': self.key[0] * np.ones_like(self.targets)
+            'key': self.key[0] * np.ones_like(self.targets),
+            'label': self.targets
         }
         if not self.train:
             self.offset = np.load(os.path.join(self.root, 'DPAv4_dataset', 'attack_offset_dpav4.npy'))[:, 0].astype(np.uint8)
