@@ -9,7 +9,7 @@ def extract_trace(trace):
     y = np.array([u.value for u in trace])
     return (x, y)
 
-def get_training_curves(self, logging_dir):
+def get_training_curves(logging_dir):
     ea = event_accumulator.EventAccumulator(os.path.join(logging_dir, 'lightning_output', 'version_0'))
     ea.Reload()
     training_curves = {key: extract_trace(ea.Scalars(key)) for key in ea.Tags()['scalars']}

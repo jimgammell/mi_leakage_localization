@@ -26,33 +26,78 @@ def main():
     seed_count = clargs.seed_count
     assert seed_count > 0
     
+    supervised_classifier_kwargs = dict(
+        model_name='sca-cnn',
+        optimizer_name='AdamW',
+        optimizer_kwargs={'lr': 2e-4}
+    )
+    all_style_classifier_kwargs = dict(
+        classifier_name='sca-cnn',
+        classifier_optimizer_name='AdamW',
+        classifier_optimizer_kwargs={'lr': 2e-4},
+        obfuscator_optimizer_name='AdamW',
+        obfuscator_optimizer_kwargs={'lr': 1e-2},
+        obfuscator_batch_size_multiplier=8,
+        obfuscator_l2_norm_penalty=0.5*np.log(256)
+    )
+    
     if dataset == 'ASCADv1-fixed':
-        from datasets.ascadv1 import ASCADv1
-        profiling_dataset = ASCADv1(root=os.path.join(DATA_DIR, 'ascadv1'), train=True)
-        attack_dataset = ASCADv1(root=os.path.join(DATA_DIR, 'ascadv1'), train=False)
+        from datasets.ascadv1 import ASCADv1_DataModule
+        data_module = ASCADv1_DataModule(root=os.path.join(DATA_DIR, 'ascadv1'))
+        data_module.setup('')
+        profiling_dataset = data_module.profiling_dataset
+        attack_dataset = data_module.attack_dataset
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
+        classifier_learning_rates = np.logspace(-6, -2, 25)
+        epoch_count = 100
     elif dataset == 'ASCADv1-variable':
-        from datasets.ascadv1 import ASCADv1
-        profiling_dataset = ASCADv1(root=os.path.join(DATA_DIR, 'ascadv1'), train=True, variable_keys=True)
-        attack_dataset = ASCADv1(root=os.path.join(DATA_DIR, 'ascadv1'), train=False, variable_keys=True)
+        from datasets.ascadv1 import ASCADv1_DataModule
+        data_module = ASCADv1_DataModule(root=os.path.join(DATA_DIR, 'ascadv1'), dataset_kwargs={'variable_keys': True})
+        data_module.setup('')
+        profiling_dataset = data_module.profiling_dataset
+        attack_dataset = data_module.profiling_dataset
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
+        classifier_learning_rates = np.logspace(-6, -2, 25)
+        epoch_count = 100
     elif dataset == 'DPAv4':
-        from datasets.dpav4 import DPAv4
-        profiling_dataset = DPAv4(root=os.path.join(DATA_DIR, 'dpav4'), train=True)
-        attack_dataset = DPAv4(root=os.path.join(DATA_DIR, 'dpav4'), train=False)
+        from datasets.dpav4 import DPAv4_DataModule
+        data_module = DPAv4_DataModule(root=os.path.join(DATA_DIR, 'dpav4'))
+        data_module.setup('')
+        profiling_dataset = data_module.profiling_dataset
+        attack_dataset = data_module.attack_dataset
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
+        classifier_learning_rates = np.logspace(-6, -2, 25)
+        epoch_count = 10
     elif dataset == 'AES_HD':
-        from datasets.aes_hd import AES_HD
-        profiling_dataset = AES_HD(root=os.path.join(DATA_DIR, 'aes_hd'), train=True)
-        attack_dataset = AES_HD(root=os.path.join(DATA_DIR, 'aes_hd'), train=False)
+        from datasets.aes_hd import AES_HD_DataModule
+        data_module = AES_HD_DataModule(root=os.path.join(DATA_DIR, 'aes_hd'))
+        data_module.setup('')
+        profiling_dataset = data_module.profiling_dataset
+        attack_dataset = data_module.attack_dataset
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
+        classifier_learning_rates = np.logspace(-6, -2, 25)
+        epoch_count = 100
     elif dataset == 'AES_PTv2':
         from datasets.aes_pt_v2 import AES_PTv2
         raise NotImplementedError
     elif dataset == 'OTiAiT':
-        from datasets.ed25519_wolfssl import ED25519
-        profiling_dataset = ED25519(root=os.path.join(DATA_DIR, 'one_trace_is_all_it_takes'), train=True)
-        attack_dataset = ED25519(root=os.path.join(DATA_DIR, 'one_trace_is_all_it_takes'), train=False)
+        from datasets.ed25519_wolfssl import ED25519_DataModule
+        data_module = ED25519_DataModule(root=os.path.join(DATA_DIR, 'one_trace_is_all_it_takes'))
+        data_module.setup('')
+        profiling_dataset = data_module.profiling_dataset
+        attack_dataset = data_module.attack_dataset
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
+        classifier_learning_rates = np.logspace(-6, -2, 25)
+        epoch_count = 10
     elif dataset == 'OTP':
-        from datasets.one_truth_prevails import OneTruthPrevails
-        profiling_dataset = OneTruthPrevails(root=os.path.join(DATA_DIR, 'one_truth_prevails'), train=True, mmap_profiling_dataset=True)
-        attack_dataset = OneTruthPrevails(root=os.path.join(DATA_DIR, 'one_truth_prevails'), train=False)
+        from datasets.one_truth_prevails import OneTruthPrevails_DataModule
+        data_module = OneTruthPrevails_DataModule(root=os.path.join(DATA_DIR, 'one_truth_prevails'), train_prop=0.999, val_prop=0.001)
+        data_module.setup('')
+        profiling_dataset = data_module.profiling_dataset
+        attack_dataset = data_module.attack_dataset
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
+        classifier_learning_rates = np.logspace(-6, -2, 25)
+        epoch_count = 1
     else:
         assert False
     
@@ -60,12 +105,17 @@ def main():
         base_dir=os.path.join(OUTPUT_DIR, f'{dataset}_results'),
         profiling_dataset=profiling_dataset,
         attack_dataset=attack_dataset,
-        seed_count=seed_count
+        data_module=data_module,
+        epoch_count=epoch_count,
+        seed_count=seed_count,
+        default_supervised_classifier_kwargs=supervised_classifier_kwargs,
+        default_all_style_classifier_kwargs=all_style_classifier_kwargs
     )
     trial.compute_random_baseline()
     trial.compute_first_order_baselines()
     trial.eval_leakage_assessments(template_attack=not(dataset in ['OTiAiT', 'OTP']))
     trial.plot_everything()
+    optimal_learning_rate = trial.supervised_lr_sweep(classifier_learning_rates)
 
 if __name__ == '__main__':
     main()

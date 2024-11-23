@@ -30,10 +30,10 @@ class DataModule(L.LightningDataModule):
         super().__init__()
     
     def setup(self, stage: Any):
-        stage = None
-        self.train_dataset = DPAv4(root=self.root, train=True)
+        self.profiling_dataset = DPAv4(root=self.root, train=True)
+        self.attack_dataset = DPAv4(root=self.root, train=False)
         if (self.data_mean is None) or (self.data_var is None):
-            self.data_mean, self.data_var = calculate_dataset_stats(self.train_dataset)
+            self.data_mean, self.data_var = calculate_dataset_stats(self.profiling_dataset)
         self.data_mean, self.data_var = map(
             lambda x: torch.tensor(x, dtype=torch.float32) if isinstance(x, np.ndarray) else x.to(torch.float32), (self.data_mean, self.data_var)
         )
@@ -43,13 +43,12 @@ class DataModule(L.LightningDataModule):
         ]
         transform = eval_transform = transforms.Compose(basic_transform_mods)
         target_transform = transforms.Lambda(lambda x: torch.tensor(x, dtype=torch.long))
-        self.train_dataset.transform = transform
-        self.train_dataset.target_transform = target_transform
-        self.train_indices = np.random.choice(len(self.train_dataset), int(0.9*len(self.train_dataset)), replace=False)
-        self.val_indices = np.array([x for x in np.arange(len(self.train_dataset)) if not(x in self.train_indices)])
-        self.val_dataset = Subset(self.train_dataset, self.val_indices)
-        self.train_dataset = Subset(self.train_dataset, self.train_indices)
-        self.test_dataset = DPAv4(self.root, train=False, transform=transform, target_transform=target_transform)
+        self.profiling_dataset.transform = self.attack_dataset.transform = transform
+        self.profiling_dataset.target_transform = self.attack_dataset.target_transform = target_transform
+        self.train_indices = np.random.choice(len(self.profiling_dataset), int(0.9*len(self.profiling_dataset)), replace=False)
+        self.val_indices = np.array([x for x in np.arange(len(self.profiling_dataset)) if not(x in self.train_indices)])
+        self.val_dataset = Subset(self.profiling_dataset, self.val_indices)
+        self.train_dataset = Subset(self.profiling_dataset, self.train_indices)
         if not 'num_workers' in self.dataloader_kwargs.keys():
             self.dataloader_kwargs['num_workers'] = os.cpu_count()//10
     
@@ -65,5 +64,5 @@ class DataModule(L.LightningDataModule):
     
     def test_dataloader(self, override_batch_size=None):
         return DataLoader(
-            self.test_dataset, shuffle=False, batch_size=self.eval_batch_size if override_batch_size is None else override_batch_size, **self.dataloader_kwargs
+            self.attack_dataset, shuffle=False, batch_size=self.eval_batch_size if override_batch_size is None else override_batch_size, **self.dataloader_kwargs
         )

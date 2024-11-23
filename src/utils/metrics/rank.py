@@ -17,7 +17,7 @@ def _get_rank(logits: np.ndarray, targets: np.ndarray):
     for batch_idx in range(batch_size):
         target = targets[batch_idx]
         correct_logit = logits[batch_idx, target]
-        rank = (logits[batch_idx, :] >= correct_logit).sum() - 1
+        rank = (logits[batch_idx, :] >= correct_logit).sum()
         ranks[batch_idx] = rank
     return ranks
 

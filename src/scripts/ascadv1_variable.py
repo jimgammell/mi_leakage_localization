@@ -228,7 +228,7 @@ if training_curves is None:
         obfuscator_batch_size_multiplier=8,
         normalize_erasure_probs_for_classifier=True,
         obfuscator_l2_norm_penalty=1.0,
-        split_training_steps=2*EPOCHS*len(data_module.train_dataloader()),
+        split_training_steps=EPOCHS*len(data_module.train_dataloader()),
         additive_noise_augmentation=1.0
     )
     checkpoint = ModelCheckpoint(
@@ -238,7 +238,7 @@ if training_curves is None:
         mode='min'
     )
     trainer = Trainer(
-        max_epochs=2*EPOCHS,
+        max_epochs=EPOCHS,
         default_root_dir=logging_dir,
         accelerator='gpu',
         devices=1,
