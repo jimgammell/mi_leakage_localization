@@ -161,7 +161,7 @@ if not os.path.exists(os.path.join(SAVE_DIR, 'results.pickle')):
                     #classifier_lr_scheduler_name='CosineDecayLRSched',
                     #obfuscator_lr_scheduler_name='CosineDecayLRSched',
                     obfuscator_batch_size_multiplier=8,
-                    normalize_erasure_probs_for_classifier=True,
+                    normalize_erasure_probs_for_classifier=False,
                     additive_noise_augmentation=0.0
                 )
                 trainer = Trainer(

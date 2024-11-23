@@ -113,9 +113,11 @@ def main():
     )
     trial.compute_random_baseline()
     trial.compute_first_order_baselines()
+    trial.supervised_lr_sweep(classifier_learning_rates)
+    trial.train_optimal_supervised_classifier()
+    trial.compute_neural_net_explainability_baselines()
     trial.eval_leakage_assessments(template_attack=not(dataset in ['OTiAiT', 'OTP']))
     trial.plot_everything()
-    optimal_learning_rate = trial.supervised_lr_sweep(classifier_learning_rates)
 
 if __name__ == '__main__':
     main()

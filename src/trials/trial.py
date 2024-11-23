@@ -18,7 +18,7 @@ from utils.calculate_cpa import calculate_cpa
 from utils.calculate_snr import calculate_snr
 from utils.calculate_sosd import calculate_sosd
 
-LEAKAGE_ASSESSMENT_TECHNIQUES = ['random', 'cpa', 'snr', 'sosd']
+LEAKAGE_ASSESSMENT_TECHNIQUES = ['random', 'cpa', 'snr', 'sosd', 'ablation', 'gradvis', 'input_x_grad']
 
 class Trial:
     def __init__(self,
@@ -66,6 +66,8 @@ class Trial:
     
     def compute_first_order_baselines(self):
         self.profiling_dataset.return_metadata = self.attack_dataset.return_metadata = True
+        transform = self.profiling_dataset.transform
+        self.profiling_dataset.transform = None
         if self.load_leakage_assessment('cpa') is None:
             cpa_leakage_assessment = calculate_cpa(self.profiling_dataset, self.profiling_dataset, 'label')[('label', None)].squeeze()
             self.save_leakage_assessment('cpa', cpa_leakage_assessment[np.newaxis, :])
@@ -76,9 +78,16 @@ class Trial:
             sosd_leakage_assessment = calculate_sosd(self.profiling_dataset, self.profiling_dataset, 'label')[('label', None)].squeeze()
             self.save_leakage_assessment('sosd', sosd_leakage_assessment[np.newaxis, :])
         self.profiling_dataset.return_metadata = self.attack_dataset.return_metadata = False
+        self.profiling_dataset.transform = transform
     
     def _plot_leakage_assessment(self, leakage_assessment, ax, **plot_kwargs):
-        ax.plot(leakage_assessment[0, ...].squeeze(), marker='.', markersize=1, linestyle='none', **plot_kwargs)
+        medians = np.median(leakage_assessment, axis=0)
+        mins = np.min(leakage_assessment, axis=0)
+        maxes = np.max(leakage_assessment, axis=0)
+        t = np.arange(leakage_assessment.shape[-1])
+        ax.errorbar(
+            t, medians, yerr=[medians-mins, maxes-medians], fmt='o', markersize=1, linewidth=0.25, **plot_kwargs
+        )
     
     def plot_leakage_assessment(self, name):
         leakage_assessment = self.load_leakage_assessment(name)
@@ -156,6 +165,7 @@ class Trial:
             trainer.fit(training_module, datamodule=self.data_module)
             trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             training_curves = get_training_curves(logging_dir)
+            save_training_curves(training_curves, logging_dir)
         return training_curves
     
     def train_all_style_classifier(self, logging_dir, override_kwargs={}):
@@ -217,7 +227,56 @@ class Trial:
         ax.set_title('Supervised classification learning rate sweep')
         fig.savefig(os.path.join(sweep_base_dir, 'lr_sweep.png'))
         optimal_learning_rate = learning_rates[np.argmin(min_val_ranks)]
-        return optimal_learning_rate
+        self.optimal_learning_rate = optimal_learning_rate
+    
+    def train_optimal_supervised_classifier(self):
+        assert hasattr(self, 'optimal_learning_rate')
+        base_dir = os.path.join(self.base_dir, 'standard_classifier')
+        for seed in range(self.seed_count):
+            set_seed(seed)
+            self.train_supervised_classifier(os.path.join(base_dir, f'seed={seed}'), override_kwargs={'optimizer_kwargs': {'lr': self.optimal_learning_rate}})
+    
+    def train_optimal_all_classifier(self):
+        assert hasattr(self, 'optimal_learning_rate')
+        base_dir = os.path.join(self.base_dir, 'all_classifier')
+        for seed in range(self.seed_count):
+            set_seed(seed)
+            self.train_all_style_classifier(os.path.join(base_dir, f'seed={seed}'), override_kwargs={'classifier_optimizer_kwargs': {'lr': self.optimal_learning_rate}})
+    
+    def load_optimal_supervised_classifier(self, seed):
+        assert hasattr(self, 'optimal_learning_rate')
+        classifier_dir = os.path.join(self.base_dir, 'standard_classifier', f'seed={seed}')
+        checkpoint_path = os.path.join(classifier_dir, 'lightning_output', 'version_0', 'checkpoints', 'best.ckpt')
+        training_module_kwargs = copy(self.default_supervised_classifier_kwargs)
+        training_module_kwargs.update({'optimizer_kwargs': {'lr': self.optimal_learning_rate}})
+        training_module = SupervisedClassificationModule.load_from_checkpoint(
+            checkpoint_path,
+            **training_module_kwargs
+        )
+        return training_module
+    
+    def load_optimal_all_classifier(self, seed):
+        assert hasattr(self, 'optimal_learning_rate')
+        classifier_dir = os.path.join(self.base_dir, 'all_classifier', f'seed={seed}')
+        checkpoint_path = os.path.join(classifier_dir, 'lightning_output', 'version_0', 'checkpoints', 'best.ckpt')
+        training_module_kwargs = copy(self.default_all_style_classifier_kwargs)
+        training_module_kwargs.update({'classifier_optimizer_kwargs': {'lr': self.optimal_learning_rate}})
+        training_module = ALLTrainer.load_from_checkpoint(
+            checkpoint_path,
+            **training_module_kwargs
+        )
+        return training_module
+    
+    def compute_neural_net_explainability_baselines(self):
+        for name, fn in zip(['ablation', 'gradvis', 'input_x_grad'], [compute_feature_ablation_map, compute_gradvis, compute_input_x_gradient]):
+            if self.load_leakage_assessment(name) is None:
+                leakage_assessments = []
+                for seed in range(self.seed_count):
+                    training_module = self.load_optimal_supervised_classifier(seed)
+                    leakage_assessment = fn(training_module, self.profiling_dataset).squeeze()
+                    leakage_assessments.append(leakage_assessment)
+                leakage_assessments = np.stack(leakage_assessments)
+                self.save_leakage_assessment(name, leakage_assessments)
     
     def plot_everything(self):
         for technique_name in LEAKAGE_ASSESSMENT_TECHNIQUES:
