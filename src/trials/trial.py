@@ -10,7 +10,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 
 from common import *
 from .utils import *
-from .localization_assessment import evaluate_template_attack_exploitability
+from .localization_assessment import evaluate_template_attack_exploitability, dnn_ablation
 from training_modules.supervised_classification import SupervisedClassificationModule
 from training_modules.discrete_adversarial_localization import DiscreteAdversarialLocalizationTrainer as ALLTrainer
 from utils.localization_via_interpretability import compute_gradvis, compute_input_x_gradient, compute_feature_ablation_map
@@ -114,6 +114,22 @@ class Trial:
         fig, ax = plt.subplots(figsize=(4, 4))
         self._plot_ta_exploitability(technique_eval['ta_exploitability'], ax, color='blue')
         fig.savefig(os.path.join(self.base_dir, f'{name}_ta_exploitability.png'))
+        plt.close(fig)
+    
+    def plot_dnn_ablation(self, name):
+        if not os.path.exists(os.path.join(self.base_dir, f'{name}_eval.npz')):
+            return
+        technique_eval = np.load(os.path.join(self.base_dir, f'{name}_eval.npz'))
+        if not 'dnn_ablation' in technique_eval.keys():
+            return
+        fig, ax = plt.subplots(figsize=(4, 4))
+        x = 10*np.arange(technique_eval['dnn_ablation'].shape[1])
+        ax.fill_between(x, np.min(technique_eval['dnn_ablation'], axis=0), np.max(technique_eval['dnn_ablation'], axis=0), color='blue', alpha=0.25)
+        ax.plot(x, np.median(technique_eval['dnn_ablation'], axis=0), color='blue')
+        ax.set_xlabel('Number of ablated points')
+        ax.set_ylabel('Mean rank')
+        fig.savefig(os.path.join(self.base_dir, f'{name}_dnn_ablation.png'))
+        plt.close(fig)
     
     def load_leakage_assessments(self):
         leakage_assessments = {}
@@ -130,11 +146,18 @@ class Trial:
                 technique_eval = {}
             else:
                 technique_eval = np.load(os.path.join(self.base_dir, f'{technique_name}_eval.npz'))
+                technique_eval = dict(technique_eval)
             if template_attack and not('ta_exploitability' in technique_eval.keys()):
                 technique_eval['ta_exploitability'] = np.stack([
                     evaluate_template_attack_exploitability(self.profiling_dataset, self.attack_dataset, _leakage_assessment, poi_count=self.template_attack_poi_count)
                     for _leakage_assessment in leakage_assessment
                 ])
+            if not('dnn_ablation' in technique_eval.keys()):
+                evals = []
+                for seed in range(self.seed_count):
+                    classifier = self.load_optimal_supervised_classifier(seed).model
+                    evals.append(dnn_ablation(classifier, self.data_module.test_dataloader(), leakage_assessment[seed, ...]))
+                technique_eval['dnn_ablation'] = np.stack(evals)
             np.savez(os.path.join(self.base_dir, f'{technique_name}_eval.npz'), **technique_eval)
     
     def train_supervised_classifier(self, logging_dir, override_kwargs={}):
@@ -282,3 +305,4 @@ class Trial:
         for technique_name in LEAKAGE_ASSESSMENT_TECHNIQUES:
             self.plot_leakage_assessment(technique_name)
             self.plot_ta_exploitability(technique_name)
+            self.plot_dnn_ablation(technique_name)

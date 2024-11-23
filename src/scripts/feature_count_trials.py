@@ -37,6 +37,63 @@ L2_NORM_PENALTY = np.log(2)
 SAVE_DIR = os.path.join(OUTPUT_DIR, 'feature_count_trials')
 os.makedirs(SAVE_DIR, exist_ok=True)
 
+lambda_vals = np.log(2)*np.logspace(-6, 25)
+all_vals = np.full((len(lambda_vals), TOTAL_FEATURE_COUNT), np.nan, dtype=float)
+for lambda_val_idx, lambda_val in enumerate(lambda_vals):
+    easy_feature_count = 64
+    dataset_kwargs = {
+        'datapoint_count': DATASET_SIZE,
+        'random_feature_count': TOTAL_FEATURE_COUNT - easy_feature_count,
+        'easy_feature_count': easy_feature_count,
+        'no_hard_feature': True,
+        'easy_feature_sigma': 100.
+    }
+    train_dataset = TwoSpiralsDataset(**dataset_kwargs)
+    val_dataset = TwoSpiralsDataset(**dataset_kwargs)
+    mean = train_dataset.x.mean(axis=0)
+    std = train_dataset.x.std(axis=0)
+    transform = lambda x: (x - mean) / std
+    train_dataset.transform = val_dataset.transform = transform
+    data_module = TwoSpiralsDataModule(train_dataset=train_dataset, eval_dataset=val_dataset, train_batch_size=256)
+    logging_dir = os.path.join(SAVE_DIR, f'lambda={lambda_val}')
+    training_module = ALLTrainer(
+        classifier_name='multilayer-perceptron',
+        classifier_kwargs={'input_shape': (train_dataset.timesteps_per_trace,), 'output_classes': 2},
+        classifier_optimizer_name='AdamW',
+        obfuscator_optimizer_name='AdamW',
+        obfuscator_l2_norm_penalty=L2_NORM_PENALTY,
+        split_training_steps=TRAINING_EPOCHS*len(data_module.train_dataloader()),
+        classifier_optimizer_kwargs={'lr': 2e-4},
+        obfuscator_optimizer_kwargs={'lr': 1e-2},
+        #classifier_lr_scheduler_name='CosineDecayLRSched',
+        #obfuscator_lr_scheduler_name='CosineDecayLRSched',
+        obfuscator_batch_size_multiplier=8,
+        normalize_erasure_probs_for_classifier=False,
+        additive_noise_augmentation=0.0
+    )
+    trainer = Trainer(
+        max_epochs=2*TRAINING_EPOCHS,
+        default_root_dir=logging_dir,
+        accelerator='gpu',
+        devices=1,
+        logger=TensorBoardLogger(logging_dir, name='lightning_output')
+    )
+    trainer.fit(training_module, datamodule=data_module)
+    trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
+    all_val = (
+        training_module.obfuscator_l2_norm_penalty*nn.functional.sigmoid(training_module.unsquashed_obfuscation_weights).detach().cpu().numpy().squeeze()
+    )
+    all_vals[lambda_val_idx, :] = all_val
+fig, ax = plt.subplots(figsize=(4, 4))
+for lambda_idx, lambda_val in enumerate(lambda_vals):
+    easy = all_vals[lambda_idx, :easy_feature_count].flatten()
+    hard = all_vals[lambda_idx, easy_feature_count:].flatten()
+    ax.plot(np.ones(len(easy)), easy, color='blue', linestyle='none', marker='.')
+    ax.plot(np.ones(len(hard)), hard, color='red', linestyle='none', marker='.', markersize=1)
+ax.set_xscale('log')
+ax.set_yscale('log')
+fig.savefig(os.path.join(SAVE_DIR, 'lambda_sweep.png'))
+
 easy_feature_counts = np.array([1, 2, 4, 8, 16, 32, 64])
 seed_count = 1
 if not os.path.exists(os.path.join(SAVE_DIR, 'results.pickle')):
@@ -129,6 +186,35 @@ if not os.path.exists(os.path.join(SAVE_DIR, 'results.pickle')):
             fig.tight_layout()
             fig.savefig(os.path.join(SAVE_DIR, logging_dir, 'training_curves.png'))
             plt.close('all')
+            
+            training_module = ALLTrainer(
+                classifier_name='multilayer-perceptron',
+                classifier_kwargs={'input_shape': (train_dataset.timesteps_per_trace,), 'output_classes': 2},
+                classifier_optimizer_name='AdamW',
+                obfuscator_optimizer_name='AdamW',
+                obfuscator_l2_norm_penalty=L2_NORM_PENALTY,
+                split_training_steps=TRAINING_EPOCHS*len(data_module.train_dataloader()),
+                classifier_optimizer_kwargs={'lr': 2e-4},
+                obfuscator_optimizer_kwargs={'lr': 1e-2},
+                #classifier_lr_scheduler_name='CosineDecayLRSched',
+                #obfuscator_lr_scheduler_name='CosineDecayLRSched',
+                obfuscator_batch_size_multiplier=8,
+                normalize_erasure_probs_for_classifier=False,
+                additive_noise_augmentation=0.0
+            )
+            trainer = Trainer(
+                max_epochs=2*TRAINING_EPOCHS,
+                default_root_dir=logging_dir,
+                accelerator='gpu',
+                devices=1,
+                logger=TensorBoardLogger(logging_dir, name='lightning_output')
+            )
+            trainer.fit(training_module, datamodule=data_module)
+            trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
+            all_val = (
+                training_module.obfuscator_l2_norm_penalty*nn.functional.sigmoid(training_module.unsquashed_obfuscation_weights).detach().cpu().numpy().squeeze()
+            )
+            all_vals[easy_feature_count_idx, seed, :] = all_val
             
     
             logging_dir = os.path.join(SAVE_DIR, f'all_lightning_output__count_{easy_feature_count}__seed_{seed}')
