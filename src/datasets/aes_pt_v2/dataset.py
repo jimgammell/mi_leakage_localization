@@ -85,6 +85,7 @@ class AES_PTv2(Dataset):
             _, aux_metadata = self.compute_target(metadata)
             metadata.update(aux_metadata)
             metadata = {key: val[:, self.target_byte] for key, val in metadata.items()}
+            metadata.update({'label': label})
             return trace, label, metadata
         else:
             return trace, label

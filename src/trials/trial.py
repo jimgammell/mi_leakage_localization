@@ -18,7 +18,7 @@ from utils.calculate_cpa import calculate_cpa
 from utils.calculate_snr import calculate_snr
 from utils.calculate_sosd import calculate_sosd
 
-LEAKAGE_ASSESSMENT_TECHNIQUES = ['random', 'cpa', 'snr', 'sosd', 'ablation', 'gradvis', 'input_x_grad']
+LEAKAGE_ASSESSMENT_TECHNIQUES = ['random', 'cpa', 'snr', 'sosd', 'ablation', 'gradvis', 'input_x_grad', 'all']
 
 class Trial:
     def __init__(self,
@@ -43,12 +43,6 @@ class Trial:
         self.default_all_style_classifier_kwargs = default_all_style_classifier_kwargs
         
         os.makedirs(self.base_dir, exist_ok=True)
-    
-    def __call__(self):
-        self.compute_random_baseline()
-        self.compute_first_order_baselines()
-        self.eval_leakage_assessments()
-        self.plot_everything()
     
     def save_leakage_assessment(self, name, leakage_assessment):
         np.save(os.path.join(self.base_dir, f'{name}_leakage_assessment.npy'), leakage_assessment)
@@ -299,22 +293,27 @@ class Trial:
         classifier_state = torch.load(os.path.join(logging_dir, 'classifier_state.pth'), map_location='cpu', weights_only=True)
         return training_curves, classifier_state
     
-    def run_all_algorithm(self, logging_dir, override_kwargs={}):
+    def run_all_algorithm(self, logging_dir, seed=0, override_kwargs={}):
         assert hasattr(self, 'optimal_learning_rate')
         if os.path.exists(os.path.join(logging_dir, 'training_curves.pickle')):
             with open(os.path.join(logging_dir, 'training_curves.pickle'), 'rb') as f:
                 training_curves = pickle.load(f)
+            training_module = ALLTrainer.load_from_checkpoint(
+                os.path.join(logging_dir, 'final_checkpoint.ckpt'),
+                **self.default_all_style_classifier_kwargs
+            )
+            erasure_probs = nn.functional.sigmoid(training_module.unsquashed_obfuscation_weights).detach().cpu().numpy().squeeze()
         else:
             if os.path.exists(logging_dir):
                 shutil.rmtree(logging_dir)
             os.makedirs(logging_dir)
             module_kwargs = self.default_all_style_classifier_kwargs
-            module_kwargs.update({'classifier_optimizer_kwargs': {'lr': self.optimal_learning_rate}})
+            module_kwargs.update({'classifier_optimizer_kwargs': {'lr': 0.1*self.optimal_learning_rate}}) ######################
             module_kwargs.update(override_kwargs)
             training_module = ALLTrainer(
                 **module_kwargs
             )
-            training_module.classifier.load_state_dict(torch.load(os.path.join(self.base_dir, 'all_classifier', 'seed=0', 'classifier_state.pth'), weights_only=True))
+            training_module.classifier.load_state_dict(torch.load(os.path.join(self.base_dir, 'all_classifier', f'seed={seed}', 'classifier_state.pth'), weights_only=True))
             trainer = Trainer(
                 max_epochs=self.epoch_count,
                 val_check_interval=100 if self.profiling_dataset.__class__.__name__ == 'OneTruthPrevails' else 1.,
@@ -354,15 +353,21 @@ class Trial:
         perf_corr_vals = []
         sweep_base_dir = os.path.join(self.base_dir, 'lambda_sweep')
         os.makedirs(sweep_base_dir, exist_ok=True)
-        for lambda_val in lambda_vals:
-            logging_dir = os.path.join(sweep_base_dir, f'lambda={lambda_val}')
-            training_curves, erasure_probs = self.run_all_algorithm(logging_dir, override_kwargs={'obfuscator_l2_norm_penalty': lambda_val})
-            plot_training_curves(
-                training_curves, logging_dir,
-                keys=[['classifier-train-loss_epoch', 'classifier-val-loss'], ['train-rank', 'val-rank'], ['obfuscator-train-loss_epoch', 'obfuscator-val-loss'], ['min-obf-weight', 'max-obf-weight', 'mean-obf-weight']]
-            )
-            perf_corr, _ = evaluate_gmm_exploitability(self.data_module.train_dataset, self.data_module.val_dataset, erasure_probs, poi_count=self.template_attack_poi_count, fast=True)
-            perf_corr_vals.append(perf_corr)
+        if not os.path.exists(os.path.join(sweep_base_dir, 'perf_corr_vals.pickle')):
+            for lambda_val in lambda_vals:
+                logging_dir = os.path.join(sweep_base_dir, f'lambda={lambda_val}')
+                training_curves, erasure_probs = self.run_all_algorithm(logging_dir, override_kwargs={'obfuscator_l2_norm_penalty': lambda_val})
+                plot_training_curves(
+                    training_curves, logging_dir,
+                    keys=[['classifier-train-loss_epoch', 'classifier-val-loss'], ['train-rank', 'val-rank'], ['obfuscator-train-loss_epoch', 'obfuscator-val-loss'], ['min-obf-weight', 'max-obf-weight', 'mean-obf-weight']]
+                )
+                perf_corr, _ = evaluate_gmm_exploitability(self.data_module.train_dataset, self.data_module.val_dataset, erasure_probs, poi_count=self.template_attack_poi_count, fast=True)
+                perf_corr_vals.append(perf_corr)
+            with open(os.path.join(sweep_base_dir, 'perf_corr_vals.pickle'), 'wb') as f:
+                pickle.dump((lambda_vals, perf_corr_vals), f)
+        else:
+            with open(os.path.join(sweep_base_dir, 'perf_corr_vals.pickle'), 'rb') as f:
+                (lambda_vals, perf_corr_vals) = pickle.load(f)
         fig, ax = plt.subplots(figsize=(4, 4))
         ax.plot(lambda_vals, perf_corr_vals, color='blue')
         ax.set_xscale('log')
@@ -370,7 +375,7 @@ class Trial:
         ax.set_ylabel('GMM performance correlation')
         ax.set_title('Adversarial leakage localization $\lambda$ sweep')
         fig.savefig(os.path.join(sweep_base_dir, 'lambda_sweep.png'))
-        optimal_lambda = lambda_vals[np.argmin(perf_corr_vals)]
+        optimal_lambda = lambda_vals[np.argmax(perf_corr_vals)]
         self.optimal_lambda = optimal_lambda
     
     def train_optimal_supervised_classifier(self):
@@ -388,6 +393,24 @@ class Trial:
             set_seed(seed)
             training_curves, _ = self.train_all_classifier(os.path.join(base_dir, f'seed={seed}'), override_kwargs={'classifier_optimizer_kwargs': {'lr': self.optimal_learning_rate}})
             plot_training_curves(training_curves, os.path.join(base_dir, f'seed={seed}'), keys=[['classifier-train-loss_epoch', 'classifier-val-loss'], ['train-rank', 'val-rank']])
+    
+    def run_optimal_all(self):
+        if self.load_leakage_assessment('all') is None:
+            print('Running ALL with optimal hyperparameters')
+            assert hasattr(self, 'optimal_learning_rate') and hasattr(self, 'optimal_lambda')
+            base_dir = os.path.join(self.base_dir, 'all_leakage_assessments')
+            leakage_assessments = []
+            for seed in range(self.seed_count):
+                set_seed(seed)
+                logging_dir = os.path.join(base_dir, f'seed={seed}')
+                training_curves, erasure_probs = self.run_all_algorithm(logging_dir, seed=seed, override_kwargs={'obfuscator_l2_norm_penalty': self.optimal_lambda})
+                plot_training_curves(
+                    training_curves, logging_dir,
+                    keys=[['classifier-train-loss_epoch', 'classifier-val-loss'], ['train-rank', 'val-rank'], ['obfuscator-train-loss_epoch', 'obfuscator-val-loss'], ['min-obf-weight', 'max-obf-weight', 'mean-obf-weight']]
+                )
+                leakage_assessments.append(self.optimal_lambda*erasure_probs.squeeze())
+            leakage_assessments = np.stack(leakage_assessments)
+            self.save_leakage_assessment('all', leakage_assessments)
     
     def load_optimal_supervised_classifier(self, seed):
         assert hasattr(self, 'optimal_learning_rate')

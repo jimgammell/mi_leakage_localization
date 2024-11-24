@@ -3,13 +3,15 @@ import argparse
 
 from common import *
 from trials.trial import Trial
+from trials.portability_trial import PortabilityTrial
 
 AVAILABLE_DATASETS = [
     'ASCADv1-fixed',
     'ASCADv1-variable',
     'DPAv4',
     'AES_HD',
-    'AES_PTv2',
+    'AES_PTv2-single',
+    'AES_PTv2-multi',
     'OTiAiT',
     'OTP'
 ]
@@ -49,7 +51,9 @@ def main():
         attack_dataset = data_module.attack_dataset
         supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
         classifier_learning_rates = np.logspace(-6, -2, 25)
+        lambda_vals = np.log(256)*np.logspace(-6, 0, 25)
         epoch_count = 100
+        poi_count = 10
     elif dataset == 'ASCADv1-variable':
         from datasets.ascadv1 import ASCADv1_DataModule
         data_module = ASCADv1_DataModule(root=os.path.join(DATA_DIR, 'ascadv1'), dataset_kwargs={'variable_keys': True})
@@ -58,7 +62,9 @@ def main():
         attack_dataset = data_module.profiling_dataset
         supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
         classifier_learning_rates = np.logspace(-6, -2, 25)
+        lambda_vals = np.log(256)*np.logspace(-6, 0, 25)
         epoch_count = 100
+        poi_count = 10
     elif dataset == 'DPAv4':
         from datasets.dpav4 import DPAv4_DataModule
         data_module = DPAv4_DataModule(root=os.path.join(DATA_DIR, 'dpav4'))
@@ -67,7 +73,9 @@ def main():
         attack_dataset = data_module.attack_dataset
         supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
         classifier_learning_rates = np.logspace(-6, -2, 25)
+        lambda_vals = np.log(256)*np.logspace(-12, 0, 25)
         epoch_count = 25
+        poi_count = 5
     elif dataset == 'AES_HD':
         from datasets.aes_hd import AES_HD_DataModule
         data_module = AES_HD_DataModule(root=os.path.join(DATA_DIR, 'aes_hd'))
@@ -79,9 +87,20 @@ def main():
             'head_kwargs': {'hidden_dims': 64}
         }
         classifier_learning_rates = np.logspace(-6, -2, 25)
+        lambda_vals = np.log(256)*np.logspace(-6, 0, 25)
         epoch_count = 100
-    elif dataset == 'AES_PTv2':
-        from datasets.aes_pt_v2 import AES_PTv2
+        poi_count = 10
+    elif dataset == 'AES_PTv2-single':
+        from datasets.aes_pt_v2 import AES_PTv2, AES_PTv2_DataModule
+        profiling_datasets = [AES_PTv2(root=os.path.join(DATA_DIR, 'aes_pt_v2'), train=True, devices=f'D{dev_id}') for dev_id in [1, 2, 3, 4]]
+        attack_datasets = [AES_PTv2(root=os.path.join(DATA_DIR, 'aes_pt_v2'), train=False, devices=f'D{dev_id}') for dev_id in [1, 2, 3, 4]]
+        data_modules = [AES_PTv2_DataModule(profiling_dataset, attack_dataset) for profiling_dataset, attack_dataset in zip(profiling_datasets, attack_datasets)]
+        for data_module in data_modules:
+            data_module.setup('')
+        epoch_count = 10
+        seed_count = 1
+        poi_count = 5
+    elif dataset == 'AES_PTv2-multi':
         raise NotImplementedError
     elif dataset == 'OTiAiT':
         from datasets.ed25519_wolfssl import ED25519_DataModule
@@ -94,7 +113,9 @@ def main():
             'output_classes': 16
         }
         classifier_learning_rates = np.logspace(-6, -2, 25)
+        lambda_vals = np.log(16)*np.logspace(-6, 0, 25)
         epoch_count = 10
+        poi_count = 5
     elif dataset == 'OTP':
         from datasets.one_truth_prevails import OneTruthPrevails_DataModule
         data_module = OneTruthPrevails_DataModule(root=os.path.join(DATA_DIR, 'one_truth_prevails'), train_prop=0.999, val_prop=0.001)
@@ -106,28 +127,50 @@ def main():
             'output_classes': 2
         }
         classifier_learning_rates = np.logspace(-6, -2, 25)
+        lambda_vals = np.log(2)*np.logspace(-6, 0, 25)
         epoch_count = 1
+        poi_count = 10
     else:
         assert False
     
-    trial = Trial(
-        base_dir=os.path.join(OUTPUT_DIR, f'{dataset}_results'),
-        profiling_dataset=profiling_dataset,
-        attack_dataset=attack_dataset,
-        data_module=data_module,
-        epoch_count=epoch_count,
-        seed_count=seed_count,
-        default_supervised_classifier_kwargs=supervised_classifier_kwargs,
-        default_all_style_classifier_kwargs=all_style_classifier_kwargs
-    )
-    trial.compute_random_baseline()
-    trial.compute_first_order_baselines()
-    trial.supervised_lr_sweep(classifier_learning_rates)
-    trial.train_optimal_supervised_classifier()
-    trial.train_optimal_all_classifier()
-    trial.compute_neural_net_explainability_baselines()
-    trial.eval_leakage_assessments(template_attack=dataset in ['DPAv4', 'AES_HD'])
-    trial.plot_everything()
+    if not('AES_PTv2' in dataset):
+        trial = Trial(
+            base_dir=os.path.join(OUTPUT_DIR, f'{dataset}_results'),
+            profiling_dataset=profiling_dataset,
+            attack_dataset=attack_dataset,
+            data_module=data_module,
+            epoch_count=epoch_count,
+            seed_count=seed_count,
+            default_supervised_classifier_kwargs=supervised_classifier_kwargs,
+            default_all_style_classifier_kwargs=all_style_classifier_kwargs,
+            template_attack_poi_count=poi_count
+        )
+        trial.compute_random_baseline()
+        trial.compute_first_order_baselines()
+        trial.supervised_lr_sweep(classifier_learning_rates)
+        trial.train_optimal_supervised_classifier()
+        trial.train_optimal_all_classifier()
+        trial.lambda_sweep(lambda_vals)
+        trial.run_optimal_all()
+        trial.compute_neural_net_explainability_baselines()
+        trial.eval_leakage_assessments(template_attack=dataset in ['DPAv4', 'AES_HD'])
+        trial.plot_everything()
+    else:
+        trial = PortabilityTrial(
+            base_dir=os.path.join(OUTPUT_DIR, f'{dataset}_results'),
+            profiling_datasets=profiling_datasets,
+            attack_datasets=attack_datasets,
+            data_modules=data_modules,
+            epoch_count=epoch_count,
+            seed_count=seed_count,
+            template_attack_poi_count=poi_count,
+            default_supervised_classifier_kwargs=supervised_classifier_kwargs,
+            default_all_style_classifier_kwargs=all_style_classifier_kwargs
+        )
+        trial.compute_random_baseline()
+        trial.compute_first_order_baselines()
+        trial.eval_leakage_assessments()
+        trial.plot_everything()
 
 if __name__ == '__main__':
     main()

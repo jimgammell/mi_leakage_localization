@@ -33,7 +33,7 @@ class MeasurePerformanceCorrelation:
             assert (len(ranking)%poi_count) == 0
         poi_sets = ranking.reshape(-1, poi_count)
         if fast:
-            poi_sets = poi_sets[[0, 1, 2, -3, -2, -1], :]
+            poi_sets = poi_sets[np.linspace(0, len(poi_sets)-1, 5).astype(int)] #poi_sets[[0, 1, 2, -3, -2, -1], :]
         performance_metrics = np.full((len(self.attack_dataset), poi_sets.shape[0]), np.nan, dtype=np.float32)
         for idx, poi_set in enumerate(tqdm(poi_sets)):
             _performance_metrics = []

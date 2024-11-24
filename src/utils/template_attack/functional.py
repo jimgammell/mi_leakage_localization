@@ -37,6 +37,8 @@ def extract_dataset(
     base_dataset.transform = orig_transform
     base_dataset.return_metadata = orig_ret_mdata
     assert np.all(np.isfinite(traces))
+    traces -= traces.mean(axis=0)
+    traces /= traces.std(axis=0)
     return traces, metadata
 
 @jit(nopython=True)
@@ -64,7 +66,7 @@ def fit_covs(traces, targets, means):
         cov = diff.T @ diff / (trace_count - 1)
         cov = 0.5*(cov + cov.T) # ensure it is symmetric
         D, U = np.linalg.eigh(cov)
-        D[D <= 1e-8] = 1e-8 # ensure it is positive semi-definite
+        D[D < 0] = 0 # ensure it is positive semi-definite
         cov = U @ np.diag(D) @ U.T
         covs[byte, ...] = cov
     assert np.all(np.isfinite(covs))
@@ -74,7 +76,7 @@ def fit_covs(traces, targets, means):
 def choldecomp_covs(covs):
     decomps = np.full_like(covs, np.nan)
     for cov_idx, cov in enumerate(covs):
-        L = np.linalg.cholesky(cov)
+        L = np.linalg.cholesky(cov + 1e-2*np.eye(cov.shape[0]))
         decomps[cov_idx, ...] = L
     assert np.all(np.isfinite(decomps))
     return decomps
