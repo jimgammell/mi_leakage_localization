@@ -134,7 +134,8 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
     def _sample_binary_noise(self, trace: torch.Tensor, normalize: bool = False):
         batch_size = trace.size(0)
         if normalize:
-            erasure_probs = 0.5*torch.ones_like(trace)
+            p = torch.rand(batch_size, 1, 1, device=trace.device, dtype=trace.dtype)
+            erasure_probs = p*torch.ones((1, 1, trace.shape[-1]), device=trace.device, dtype=trace.dtype)
         else:
             erasure_probs = nn.functional.sigmoid(self.unsquashed_obfuscation_weights).repeat(batch_size, *(len(trace.shape[1:])*[1]))
         binary_noise = (1 - erasure_probs).bernoulli()

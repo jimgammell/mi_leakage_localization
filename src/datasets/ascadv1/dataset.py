@@ -140,6 +140,7 @@ class ASCADv1(Dataset):
         trace, metadata = self.load_datapoints(indices)
         target, aux_metadata = self.compute_target(metadata)
         metadata.update(aux_metadata)
+        metadata.update({'label': target})
         if self.transform is not None:
             trace = self.transform(trace)
         if self.target_transform is not None:

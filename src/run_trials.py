@@ -67,14 +67,17 @@ def main():
         attack_dataset = data_module.attack_dataset
         supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
         classifier_learning_rates = np.logspace(-6, -2, 25)
-        epoch_count = 10
+        epoch_count = 25
     elif dataset == 'AES_HD':
         from datasets.aes_hd import AES_HD_DataModule
         data_module = AES_HD_DataModule(root=os.path.join(DATA_DIR, 'aes_hd'))
         data_module.setup('')
         profiling_dataset = data_module.profiling_dataset
         attack_dataset = data_module.attack_dataset
-        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {
+            'input_shape': (1, profiling_dataset.timesteps_per_trace),
+            'head_kwargs': {'hidden_dims': 64}
+        }
         classifier_learning_rates = np.logspace(-6, -2, 25)
         epoch_count = 100
     elif dataset == 'AES_PTv2':
@@ -86,7 +89,10 @@ def main():
         data_module.setup('')
         profiling_dataset = data_module.profiling_dataset
         attack_dataset = data_module.attack_dataset
-        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {
+            'input_shape': (1, profiling_dataset.timesteps_per_trace),
+            'output_classes': 16
+        }
         classifier_learning_rates = np.logspace(-6, -2, 25)
         epoch_count = 10
     elif dataset == 'OTP':
@@ -95,7 +101,10 @@ def main():
         data_module.setup('')
         profiling_dataset = data_module.profiling_dataset
         attack_dataset = data_module.attack_dataset
-        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {
+            'input_shape': (1, profiling_dataset.timesteps_per_trace),
+            'output_classes': 2
+        }
         classifier_learning_rates = np.logspace(-6, -2, 25)
         epoch_count = 1
     else:
@@ -115,8 +124,9 @@ def main():
     trial.compute_first_order_baselines()
     trial.supervised_lr_sweep(classifier_learning_rates)
     trial.train_optimal_supervised_classifier()
+    trial.train_optimal_all_classifier()
     trial.compute_neural_net_explainability_baselines()
-    trial.eval_leakage_assessments(template_attack=not(dataset in ['OTiAiT', 'OTP']))
+    trial.eval_leakage_assessments(template_attack=dataset in ['DPAv4', 'AES_HD'])
     trial.plot_everything()
 
 if __name__ == '__main__':
