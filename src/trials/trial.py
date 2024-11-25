@@ -17,6 +17,7 @@ from utils.localization_via_interpretability import compute_gradvis, compute_inp
 from utils.calculate_cpa import calculate_cpa
 from utils.calculate_snr import calculate_snr
 from utils.calculate_sosd import calculate_sosd
+from utils.performance_correlation import soft_kendall_tau
 
 LEAKAGE_ASSESSMENT_TECHNIQUES = ['random', 'cpa', 'snr', 'sosd', 'ablation', 'gradvis', 'input_x_grad', 'all']
 
@@ -129,6 +130,10 @@ class Trial:
                 continue
             name = name.replace('_', '\_')
             self._plot_ta_exploitability(technique_eval['ta_exploitability'], ax, mean_only=True, color=color, label=name)
+            ta_exploitability = technique_eval['ta_exploitability'].reshape((technique_eval['ta_exploitability'].shape[0], -1)).mean(axis=1)
+            mean = ta_exploitability.mean()
+            std = ta_exploitability.std()
+            print(f'{name} TA exploitability: {mean} +/- {std}')
         ax.set_xlabel('Traces seen')
         ax.set_ylabel('Guessing entropy')
         ax.legend()
@@ -174,6 +179,8 @@ class Trial:
                 continue
             name = name.replace('_', '\_')
             self._plot_gmm_exploitability(technique_eval['gmm_exploitability'], ax, color=color, label='\\texttt{'+name+'}')
+            sktcc = soft_kendall_tau(technique_eval['gmm_exploitability'], -np.arange(technique_eval['gmm_exploitability'].shape[-1]))
+            print(f'{name} SKTCC: {sktcc}')
         ax.set_xlabel('Estimated leakage of inputs')
         ax.set_ylabel('Guessing entropy')
         ax.legend()
@@ -213,7 +220,7 @@ class Trial:
             if not('gmm_exploitability' in technique_eval.keys()):
                 print(f'Calculating GMM results for {technique_name} technique')
                 technique_eval['gmm_exploitability'] = np.stack([
-                    evaluate_gmm_exploitability(self.profiling_dataset, self.attack_dataset, _leakage_assessment, poi_count=self.template_attack_poi_count)[1]
+                    evaluate_gmm_exploitability(self.profiling_dataset, self.attack_dataset, _leakage_assessment, poi_count=self.template_attack_poi_count, ret_stds=True)[1]
                     for _leakage_assessment in leakage_assessment
                 ])
             np.savez(os.path.join(self.base_dir, f'{technique_name}_eval.npz'), **technique_eval)
@@ -311,12 +318,14 @@ class Trial:
             module_kwargs.update({'classifier_optimizer_kwargs': {'lr': 0.01*self.optimal_learning_rate}})
             module_kwargs.update(override_kwargs)
             training_module = ALLTrainer(
+                split_training_steps=0,
                 **module_kwargs
             )
             training_module.classifier.load_state_dict(torch.load(os.path.join(self.base_dir, 'all_classifier', f'seed={seed}', 'classifier_state.pth'), weights_only=True))
+            training_module.classifier = torch.compile(training_module.classifier)
             trainer = Trainer(
                 max_epochs=self.epoch_count,
-                val_check_interval=100 if self.profiling_dataset.__class__.__name__ == 'OneTruthPrevails' else 1.,
+                val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
                 devices=1,
@@ -365,6 +374,7 @@ class Trial:
                 self._plot_leakage_assessment(erasure_probs[np.newaxis, :], ax)
                 ax.set_yscale('log')
                 fig.savefig(os.path.join(logging_dir, 'erasure_probs.png'))
+                plt.close(fig)
                 perf_corr, _ = evaluate_gmm_exploitability(self.data_module.train_dataset, self.data_module.val_dataset, erasure_probs, poi_count=self.template_attack_poi_count, fast=True)
                 perf_corr_vals.append(perf_corr)
             with open(os.path.join(sweep_base_dir, 'perf_corr_vals.pickle'), 'wb') as f:
@@ -373,12 +383,13 @@ class Trial:
             with open(os.path.join(sweep_base_dir, 'perf_corr_vals.pickle'), 'rb') as f:
                 (lambda_vals, perf_corr_vals) = pickle.load(f)
         fig, ax = plt.subplots(figsize=(4, 4))
-        ax.plot(lambda_vals, perf_corr_vals, color='blue')
+        ax.plot(lambda_vals, perf_corr_vals, color='blue', marker='.', linestyle='--')
         ax.set_xscale('log')
         ax.set_xlabel('Erasure probs norm penalty: $\lambda$')
-        ax.set_ylabel('GMM performance correlation')
+        ax.set_ylabel('GMM SKTCC')
         ax.set_title('Adversarial leakage localization $\lambda$ sweep')
-        fig.savefig(os.path.join(sweep_base_dir, 'lambda_sweep.png'))
+        fig.savefig(os.path.join(sweep_base_dir, 'lambda_sweep.pdf'))
+        plt.close(fig)
         optimal_lambda = lambda_vals[np.argmax(perf_corr_vals)]
         self.optimal_lambda = optimal_lambda
     

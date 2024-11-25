@@ -32,12 +32,12 @@ def extract_trace(trace):
 
 DATASET_SIZE = 10000
 TOTAL_FEATURE_COUNT = 100
-TRAINING_EPOCHS = 100
+TRAINING_EPOCHS = 250
 L2_NORM_PENALTY = np.log(2)
 SAVE_DIR = os.path.join(OUTPUT_DIR, 'feature_count_trials')
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-lambda_vals = np.log(2)*np.logspace(-6, 25)
+lambda_vals = np.log(2)*np.logspace(-6, 5)
 all_vals = np.full((len(lambda_vals), TOTAL_FEATURE_COUNT), np.nan, dtype=float)
 for lambda_val_idx, lambda_val in enumerate(lambda_vals):
     easy_feature_count = 64
@@ -46,7 +46,7 @@ for lambda_val_idx, lambda_val in enumerate(lambda_vals):
         'random_feature_count': TOTAL_FEATURE_COUNT - easy_feature_count,
         'easy_feature_count': easy_feature_count,
         'no_hard_feature': True,
-        'easy_feature_sigma': 100.
+        'easy_feature_sigma': 1.
     }
     train_dataset = TwoSpiralsDataset(**dataset_kwargs)
     val_dataset = TwoSpiralsDataset(**dataset_kwargs)
@@ -64,11 +64,11 @@ for lambda_val_idx, lambda_val in enumerate(lambda_vals):
         obfuscator_l2_norm_penalty=L2_NORM_PENALTY,
         split_training_steps=TRAINING_EPOCHS*len(data_module.train_dataloader()),
         classifier_optimizer_kwargs={'lr': 2e-4},
-        obfuscator_optimizer_kwargs={'lr': 1e-2},
+        obfuscator_optimizer_kwargs={'lr': 4e-3},
         #classifier_lr_scheduler_name='CosineDecayLRSched',
         #obfuscator_lr_scheduler_name='CosineDecayLRSched',
         obfuscator_batch_size_multiplier=8,
-        normalize_erasure_probs_for_classifier=False,
+        normalize_erasure_probs_for_classifier=True,
         additive_noise_augmentation=0.0
     )
     trainer = Trainer(
@@ -84,6 +84,39 @@ for lambda_val_idx, lambda_val in enumerate(lambda_vals):
         training_module.obfuscator_l2_norm_penalty*nn.functional.sigmoid(training_module.unsquashed_obfuscation_weights).detach().cpu().numpy().squeeze()
     )
     all_vals[lambda_val_idx, :] = all_val
+    fig, ax = plt.subplots()
+    ax.plot(all_val.squeeze(), color='blue', linestyle='none', marker='.')
+    fig.savefig(os.path.join(logging_dir, 'output.png'))
+    ea = event_accumulator.EventAccumulator(os.path.join(logging_dir, 'lightning_output', 'version_0'))
+    ea.Reload()
+    training_curves = {
+        key: extract_trace(ea.Scalars(key)) for key in [
+            'classifier-train-loss_epoch', 'classifier-val-loss', 'obfuscator-train-loss_epoch', 'obfuscator-val-loss', 'min-obf-weight', 'max-obf-weight',
+            'train-acc_epoch', 'val-acc'
+        ]
+    }
+    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+    axes[0].plot(*training_curves['classifier-train-loss_epoch'], color='blue', linestyle='--')
+    axes[0].plot(*training_curves['classifier-val-loss'], color='blue', linestyle='-')
+    axes[1].plot(*training_curves['obfuscator-train-loss_epoch'], color='blue', linestyle='--')
+    axes[1].plot(*training_curves['obfuscator-val-loss'], color='blue', linestyle='-')
+    axes[2].plot(*training_curves['min-obf-weight'], color='red', linestyle='-')
+    axes[2].plot(*training_curves['max-obf-weight'], color='blue', linestyle='-')
+    axes[3].plot(*training_curves['train-acc_epoch'], color='blue', linestyle='--')
+    axes[3].plot(*training_curves['val-acc'], color='blue', linestyle='-')
+    axes[0].set_xlabel('Step')
+    axes[1].set_xlabel('Step')
+    axes[2].set_xlabel('Step')
+    axes[0].set_ylabel('Classifier loss')
+    axes[1].set_ylabel('Obfuscator loss')
+    axes[2].set_ylabel('Obfuscation weights')
+    axes[3].set_xlabel('Step')
+    axes[3].set_ylabel('Accuracy')
+    axes[2].set_yscale('log')
+    axes[1].set_yscale('log')
+    fig.tight_layout()
+    fig.savefig(os.path.join(logging_dir, 'training_curves.png'))
+    plt.close('all')
 fig, ax = plt.subplots(figsize=(4, 4))
 for lambda_idx, lambda_val in enumerate(lambda_vals):
     easy = all_vals[lambda_idx, :easy_feature_count].flatten()
@@ -94,6 +127,7 @@ ax.set_xscale('log')
 ax.set_yscale('log')
 fig.savefig(os.path.join(SAVE_DIR, 'lambda_sweep.png'))
 
+assert False
 easy_feature_counts = np.array([1, 2, 4, 8, 16, 32, 64])
 seed_count = 1
 if not os.path.exists(os.path.join(SAVE_DIR, 'results.pickle')):

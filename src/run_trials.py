@@ -17,6 +17,7 @@ AVAILABLE_DATASETS = [
     'OTP'
 ]
 DATA_DIR = os.path.join('/mnt', 'hdd', 'jgammell', 'leakage_localization', 'downloads')
+LAMBDA_SWEEP_COUNT = 5
 
 set_verbosity(True)
 
@@ -24,6 +25,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', action='store', choices=AVAILABLE_DATASETS)
     parser.add_argument('--seed-count', type=int, default=5, action='store')
+    parser.add_argument('--plot-only', action='store_true', default=False)
     clargs = parser.parse_args()
     dataset = clargs.dataset
     seed_count = clargs.seed_count
@@ -54,7 +56,7 @@ def main():
         attack_dataset = data_module.attack_dataset
         supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
         classifier_learning_rates = np.logspace(-6, -2, 25)
-        lambda_vals = np.log(256)*np.logspace(-6, 0, 25)
+        lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 100
         poi_count = 10
     elif dataset == 'ASCADv1-variable':
@@ -65,7 +67,7 @@ def main():
         attack_dataset = data_module.profiling_dataset
         supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
         classifier_learning_rates = np.logspace(-6, -2, 25)
-        lambda_vals = np.log(256)*np.logspace(-6, 0, 25)
+        lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 100
         poi_count = 20
     elif dataset == 'DPAv4':
@@ -76,7 +78,7 @@ def main():
         attack_dataset = data_module.attack_dataset
         supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
         classifier_learning_rates = np.logspace(-6, -2, 25)
-        lambda_vals = np.log(256)*np.logspace(-6, 0, 5) ################################################
+        lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 25
         poi_count = 5
     elif dataset == 'AES_HD':
@@ -90,7 +92,7 @@ def main():
             'head_kwargs': {'hidden_dims': 64}
         }
         classifier_learning_rates = np.logspace(-6, -2, 25)
-        lambda_vals = np.log(256)*np.logspace(-6, 0, 25)
+        lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 100
         poi_count = 10
     elif dataset == 'AES_PTv2-single':
@@ -142,7 +144,7 @@ def main():
             'output_classes': 16
         }
         classifier_learning_rates = np.logspace(-6, -2, 25)
-        lambda_vals = np.log(16)*np.logspace(-6, 0, 25)
+        lambda_vals = np.log(16)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 10
         poi_count = 5
     elif dataset == 'OTP':
@@ -156,7 +158,7 @@ def main():
             'output_classes': 2
         }
         classifier_learning_rates = np.logspace(-6, -2, 25)
-        lambda_vals = np.log(2)*np.logspace(-6, 0, 25)
+        lambda_vals = np.log(2)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 10
         poi_count = 10
     else:
@@ -174,15 +176,17 @@ def main():
             default_all_style_classifier_kwargs=all_style_classifier_kwargs,
             template_attack_poi_count=poi_count
         )
-        trial.compute_random_baseline()
-        trial.compute_first_order_baselines()
-        trial.supervised_lr_sweep(classifier_learning_rates)
-        trial.train_optimal_supervised_classifier()
-        trial.train_optimal_all_classifier()
-        #trial.lambda_sweep(lambda_vals)
-        #trial.run_optimal_all()
-        trial.compute_neural_net_explainability_baselines()
-        trial.eval_leakage_assessments(template_attack=dataset in ['DPAv4', 'AES_HD'])
+        if not clargs.plot_only:
+            trial.compute_random_baseline()
+            trial.compute_first_order_baselines()
+            trial.supervised_lr_sweep(classifier_learning_rates)
+            trial.train_optimal_supervised_classifier()
+            trial.train_optimal_all_classifier()
+            trial.lambda_sweep(lambda_vals)
+            trial.run_optimal_all()
+            trial.compute_neural_net_explainability_baselines()
+            trial.plot_everything()
+            trial.eval_leakage_assessments(template_attack=dataset in ['DPAv4', 'AES_HD']) # indent this and get rid of the code to always compute GMM exploitability
         trial.plot_everything()
     else:
         trial = PortabilityTrial(
@@ -196,12 +200,13 @@ def main():
             default_supervised_classifier_kwargs=supervised_classifier_kwargs,
             default_all_style_classifier_kwargs=all_style_classifier_kwargs
         )
-        trial.compute_random_baseline()
-        trial.compute_first_order_baselines()
-        trial.supervised_lr_sweep(classifier_learning_rates)
-        trial.train_optimal_supervised_classifier()
-        trial.train_optimal_all_classifier()
-        trial.eval_leakage_assessments()
+        if not clargs.plot_only:
+            trial.compute_random_baseline()
+            trial.compute_first_order_baselines()
+            trial.supervised_lr_sweep(classifier_learning_rates)
+            trial.train_optimal_supervised_classifier()
+            trial.train_optimal_all_classifier()
+            trial.eval_leakage_assessments()
         trial.plot_everything()
 
 if __name__ == '__main__':
