@@ -247,7 +247,7 @@ class Trial:
                     _leakage_assessment = leakage_assessment[seed, ...] if leakage_assessment.shape[0] > 1 else leakage_assessment[0, ...]
                     evals.append(dnn_ablation(classifier, self.data_module.test_dataloader(), _leakage_assessment))
                 technique_eval['dnn_ablation'] = np.stack(evals)
-            if not('gmm_exploitability' in technique_eval.keys()):
+            if not('gmm_exploitability' in technique_eval.keys()) or (len(technique_eval['gmm_exploitability'].shape) < 3):
                 print(f'Calculating GMM results for {technique_name} technique')
                 technique_eval['gmm_exploitability'] = np.stack([
                     evaluate_gmm_exploitability(self.profiling_dataset, self.attack_dataset, _leakage_assessment, poi_count=self.template_attack_poi_count, ret_stds=True)[1]
@@ -345,16 +345,15 @@ class Trial:
                 shutil.rmtree(logging_dir)
             os.makedirs(logging_dir)
             module_kwargs = self.default_all_style_classifier_kwargs
-            module_kwargs.update({'classifier_optimizer_kwargs': {'lr': 0.01*self.optimal_learning_rate}})
+            module_kwargs.update({'classifier_optimizer_kwargs': {'lr': self.optimal_learning_rate}})
             module_kwargs.update(override_kwargs)
             training_module = ALLTrainer(
-                split_training_steps=0,
                 **module_kwargs
             )
             training_module.classifier.load_state_dict(torch.load(os.path.join(self.base_dir, 'all_classifier', f'seed={seed}', 'classifier_state.pth'), weights_only=True))
             training_module.classifier = torch.compile(training_module.classifier)
             trainer = Trainer(
-                max_epochs=self.epoch_count,
+                max_epochs=20*self.epoch_count,
                 val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',

@@ -185,7 +185,6 @@ def main():
             trial.lambda_sweep(lambda_vals)
             trial.run_optimal_all()
             trial.compute_neural_net_explainability_baselines()
-            trial.plot_everything()
             trial.eval_leakage_assessments(template_attack=dataset in ['DPAv4', 'AES_HD'])
         trial.plot_everything()
     else:
