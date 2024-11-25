@@ -64,8 +64,8 @@ class AES_PTv2(Dataset):
             'subbytes': AES_SBOX[key ^ plaintext]
         }
         if self.countermeasure != 'Unprotected':
-            r_in = metadata['masks'][0]
-            r_out = metadata['masks'][1]
+            r_in = metadata['masks'][:, 0].reshape((-1, 1))
+            r_out = metadata['masks'][:, 1].reshape((-1, 1))
             aux_metadata.update({
                 'subbytes__r_out': AES_SBOX[key ^ plaintext] ^ r_out,
                 'r_out': r_out

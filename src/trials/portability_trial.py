@@ -29,8 +29,10 @@ class PortabilityTrial(Trial):
         attack_datasets,
         data_modules,
         epoch_count=100,
+        obf_epoch_count=100,
         seed_count=1,
         template_attack_poi_count=20,
+        train_indices=[0, 1, 2, 3],
         default_supervised_classifier_kwargs={},
         default_all_style_classifier_kwargs={}
     ):
@@ -39,8 +41,10 @@ class PortabilityTrial(Trial):
         self.attack_datasets = attack_datasets
         self.data_modules = data_modules
         self.epoch_count = epoch_count
+        self.obf_epoch_count = obf_epoch_count
         self.seed_count = seed_count
         self.template_attack_poi_count = template_attack_poi_count
+        self.train_indices = train_indices
         self.default_supervised_classifier_kwargs = default_supervised_classifier_kwargs
         self.default_all_style_classifier_kwargs = default_all_style_classifier_kwargs
         self.profile_count = len(self.profiling_datasets)
@@ -60,7 +64,8 @@ class PortabilityTrial(Trial):
             if self.load_leakage_assessment(name) is None:
                 print(f'Computing {name} baseline')
                 leakage_assessment = np.full((self.profile_count, 1, self.features), np.nan, dtype=np.float32)
-                for idx, profiling_dataset in enumerate(self.profiling_datasets):
+                for idx in self.train_indices:
+                    profiling_dataset = self.profiling_datasets[idx]
                     transform = profiling_dataset.transform
                     profiling_dataset.return_metadata = True
                     profiling_dataset.transform = None
@@ -117,8 +122,8 @@ class PortabilityTrial(Trial):
         results = technique_eval['ta_exploitability']
         dataset_count = results.shape[0]
         assert dataset_count == results.shape[1]
-        fig, axes = plt.subplots(dataset_count, dataset_count, figsize=(4*dataset_count, 4*dataset_count))
-        for row_idx in range(dataset_count):
+        fig, axes = plt.subplots(len(self.train_indices), dataset_count, figsize=(4*dataset_count, 4*dataset_count))
+        for row_idx in range(len(self.train_indices)):
             for col_idx in range(dataset_count):
                 ax = axes[row_idx, col_idx]
                 result = results[row_idx, col_idx]
@@ -153,7 +158,7 @@ class PortabilityTrial(Trial):
             )
             trainer = Trainer(
                 max_epochs=self.epoch_count,
-                val_check_interval=100 if data_module.profiling_dataset.__class__.__name__ == 'OneTruthPrevails' else 1.,
+                val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
                 devices=1,
@@ -209,9 +214,49 @@ class PortabilityTrial(Trial):
         classifier_state = torch.load(os.path.join(logging_dir, 'classifier_state.pth'), map_location='cpu', weights_only=True)
         return training_curves, classifier_state
     
+    def run_all_algorithm(self, idx, logging_dir, seed=0, override_kwargs={}):
+        assert hasattr(self, 'optimal_learning_rates')
+        optimal_learning_rate = self.optimal_learning_rates[idx]
+        data_module = self.data_modules[idx]
+        if os.path.exists(os.path.join(logging_dir, 'training_curves.pickle')):
+            with open(os.path.join(logging_dir, 'training_curves.pickle'), 'rb') as f:
+                training_curves = pickle.load(f)
+            training_module = ALLTrainer.load_from_checkpoint(
+                os.path.join(logging_dir, 'final_checkpoint.ckpt'),
+                **self.default_all_style_classifier_kwargs
+            )
+            erasure_probs = nn.functional.sigmoid(training_module.unsquashed_obfuscation_weights).detach().cpu().numpy().squeeze()
+        else:
+            if os.path.exists(logging_dir):
+                shutil.rmtree(logging_dir)
+            os.makedirs(logging_dir)
+            module_kwargs = self.default_all_style_classifier_kwargs
+            module_kwargs.update({'classifier_optimizer_kwargs': {'lr': self.optimal_learning_rates[idx]}})
+            module_kwargs.update(override_kwargs)
+            training_module = ALLTrainer(
+                **module_kwargs
+            )
+            training_module.classifier.load_state_dict(torch.load(os.path.join(self.base_dir, 'all_classifier', f'seed={seed}', 'classifier_state.pth'), weights_only=True))
+            training_module.classifier = torch.compile(training_module.classifier)
+            trainer = Trainer(
+                max_epochs=self.obf_epoch_count,
+                val_check_interval=1.,
+                default_root_dir=logging_dir,
+                accelerator='gpu',
+                devices=1,
+                logger=TensorBoardLogger(logging_dir, name='lightning_output')
+            )
+            trainer.fit(training_module, datamodule=data_module)
+            erasure_probs = nn.functional.sigmoid(training_module.unsquashed_obfuscation_weights).detach().cpu().numpy().squeeze()
+            trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
+            training_curves = get_training_curves(logging_dir)
+            save_training_curves(training_curves, logging_dir)
+        return training_curves, erasure_probs
+    
     def supervised_lr_sweep(self, learning_rates):
         self.optimal_learning_rates = []
-        for idx, data_module in enumerate(self.data_modules):
+        for idx in self.train_indices:
+            data_module = self.data_modules[idx]
             min_val_ranks = []
             sweep_base_dir = os.path.join(self.base_dir, 'lr_sweep', f'device_{idx}')
             os.makedirs(sweep_base_dir, exist_ok=True)
@@ -230,11 +275,51 @@ class PortabilityTrial(Trial):
             fig.savefig(os.path.join(sweep_base_dir, 'lr_sweep.png'))
             optimal_learning_rate = learning_rates[np.argmin(min_val_ranks)]
             self.optimal_learning_rates.append(optimal_learning_rate)
+            
+    def lambda_sweep(self, lambda_vals):
+        self.optimal_lambdas = []
+        for idx in self.train_indices:
+            data_module = self.data_modules[idx]
+            perf_corr_vals = []
+            sweep_base_dir = os.path.join(self.base_dir, 'lambda_sweep')
+            os.makedirs(sweep_base_dir, exist_ok=True)
+            if not os.path.exists(os.path.join(sweep_base_dir, 'perf_corr_vals.pickle')):
+                for lambda_val in lambda_vals:
+                    logging_dir = os.path.join(sweep_base_dir, f'lambda={lambda_val}')
+                    training_curves, erasure_probs = self.run_all_algorithm(idx, logging_dir, override_kwargs={'obfuscator_l2_norm_penalty': lambda_val})
+                    plot_training_curves(
+                        training_curves, logging_dir,
+                        keys=[['classifier-train-loss_epoch', 'classifier-val-loss'], ['train-rank', 'val-rank'], ['obfuscator-train-loss_epoch', 'obfuscator-val-loss'], ['min-obf-weight', 'max-obf-weight', 'mean-obf-weight']]
+                    )
+                    fig, ax = plt.subplots(figsize=(4, 4))
+                    self._plot_leakage_assessment(erasure_probs[np.newaxis, :], ax)
+                    ax.set_yscale('log')
+                    fig.savefig(os.path.join(logging_dir, 'erasure_probs.png'))
+                    plt.close(fig)
+                    perf_corr, _ = evaluate_gmm_exploitability(data_module.train_dataset, data_module.val_dataset, erasure_probs, poi_count=self.template_attack_poi_count, fast=True)
+                    perf_corr_vals.append(perf_corr)
+                with open(os.path.join(sweep_base_dir, 'perf_corr_vals.pickle'), 'wb') as f:
+                    pickle.dump((lambda_vals, perf_corr_vals), f)
+            else:
+                with open(os.path.join(sweep_base_dir, 'perf_corr_vals.pickle'), 'rb') as f:
+                    (lambda_vals, perf_corr_vals) = pickle.load(f)
+            fig, ax = plt.subplots(figsize=(4, 4))
+            ax.plot(lambda_vals, perf_corr_vals, color='blue', marker='.', linestyle='--')
+            ax.set_xscale('log')
+            ax.set_xlabel('Erasure probs norm penalty: $\lambda$')
+            ax.set_ylabel('GMM SKTCC')
+            ax.set_title('Adversarial leakage localization $\lambda$ sweep')
+            fig.tight_layout()
+            fig.savefig(os.path.join(sweep_base_dir, 'lambda_sweep.pdf'))
+            plt.close(fig)
+            optimal_lambda = lambda_vals[np.argmax(perf_corr_vals)]
+            self.optimal_lambdas.append(optimal_lambda)
     
     def train_optimal_supervised_classifier(self):
         assert hasattr(self, 'optimal_learning_rates')
         base_dir = os.path.join(self.base_dir, 'standard_classifier')
-        for idx, data_module in enumerate(self.data_modules):
+        for idx in self.train_indices:
+            data_module = self.data_modules[idx]
             for seed in range(self.seed_count):
                 set_seed(seed)
                 logging_dir = os.path.join(base_dir, f'device_{idx}', f'seed={seed}')
@@ -244,9 +329,10 @@ class PortabilityTrial(Trial):
     def train_optimal_all_classifier(self):
         assert hasattr(self, 'optimal_learning_rates')
         base_dir = os.path.join(self.base_dir, 'all_classifier')
-        for idx, data_module in enumerate(self.data_modules):
+        for idx in self.train_indices:
+            data_module = self.data_modules[idx]
             for seed in range(self.seed_count):
                 set_seed(seed)
                 logging_dir = os.path.join(base_dir, f'device_{idx}', f'seed={seed}')
-                training_curves, _ = self.train_all_classifier(data_module, logging_dir, override_kwargs={'classifier_optimizer_kwargs': {'lr': self.optimal_learning_rates[idx]}})
+                training_curves, _ = self.train_all_classifier(data_module, logging_dir, override_kwargs={'classifier_optimizer_kwargs': {'lr': 0.5*self.optimal_learning_rates[idx]}})
                 plot_training_curves(training_curves, logging_dir, keys=[['classifier-train-loss_epoch', 'classifier-val-loss'], ['train-rank', 'val-rank']])

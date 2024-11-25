@@ -26,12 +26,9 @@ def main():
     parser.add_argument('--dataset', action='store', choices=AVAILABLE_DATASETS)
     parser.add_argument('--seed-count', type=int, default=5, action='store')
     parser.add_argument('--plot-only', action='store_true', default=False)
-    parser.add_argument('--device', action='store', default=None, type=int)
     clargs = parser.parse_args()
     dataset = clargs.dataset
     seed_count = clargs.seed_count
-    if clargs.device is not None:
-        os.environ['CUDA_VISIBLE_DEVICES'] = f'{clargs.device}'
     assert seed_count > 0
     
     supervised_classifier_kwargs = dict(
@@ -61,6 +58,7 @@ def main():
         classifier_learning_rates = np.logspace(-6, -2, 25)
         lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 100
+        obf_epoch_count = 100
         poi_count = 10
     elif dataset == 'ASCADv1-variable':
         from datasets.ascadv1 import ASCADv1_DataModule
@@ -72,6 +70,7 @@ def main():
         classifier_learning_rates = np.logspace(-6, -2, 25)
         lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 100
+        obf_epoch_count = 100
         poi_count = 20
     elif dataset == 'DPAv4':
         from datasets.dpav4 import DPAv4_DataModule
@@ -83,6 +82,7 @@ def main():
         classifier_learning_rates = np.logspace(-6, -2, 25)
         lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 25
+        obf_epoch_count = 250
         poi_count = 5
     elif dataset == 'AES_HD':
         from datasets.aes_hd import AES_HD_DataModule
@@ -100,8 +100,8 @@ def main():
         poi_count = 10
     elif dataset == 'AES_PTv2-single':
         from datasets.aes_pt_v2 import AES_PTv2, AES_PTv2_DataModule
-        profiling_datasets = [AES_PTv2(root=os.path.join(DATA_DIR, 'aes_pt_v2'), train=True, devices=f'D{dev_id}') for dev_id in [1, 2, 3, 4]]
-        attack_datasets = [AES_PTv2(root=os.path.join(DATA_DIR, 'aes_pt_v2'), train=False, devices=f'D{dev_id}') for dev_id in [1, 2, 3, 4]]
+        profiling_datasets = [AES_PTv2(root=os.path.join(DATA_DIR, 'aes_pt_v2'), train=True, devices=f'D{dev_id}', countermeasure='Unprotected') for dev_id in [1, 2, 3, 4]]
+        attack_datasets = [AES_PTv2(root=os.path.join(DATA_DIR, 'aes_pt_v2'), train=False, devices=f'D{dev_id}', countermeasure='Unprotected') for dev_id in [1, 2, 3, 4]]
         data_modules = [AES_PTv2_DataModule(profiling_dataset, attack_dataset) for profiling_dataset, attack_dataset in zip(profiling_datasets, attack_datasets)]
         for data_module in data_modules:
             data_module.setup('')
@@ -109,7 +109,9 @@ def main():
             'input_shape': (1, profiling_datasets[0].timesteps_per_trace)
         }
         classifier_learning_rates = np.logspace(-6, -2, 25)
+        lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 10
+        obf_epoch_count = 10
         seed_count = 1
         poi_count = 5
     elif dataset == 'AES_PTv2-multi':
@@ -134,6 +136,7 @@ def main():
         }
         classifier_learning_rates = np.logspace(-6, -2, 25)
         epoch_count = 10
+        obf_epoch_count = 10
         seed_count = 1
         poi_count = 5
     elif dataset == 'OTiAiT':
@@ -149,6 +152,7 @@ def main():
         classifier_learning_rates = np.logspace(-6, -2, 25)
         lambda_vals = np.log(16)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 10
+        obf_epoch_count = 500
         poi_count = 5
     elif dataset == 'OTP':
         from datasets.one_truth_prevails import OneTruthPrevails_DataModule
@@ -163,6 +167,7 @@ def main():
         classifier_learning_rates = np.logspace(-6, -2, 25)
         lambda_vals = np.log(2)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 10
+        obf_epoch_count = 10
         poi_count = 10
     else:
         assert False
@@ -174,6 +179,7 @@ def main():
             attack_dataset=attack_dataset,
             data_module=data_module,
             epoch_count=epoch_count,
+            obf_epoch_count=obf_epoch_count,
             seed_count=seed_count,
             default_supervised_classifier_kwargs=supervised_classifier_kwargs,
             default_all_style_classifier_kwargs=all_style_classifier_kwargs,
@@ -197,8 +203,10 @@ def main():
             attack_datasets=attack_datasets,
             data_modules=data_modules,
             epoch_count=epoch_count,
+            obf_epoch_count=obf_epoch_count,
             seed_count=seed_count,
             template_attack_poi_count=poi_count,
+            train_indices=[0],
             default_supervised_classifier_kwargs=supervised_classifier_kwargs,
             default_all_style_classifier_kwargs=all_style_classifier_kwargs
         )
@@ -208,6 +216,7 @@ def main():
             trial.supervised_lr_sweep(classifier_learning_rates)
             trial.train_optimal_supervised_classifier()
             trial.train_optimal_all_classifier()
+            trial.lambda_sweep(lambda_vals)
             trial.eval_leakage_assessments()
         trial.plot_everything()
 

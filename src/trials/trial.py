@@ -2,6 +2,7 @@ import os
 from copy import copy, deepcopy
 import numpy as np
 import torch
+from torch.multiprocessing import Pool
 from torch import nn
 from matplotlib import pyplot as plt
 from lightning import Trainer
@@ -38,6 +39,7 @@ class Trial:
         attack_dataset,
         data_module,
         epoch_count=100,
+        obf_epoch_count=100,
         seed_count=5,
         template_attack_poi_count=20,
         default_supervised_classifier_kwargs={},
@@ -48,6 +50,7 @@ class Trial:
         self.attack_dataset = attack_dataset
         self.data_module = data_module
         self.epoch_count = epoch_count
+        self.obf_epoch_count = obf_epoch_count
         self.seed_count = seed_count
         self.template_attack_poi_count = template_attack_poi_count
         self.default_supervised_classifier_kwargs = default_supervised_classifier_kwargs
@@ -345,7 +348,7 @@ class Trial:
                 shutil.rmtree(logging_dir)
             os.makedirs(logging_dir)
             module_kwargs = self.default_all_style_classifier_kwargs
-            module_kwargs.update({'classifier_optimizer_kwargs': {'lr': self.optimal_learning_rate}})
+            module_kwargs.update({'classifier_optimizer_kwargs': {'lr': 0.1*self.optimal_learning_rate}})
             module_kwargs.update(override_kwargs)
             training_module = ALLTrainer(
                 **module_kwargs
@@ -353,7 +356,7 @@ class Trial:
             training_module.classifier.load_state_dict(torch.load(os.path.join(self.base_dir, 'all_classifier', f'seed={seed}', 'classifier_state.pth'), weights_only=True))
             training_module.classifier = torch.compile(training_module.classifier)
             trainer = Trainer(
-                max_epochs=20*self.epoch_count,
+                max_epochs=self.obf_epoch_count,
                 val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
