@@ -308,7 +308,7 @@ class Trial:
                 shutil.rmtree(logging_dir)
             os.makedirs(logging_dir)
             module_kwargs = self.default_all_style_classifier_kwargs
-            module_kwargs.update({'classifier_optimizer_kwargs': {'lr': 0.1*self.optimal_learning_rate}}) ######################
+            module_kwargs.update({'classifier_optimizer_kwargs': {'lr': 0.01*self.optimal_learning_rate}})
             module_kwargs.update(override_kwargs)
             training_module = ALLTrainer(
                 **module_kwargs
@@ -361,6 +361,10 @@ class Trial:
                     training_curves, logging_dir,
                     keys=[['classifier-train-loss_epoch', 'classifier-val-loss'], ['train-rank', 'val-rank'], ['obfuscator-train-loss_epoch', 'obfuscator-val-loss'], ['min-obf-weight', 'max-obf-weight', 'mean-obf-weight']]
                 )
+                fig, ax = plt.subplots(figsize=(4, 4))
+                self._plot_leakage_assessment(erasure_probs[np.newaxis, :], ax)
+                ax.set_yscale('log')
+                fig.savefig(os.path.join(logging_dir, 'erasure_probs.png'))
                 perf_corr, _ = evaluate_gmm_exploitability(self.data_module.train_dataset, self.data_module.val_dataset, erasure_probs, poi_count=self.template_attack_poi_count, fast=True)
                 perf_corr_vals.append(perf_corr)
             with open(os.path.join(sweep_base_dir, 'perf_corr_vals.pickle'), 'wb') as f:

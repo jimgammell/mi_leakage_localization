@@ -20,9 +20,10 @@ class TemplateAttack:
     def profile(self, profiling_dataset: Dataset):
         traces, metadata = extract_dataset(profiling_dataset, self.points_of_interest, metadata_keys=self.target_key, target_byte=self.target_byte)
         targets = metadata[self.target_key]
-        self.log_p_y = get_log_p_y(targets)
-        self.means = fit_means(traces, targets)
-        covs = fit_covs(traces, targets, self.means)
+        self.class_count = get_class_count(targets)
+        self.log_p_y = get_log_p_y(targets, self.class_count)
+        self.means = fit_means(traces, targets, self.class_count)
+        covs = fit_covs(traces, targets, self.means, self.class_count)
         self.Ls = choldecomp_covs(covs)
     
     def get_predictions(self, attack_dataset: Dataset, n_repetitions=100, n_traces: Optional[int] = None, int_var_to_key_fn=subbytes_to_keys):
@@ -31,13 +32,13 @@ class TemplateAttack:
         assert len(attack_dataset) >= n_traces
         assert self.has_profiled()
         traces, _ = extract_dataset(attack_dataset, self.points_of_interest, metadata_keys=[], target_byte=self.target_byte)
-        log_p_x_given_y = get_log_p_x_given_y(traces, self.means, self.Ls)
+        log_p_x_given_y = get_log_p_x_given_y(traces, self.means, self.Ls, self.class_count)
         predictions = log_p_x_given_y + self.log_p_y
         return predictions
     
     def get_ranks(self, attack_dataset):
         traces, metadata = extract_dataset(attack_dataset, self.points_of_interest, metadata_keys=self.target_key, target_byte=self.target_byte)
-        log_p_x_given_y = get_log_p_x_given_y(traces, self.means, self.Ls)
+        log_p_x_given_y = get_log_p_x_given_y(traces, self.means, self.Ls, self.class_count)
         predictions = log_p_x_given_y + self.log_p_y
         for key, targets in metadata.items():
             sorted_indices = np.argsort(-predictions, axis=1)
@@ -50,7 +51,7 @@ class TemplateAttack:
         assert len(attack_dataset) >= n_traces
         assert self.has_profiled()
         traces, metadata = extract_dataset(attack_dataset, self.points_of_interest, metadata_keys=[*arg_keys, 'key'])
-        log_p_x_given_y = get_log_p_x_given_y(traces, self.means, self.Ls)
+        log_p_x_given_y = get_log_p_x_given_y(traces, self.means, self.Ls, self.class_count)
         indices = np.stack([np.random.choice(len(attack_dataset), n_traces, replace=False) for _ in range(n_repetitions)])
         predictions = log_p_x_given_y + self.log_p_y
         args = np.stack([metadata[arg_key] for arg_key in arg_keys], axis=-1)

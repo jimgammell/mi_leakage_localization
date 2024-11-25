@@ -31,16 +31,18 @@ def main():
     supervised_classifier_kwargs = dict(
         model_name='sca-cnn',
         optimizer_name='AdamW',
-        optimizer_kwargs={'lr': 2e-4}
+        optimizer_kwargs={'lr': 2e-4},
+        additive_noise_augmentation=0.25
     )
     all_style_classifier_kwargs = dict(
         classifier_name='sca-cnn',
         classifier_optimizer_name='AdamW',
         classifier_optimizer_kwargs={'lr': 2e-4},
         obfuscator_optimizer_name='AdamW',
-        obfuscator_optimizer_kwargs={'lr': 1e-2},
+        obfuscator_optimizer_kwargs={'lr': 1e-3},
         obfuscator_batch_size_multiplier=8,
-        obfuscator_l2_norm_penalty=0.5*np.log(256)
+        obfuscator_l2_norm_penalty=0.5*np.log(256),
+        additive_noise_augmentation=0.25
     )
     
     if dataset == 'ASCADv1-fixed':
@@ -64,7 +66,7 @@ def main():
         classifier_learning_rates = np.logspace(-6, -2, 25)
         lambda_vals = np.log(256)*np.logspace(-6, 0, 25)
         epoch_count = 100
-        poi_count = 10
+        poi_count = 20
     elif dataset == 'DPAv4':
         from datasets.dpav4 import DPAv4_DataModule
         data_module = DPAv4_DataModule(root=os.path.join(DATA_DIR, 'dpav4'))
@@ -73,7 +75,7 @@ def main():
         attack_dataset = data_module.attack_dataset
         supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
         classifier_learning_rates = np.logspace(-6, -2, 25)
-        lambda_vals = np.log(256)*np.logspace(-12, 0, 25)
+        lambda_vals = np.log(256)*np.logspace(-6, 0, 5) ################################################
         epoch_count = 25
         poi_count = 5
     elif dataset == 'AES_HD':
@@ -97,6 +99,10 @@ def main():
         data_modules = [AES_PTv2_DataModule(profiling_dataset, attack_dataset) for profiling_dataset, attack_dataset in zip(profiling_datasets, attack_datasets)]
         for data_module in data_modules:
             data_module.setup('')
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {
+            'input_shape': (1, profiling_datasets[0].timesteps_per_trace)
+        }
+        classifier_learning_rates = np.logspace(-6, -2, 25)
         epoch_count = 10
         seed_count = 1
         poi_count = 5
@@ -169,6 +175,7 @@ def main():
         )
         trial.compute_random_baseline()
         trial.compute_first_order_baselines()
+        trial.supervised_lr_sweep(classifier_learning_rates)
         trial.eval_leakage_assessments()
         trial.plot_everything()
 

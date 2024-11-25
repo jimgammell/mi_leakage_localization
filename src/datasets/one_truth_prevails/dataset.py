@@ -10,7 +10,7 @@ class OneTruthPrevails(Dataset):
         train=True,
         transform=None,
         target_transform=None,
-        mmap_profiling_dataset=False
+        profiling_dataset_size=100000
     ):
         super().__init__()
         self.root = root
@@ -18,12 +18,18 @@ class OneTruthPrevails(Dataset):
         self.transform = transform
         self.target_transform = target_transform
         self.return_metadata = False
-        self.mmap_profiling_dataset = mmap_profiling_dataset
+        self.profiling_dataset_size = profiling_dataset_size
         
         if self.train:
-            kwargs = {'mmap_mode': 'r'} if self.mmap_profiling_dataset else {}
-            self.traces = np.load(os.path.join(self.root, '1024', 'p.npy'), **kwargs)
-            self.labels = np.loadtxt(os.path.join(self.root, '1024', 'p_labels.txt'), dtype=np.uint8)
+            traces = np.load(os.path.join(self.root, '1024', 'p.npy'), mmap_mode='r')
+            labels = np.loadtxt(os.path.join(self.root, '1024', 'p_labels.txt'), dtype=np.uint8)
+            pos_indices = np.where(self.labels == 1)
+            neg_indices = np.where(self.labels == 0)
+            assert self.profiling_dataset_size >= min(len(pos_indices), len(neg_indices))
+            indices = np.concatenate([np.random.choice(pos_indices, self.profiling_dataset_size//2, replace=False), np.random.choice(neg_indices, self.profiling_dataset_size//2, replace=False)])
+            np.random.shuffle(indices)
+            self.traces = np.array(traces[indices, ...])
+            self.labels = labels[indices]
         else:
             self.traces = np.load(os.path.join(self.root, '1024', 'a.npy'))
             self.labels = np.load(os.path.join(self.root, '1024', 'a_labels.npy')).astype(np.uint8)

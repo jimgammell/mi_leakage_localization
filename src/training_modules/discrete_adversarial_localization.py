@@ -198,7 +198,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
                 log_likelihood_grad = (
                     log_likelihood*((1-binary_noise)*(1-obfuscation_weights) - binary_noise*obfuscation_weights)
                 ).mean(dim=0)
-                grad = self.obfuscator_l2_norm_penalty*l2_norm_grad + log_likelihood_grad
+                grad = self.obfuscator_l2_norm_penalty*l2_norm_grad + log_likelihood_grad #+ 1e-2*self.unsquashed_obfuscation_weights ##########
                 self.unsquashed_obfuscation_weights.grad = grad
             loss_rv = loss
             return loss

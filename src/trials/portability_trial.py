@@ -106,10 +106,84 @@ class PortabilityTrial(Trial):
                         progress_bar.update(1)
                     result.append(np.stack(ta_exploitabilities))
                 technique_eval['ta_exploitability'] = np.stack(result)
-            print(technique_eval['ta_exploitability'].shape)
-            print()
-            np.savez(os.path.join(self.base_dir, f'{technique_name}_eval.npz'))
+            np.savez(os.path.join(self.base_dir, f'{technique_name}_eval.npz'), **technique_eval)
+    
+    def plot_ta_exploitability(self, name):
+        if not os.path.exists(os.path.join(self.base_dir, f'{name}_eval.npz')):
+            return
+        technique_eval = np.load(os.path.join(self.base_dir, f'{name}_eval.npz'))
+        if not 'ta_exploitability' in technique_eval.keys():
+            return
+        results = technique_eval['ta_exploitability']
+        dataset_count = results.shape[0]
+        assert dataset_count == results.shape[1]
+        fig, axes = plt.subplots(dataset_count, dataset_count, figsize=(4*dataset_count, 4*dataset_count))
+        for row_idx in range(dataset_count):
+            for col_idx in range(dataset_count):
+                ax = axes[row_idx, col_idx]
+                result = results[row_idx, col_idx]
+                self._plot_ta_exploitability(result, ax, color='blue')
+                ax.set_xlabel('Traces seen')
+                ax.set_ylabel('Guessing entropy')
+                ax.set_title(f'Train {row_idx}, test {col_idx}')
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.base_dir, f'{name}_ta_exploitability.png'))
     
     def plot_everything(self):
         for technique_name in LEAKAGE_ASSESSMENT_TECHNIQUES:
             self.plot_leakage_assessment(technique_name)
+            self.plot_ta_exploitability(technique_name)
+    
+    def train_supervised_classifier(self, data_module, logging_dir, override_kwargs={}):
+        if os.path.exists(os.path.join(logging_dir, 'training_curves.pickle')):
+            with open(os.path.join(logging_dir, 'training_curves.pickle'), 'rb') as f:
+                training_curves = pickle.load(f)
+        else:
+            if os.path.exists(logging_dir):
+                shutil.rmtree(logging_dir)
+            os.makedirs(logging_dir)
+            training_module_kwargs = copy(self.default_supervised_classifier_kwargs)
+            training_module_kwargs.update(override_kwargs)
+            training_module = SupervisedClassificationModule(**training_module_kwargs)
+            checkpoint = ModelCheckpoint(
+                filename='best',
+                monitor='val-rank',
+                save_top_k=1,
+                mode='min'
+            )
+            trainer = Trainer(
+                max_epochs=self.epoch_count,
+                val_check_interval=100 if data_module.profiling_dataset.__class__.__name__ == 'OneTruthPrevails' else 1.,
+                default_root_dir=logging_dir,
+                accelerator='gpu',
+                devices=1,
+                logger=TensorBoardLogger(logging_dir, name='lightning_output'),
+                callbacks=[checkpoint]
+            )
+            trainer.fit(training_module, datamodule=data_module)
+            trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
+            training_curves = get_training_curves(logging_dir)
+            save_training_curves(training_curves, logging_dir)
+        return training_curves
+    
+    def supervised_lr_sweep(self, learning_rates):
+        self.optimal_learning_rates = []
+        for idx, data_module in enumerate(self.data_modules):
+            min_val_ranks = []
+            sweep_base_dir = os.path.join(self.base_dir, 'lr_sweep', f'device_{idx}')
+            os.makedirs(sweep_base_dir, exist_ok=True)
+            for learning_rate in learning_rates:
+                logging_dir = os.path.join(sweep_base_dir, f'learning_rate={learning_rate}')
+                training_curves = self.train_supervised_classifier(data_module, logging_dir, override_kwargs={'optimizer_kwargs': {'lr': learning_rate}})
+                plot_training_curves(training_curves, logging_dir, keys=[['train-loss', 'val-loss'], ['train-rank', 'val-rank']])
+                min_val_rank = training_curves['val-rank'][-1].min()
+                min_val_ranks.append(min_val_rank)
+            fig, ax = plt.subplots(figsize=(4, 4))
+            ax.plot(learning_rates, min_val_ranks, color='blue')
+            ax.set_xscale('log')
+            ax.set_xlabel('Learning rate')
+            ax.set_ylabel('Minimum validation rank achieved')
+            ax.set_title('Supervised classification learning rate sweep')
+            fig.savefig(os.path.join(sweep_base_dir, 'lr_sweep.png'))
+            optimal_learning_rate = learning_rates[np.argmin(min_val_ranks)]
+            self.optimal_learning_rates.append(optimal_learning_rate)

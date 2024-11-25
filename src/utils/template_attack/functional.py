@@ -38,27 +38,33 @@ def extract_dataset(
     base_dataset.return_metadata = orig_ret_mdata
     assert np.all(np.isfinite(traces))
     traces -= traces.mean(axis=0)
-    traces /= traces.std(axis=0)
+    traces /= (traces.std(axis=0) + 1e-12)
     return traces, metadata
+
+@jit(nopython=True)
+def get_class_count(targets):
+    unique_classes = np.unique(targets)
+    #assert all(x in unique_classes for x in np.arange(len(unique_classes), targets.dtype))
+    return len(unique_classes)
 
 @jit(nopython=True)
 def mean_with_axis(array, axis):
     return np.sum(array, axis=axis) / array.shape[axis]
 
 @jit(nopython=True)
-def fit_means(traces, targets):
+def fit_means(traces, targets, class_count):
     (datapoint_count, poi_count) = traces.shape
-    means = np.full((256, poi_count), np.nan, dtype=np.float32)
-    for byte in range(256):
+    means = np.full((class_count, poi_count), np.nan, dtype=np.float32)
+    for byte in range(class_count):
         means[byte, :] = mean_with_axis(traces[targets == byte, :], 0)
     assert np.all(np.isfinite(means))
     return means
 
 @jit(nopython=True)
-def fit_covs(traces, targets, means):
+def fit_covs(traces, targets, means, class_count):
     (datapoint_count, poi_count) = traces.shape
-    covs = np.full((256, poi_count, poi_count), np.nan, dtype=np.float32)
-    for byte in range(256):
+    covs = np.full((class_count, poi_count, poi_count), np.nan, dtype=np.float32)
+    for byte in range(class_count):
         mean = means[byte]
         traces_byte = traces[targets == byte, :]
         trace_count, _ = traces_byte.shape
@@ -88,20 +94,20 @@ def compute_log_gaussian_density(x, mu, L):
     return -0.5 * np.dot(y, y) - 0.5*logdet
 
 @jit(nopython=True)
-def get_log_p_y(targets):
-    probs = np.zeros((256,), dtype=np.float32)
+def get_log_p_y(targets, class_count):
+    probs = np.zeros((class_count,), dtype=np.float32)
     for target in targets:
         probs[target] += 1
     log_probs = np.log(probs) - np.log(probs.sum())
     return log_probs
 
 @jit(nopython=True)
-def get_log_p_x_given_y(traces, means, Ls):
+def get_log_p_x_given_y(traces, means, Ls, class_count):
     datapoint_count = traces.shape[0]
-    log_probs = np.full((datapoint_count, 256), np.nan, dtype=np.float32)
+    log_probs = np.full((datapoint_count, class_count), np.nan, dtype=np.float32)
     for datapoint_idx in range(datapoint_count):
         trace = traces[datapoint_idx, :]
-        for byte in range(256):
+        for byte in range(class_count):
             log_probs[datapoint_idx, byte] = compute_log_gaussian_density(trace, means[byte], Ls[byte])
     assert np.all(np.isfinite(log_probs))
     return log_probs
