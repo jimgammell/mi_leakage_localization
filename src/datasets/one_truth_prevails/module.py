@@ -12,35 +12,32 @@ from utils.calculate_dataset_stats import calculate_dataset_stats
 class DataModule(L.LightningDataModule):
     def __init__(self,
         root: str,
-        train_batch_size=10240,
+        train_batch_size=256,
         eval_batch_size=100000,
         dataset_kwargs={},
         dataloader_kwargs={},
-        train_prop=0.01,
-        val_prop=0.001
+        val_prop=0.1
     ):
         self.root = root
         self.train_batch_size = train_batch_size
         self.eval_batch_size = eval_batch_size
         self.dataset_kwargs = dataset_kwargs
         self.dataloader_kwargs = dataloader_kwargs
-        self.train_prop = train_prop
         self.val_prop = val_prop
         super().__init__()
     
     def setup(self, stage):
-        self.profiling_dataset = OneTruthPrevails(root=self.root, train=True, transform=None, target_transform=None, mmap_profiling_dataset=True)
+        self.profiling_dataset = OneTruthPrevails(root=self.root, train=True, transform=None, target_transform=None)
         self.attack_dataset = OneTruthPrevails(root=self.root, train=False, transform=None, target_transform=None)
-        self.train_count = int(self.train_prop*len(self.profiling_dataset))
         self.val_count = int(self.val_prop*len(self.profiling_dataset))
+        self.train_count = len(self.profiling_dataset) - self.val_count
         assert self.train_count + self.val_count <= len(self.profiling_dataset)
         indices = np.random.choice(len(self.profiling_dataset), self.train_count+self.val_count, replace=False)
         self.train_indices = indices[:self.train_count]
         self.val_indices = indices[self.train_count:]
         self.train_dataset = Subset(copy(self.profiling_dataset), self.train_indices)
         self.val_dataset = Subset(copy(self.profiling_dataset), self.val_indices)
-        stats_subset = Subset(self.profiling_dataset, np.random.choice(len(self.profiling_dataset), int(0.001*len(self.profiling_dataset)), replace=False))
-        self.mean, self.std = calculate_dataset_stats(stats_subset)
+        self.mean, self.std = calculate_dataset_stats(self.profiling_dataset)
         self.mean, self.std = map(lambda x: torch.tensor(x, dtype=torch.float32) if isinstance(x, np.ndarray) else x.to(torch.float32), (self.mean, self.std))
         self.transform = transforms.Compose([
             transforms.Lambda(lambda x: torch.tensor(x, dtype=torch.float32)),

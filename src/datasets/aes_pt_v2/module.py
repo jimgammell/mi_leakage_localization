@@ -3,7 +3,7 @@ from copy import copy
 from typing import *
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader, Subset
+from torch.utils.data import Dataset, DataLoader, Subset, ConcatDataset
 from torchvision import transforms
 import lightning as L
 
@@ -38,8 +38,16 @@ class DataModule(L.LightningDataModule):
             transforms.Lambda(lambda x: (x - self.data_mean)/self.data_var.sqrt())
         ])
         target_transform = transforms.Lambda(lambda x: torch.tensor(x, dtype=torch.long))
-        self.profiling_dataset.transform = self.attack_dataset.transform = transform
-        self.profiling_dataset.target_transform = self.attack_dataset.target_transform = target_transform
+        if isinstance(self.profiling_dataset, ConcatDataset):
+            for dataset in self.profiling_dataset.datasets:
+                dataset.transform = transform
+                dataset.target_transform = target_transform
+            for dataset in self.attack_dataset.datasets:
+                dataset.transform = transform
+                dataset.target_transform = target_transform
+        else:
+            self.profiling_dataset.transform = self.attack_dataset.transform = transform
+            self.profiling_dataset.target_transform = self.attack_dataset.target_transform = target_transform
         self.train_indices = np.random.choice(len(self.profiling_dataset), int((1-self.val_prop)*len(self.profiling_dataset)), replace=False)
         self.val_indices = np.array([x for x in np.arange(len(self.profiling_dataset)) if not(x in self.train_indices)])
         self.val_dataset = Subset(self.profiling_dataset, self.val_indices)

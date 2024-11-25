@@ -1,5 +1,6 @@
 import os
 import argparse
+from torch.utils.data import ConcatDataset
 
 from common import *
 from trials.trial import Trial
@@ -107,7 +108,29 @@ def main():
         seed_count = 1
         poi_count = 5
     elif dataset == 'AES_PTv2-multi':
-        raise NotImplementedError
+        from datasets.aes_pt_v2 import AES_PTv2, AES_PTv2_DataModule
+        profiling_datasets = [AES_PTv2(root=os.path.join(DATA_DIR, 'aes_pt_v2'), train=True, devices=f'D{dev_id}') for dev_id in [1, 2, 3, 4]]
+        attack_datasets = [AES_PTv2(root=os.path.join(DATA_DIR, 'aes_pt_v2'), train=False, devices=f'D{dev_id}') for dev_id in [1, 2, 3, 4]]
+        combined_profiling_datasets = [
+            ConcatDataset([profiling_datasets[dev_id-1] for dev_id in [1, 2, 3, 4] if not dev_id == profile_id])
+            for profile_id in [1, 2, 3, 4]
+        ]
+        combined_attack_datasets = [
+            ConcatDataset([attack_datasets[dev_id-1] for dev_id in [1, 2, 3, 4] if not dev_id == profile_id])
+            for profile_id in [1, 2, 3, 4]
+        ]
+        data_modules = [
+            AES_PTv2_DataModule(combined_profiling_dataset, combined_attack_dataset)
+            for combined_profiling_dataset, combined_attack_dataset in zip(combined_profiling_datasets, combined_attack_datasets)]
+        for data_module in data_modules:
+            data_module.setup('')
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {
+            'input_shape': (1, profiling_datasets[0].timesteps_per_trace)
+        }
+        classifier_learning_rates = np.logspace(-6, -2, 25)
+        epoch_count = 10
+        seed_count = 1
+        poi_count = 5
     elif dataset == 'OTiAiT':
         from datasets.ed25519_wolfssl import ED25519_DataModule
         data_module = ED25519_DataModule(root=os.path.join(DATA_DIR, 'one_trace_is_all_it_takes'))
@@ -124,7 +147,7 @@ def main():
         poi_count = 5
     elif dataset == 'OTP':
         from datasets.one_truth_prevails import OneTruthPrevails_DataModule
-        data_module = OneTruthPrevails_DataModule(root=os.path.join(DATA_DIR, 'one_truth_prevails'), train_prop=0.999, val_prop=0.001)
+        data_module = OneTruthPrevails_DataModule(root=os.path.join(DATA_DIR, 'one_truth_prevails'))
         data_module.setup('')
         profiling_dataset = data_module.profiling_dataset
         attack_dataset = data_module.attack_dataset
@@ -134,7 +157,7 @@ def main():
         }
         classifier_learning_rates = np.logspace(-6, -2, 25)
         lambda_vals = np.log(2)*np.logspace(-6, 0, 25)
-        epoch_count = 1
+        epoch_count = 10
         poi_count = 10
     else:
         assert False
@@ -156,8 +179,8 @@ def main():
         trial.supervised_lr_sweep(classifier_learning_rates)
         trial.train_optimal_supervised_classifier()
         trial.train_optimal_all_classifier()
-        trial.lambda_sweep(lambda_vals)
-        trial.run_optimal_all()
+        #trial.lambda_sweep(lambda_vals)
+        #trial.run_optimal_all()
         trial.compute_neural_net_explainability_baselines()
         trial.eval_leakage_assessments(template_attack=dataset in ['DPAv4', 'AES_HD'])
         trial.plot_everything()
@@ -176,6 +199,8 @@ def main():
         trial.compute_random_baseline()
         trial.compute_first_order_baselines()
         trial.supervised_lr_sweep(classifier_learning_rates)
+        trial.train_optimal_supervised_classifier()
+        trial.train_optimal_all_classifier()
         trial.eval_leakage_assessments()
         trial.plot_everything()
 

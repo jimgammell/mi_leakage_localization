@@ -237,7 +237,7 @@ class Trial:
             )
             trainer = Trainer(
                 max_epochs=self.epoch_count,
-                val_check_interval=100 if self.profiling_dataset.__class__.__name__ == 'OneTruthPrevails' else 1.,
+                val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
                 devices=1,
@@ -273,7 +273,7 @@ class Trial:
             )
             trainer = Trainer(
                 max_epochs=self.epoch_count,
-                val_check_interval=100 if self.profiling_dataset.__class__.__name__ == 'OneTruthPrevails' else 1.,
+                val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
                 devices=1,

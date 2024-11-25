@@ -23,16 +23,16 @@ class OneTruthPrevails(Dataset):
         if self.train:
             traces = np.load(os.path.join(self.root, '1024', 'p.npy'), mmap_mode='r')
             labels = np.loadtxt(os.path.join(self.root, '1024', 'p_labels.txt'), dtype=np.uint8)
-            pos_indices = np.where(self.labels == 1)
-            neg_indices = np.where(self.labels == 0)
-            assert self.profiling_dataset_size >= min(len(pos_indices), len(neg_indices))
+            pos_indices = np.where(labels == 1)[0]
+            neg_indices = np.where(labels == 0)[0]
+            assert self.profiling_dataset_size <= min(len(pos_indices), len(neg_indices))
             indices = np.concatenate([np.random.choice(pos_indices, self.profiling_dataset_size//2, replace=False), np.random.choice(neg_indices, self.profiling_dataset_size//2, replace=False)])
             np.random.shuffle(indices)
-            self.traces = np.array(traces[indices, ...])
-            self.labels = labels[indices]
+            self.traces = np.array(traces[indices, ...], dtype=np.float32)
+            self.labels = np.array(labels[indices], dtype=np.int64)
         else:
-            self.traces = np.load(os.path.join(self.root, '1024', 'a.npy'))
-            self.labels = np.load(os.path.join(self.root, '1024', 'a_labels.npy')).astype(np.uint8)
+            self.traces = np.load(os.path.join(self.root, '1024', 'a.npy')).astype(np.float32)
+            self.labels = np.load(os.path.join(self.root, '1024', 'a_labels.npy')).astype(np.int64)
         self.dataset_length = len(self.traces)
         assert self.dataset_length == len(self.labels)
         self.data_shape = self.traces[0, np.newaxis, :].shape

@@ -166,6 +166,49 @@ class PortabilityTrial(Trial):
             save_training_curves(training_curves, logging_dir)
         return training_curves
     
+    def train_all_classifier(self, data_module, logging_dir, override_kwargs={}):
+        if os.path.exists(os.path.join(logging_dir, 'training_curves.pickle')):
+            with open(os.path.join(logging_dir, 'training_curves.pickle'), 'rb') as f:
+                training_curves = pickle.load(f)
+        else:
+            if os.path.exists(logging_dir):
+                shutil.rmtree(logging_dir)
+            os.makedirs(logging_dir)
+            training_module_kwargs = copy(self.default_all_style_classifier_kwargs)
+            training_module_kwargs.update(override_kwargs)
+            training_module = ALLTrainer(
+                normalize_erasure_probs_for_classifier=True,
+                split_training_steps=len(data_module.train_dataloader())*self.epoch_count,
+                **training_module_kwargs
+            )
+            checkpoint = ModelCheckpoint(
+                filename='best',
+                monitor='val-rank',
+                save_top_k=1,
+                mode='min'
+            )
+            trainer = Trainer(
+                max_epochs=self.epoch_count,
+                val_check_interval=1.,
+                default_root_dir=logging_dir,
+                accelerator='gpu',
+                devices=1,
+                logger=TensorBoardLogger(logging_dir, name='lightning_output'),
+                callbacks=[checkpoint]
+            )
+            trainer.fit(training_module, datamodule=data_module)
+            trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
+            training_curves = get_training_curves(logging_dir)
+            save_training_curves(training_curves, logging_dir)
+            training_module = ALLTrainer.load_from_checkpoint(
+                os.path.join(logging_dir, 'lightning_output', 'version_0', 'checkpoints', 'best.ckpt'),
+                **training_module_kwargs
+            )
+            classifier_state = deepcopy(training_module.classifier.state_dict())
+            torch.save(classifier_state, os.path.join(logging_dir, 'classifier_state.pth'))
+        classifier_state = torch.load(os.path.join(logging_dir, 'classifier_state.pth'), map_location='cpu', weights_only=True)
+        return training_curves, classifier_state
+    
     def supervised_lr_sweep(self, learning_rates):
         self.optimal_learning_rates = []
         for idx, data_module in enumerate(self.data_modules):
@@ -187,3 +230,23 @@ class PortabilityTrial(Trial):
             fig.savefig(os.path.join(sweep_base_dir, 'lr_sweep.png'))
             optimal_learning_rate = learning_rates[np.argmin(min_val_ranks)]
             self.optimal_learning_rates.append(optimal_learning_rate)
+    
+    def train_optimal_supervised_classifier(self):
+        assert hasattr(self, 'optimal_learning_rates')
+        base_dir = os.path.join(self.base_dir, 'standard_classifier')
+        for idx, data_module in enumerate(self.data_modules):
+            for seed in range(self.seed_count):
+                set_seed(seed)
+                logging_dir = os.path.join(base_dir, f'device_{idx}', f'seed={seed}')
+                training_curves = self.train_supervised_classifier(data_module, logging_dir, override_kwargs={'optimizer_kwargs': {'lr': self.optimal_learning_rates[idx]}})
+                plot_training_curves(training_curves, logging_dir, keys=[['train-loss', 'val-loss'], ['train-rank', 'val-rank']])
+    
+    def train_optimal_all_classifier(self):
+        assert hasattr(self, 'optimal_learning_rates')
+        base_dir = os.path.join(self.base_dir, 'all_classifier')
+        for idx, data_module in enumerate(self.data_modules):
+            for seed in range(self.seed_count):
+                set_seed(seed)
+                logging_dir = os.path.join(base_dir, f'device_{idx}', f'seed={seed}')
+                training_curves, _ = self.train_all_classifier(data_module, logging_dir, override_kwargs={'classifier_optimizer_kwargs': {'lr': self.optimal_learning_rates[idx]}})
+                plot_training_curves(training_curves, logging_dir, keys=[['classifier-train-loss_epoch', 'classifier-val-loss'], ['train-rank', 'val-rank']])
