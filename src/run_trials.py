@@ -26,9 +26,12 @@ def main():
     parser.add_argument('--dataset', action='store', choices=AVAILABLE_DATASETS)
     parser.add_argument('--seed-count', type=int, default=5, action='store')
     parser.add_argument('--plot-only', action='store_true', default=False)
+    parser.add_argument('--device', action='store', default=None, type=int)
     clargs = parser.parse_args()
     dataset = clargs.dataset
     seed_count = clargs.seed_count
+    if clargs.device is not None:
+        os.environ['CUDA_VISIBLE_DEVICES'] = f'{clargs.device}'
     assert seed_count > 0
     
     supervised_classifier_kwargs = dict(
