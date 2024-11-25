@@ -20,6 +20,16 @@ from utils.calculate_sosd import calculate_sosd
 from utils.performance_correlation import soft_kendall_tau
 
 LEAKAGE_ASSESSMENT_TECHNIQUES = ['random', 'cpa', 'snr', 'sosd', 'ablation', 'gradvis', 'input_x_grad', 'all']
+print_names = {
+    'random': 'Random',
+    'cpa': 'CPA',
+    'snr': 'SNR',
+    'sosd': 'SoSD',
+    'ablation': 'Ablation',
+    'gradvis': 'GradVis',
+    'input_x_grad': 'Input*Grad',
+    'all': 'ALL (ours)'
+}
 
 class Trial:
     def __init__(self,
@@ -85,7 +95,7 @@ class Trial:
         maxes = np.max(leakage_assessment, axis=0)
         t = np.arange(leakage_assessment.shape[-1])
         ax.errorbar(
-            t, medians, yerr=[medians-mins, maxes-medians], fmt='o', markersize=1, linewidth=0.25, **plot_kwargs
+            t, medians, yerr=[medians-mins, maxes-medians], fmt='o', markersize=1, linewidth=0.25, rasterized=True, **plot_kwargs
         )
     
     def plot_leakage_assessment(self, name):
@@ -96,14 +106,27 @@ class Trial:
         self._plot_leakage_assessment(leakage_assessment, ax, color='blue')
         fig.savefig(os.path.join(self.base_dir, f'{name}_leakage_assessment.png'))
     
-    def _plot_ta_exploitability(self, ta_exploitability, ax, mean_only=False, **plot_kwargs):
+    def plot_all_leakage_assessments(self):
+        fig, axes = plt.subplots(2, len(LEAKAGE_ASSESSMENT_TECHNIQUES)//2, figsize=(len(LEAKAGE_ASSESSMENT_TECHNIQUES), 4))
+        for name, ax in zip(LEAKAGE_ASSESSMENT_TECHNIQUES, axes.flatten()):
+            leakage_assessment = self.load_leakage_assessment(name)
+            if leakage_assessment is None:
+                continue
+            self._plot_leakage_assessment(leakage_assessment, ax, color='blue')
+            ax.set_xlabel('Timestep $t$')
+            ax.set_ylabel('Estimated leakage of $X_t$')
+            ax.set_title(f'Technique: {print_names[name]}')
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.base_dir, 'leakage_assessments.pdf'))
+    
+    def _plot_ta_exploitability(self, ta_exploitability, ax, mean_only=False, label=None, **plot_kwargs):
         ta_exploitability = ta_exploitability.reshape((-1, ta_exploitability.shape[-1]))
         traces_seen = np.arange(1, ta_exploitability.shape[-1]+1)
         if mean_only:
-            ax.plot(traces_seen, np.mean(ta_exploitability, axis=0), linestyle='-', **plot_kwargs)
+            ax.plot(traces_seen, np.mean(ta_exploitability, axis=0), linestyle='-', rasterized=True, label=label, **plot_kwargs)
         else:
-            ax.plot(traces_seen, np.median(ta_exploitability, axis=0), linestyle='-', **plot_kwargs)
-            ax.fill_between(traces_seen, np.percentile(ta_exploitability, 25, axis=0), np.percentile(ta_exploitability, 75, axis=0), alpha=0.25, **plot_kwargs)
+            ax.plot(traces_seen, np.median(ta_exploitability, axis=0), linestyle='-', rasterized=True, label=label, **plot_kwargs)
+            ax.fill_between(traces_seen, np.percentile(ta_exploitability, 25, axis=0), np.percentile(ta_exploitability, 75, axis=0), alpha=0.25, rasterized=True, **plot_kwargs)
         ax.set_xscale('log')
         ax.set_yscale('log')
         
@@ -128,8 +151,7 @@ class Trial:
             technique_eval = np.load(os.path.join(self.base_dir, f'{name}_eval.npz'))
             if not 'ta_exploitability' in technique_eval.keys():
                 continue
-            name = name.replace('_', '\_')
-            self._plot_ta_exploitability(technique_eval['ta_exploitability'], ax, mean_only=True, color=color, label=name)
+            self._plot_ta_exploitability(technique_eval['ta_exploitability'], ax, color=color, label=print_names[name])
             ta_exploitability = technique_eval['ta_exploitability'].reshape((technique_eval['ta_exploitability'].shape[0], -1)).mean(axis=1)
             mean = ta_exploitability.mean()
             std = ta_exploitability.std()
@@ -137,13 +159,13 @@ class Trial:
         ax.set_xlabel('Traces seen')
         ax.set_ylabel('Guessing entropy')
         ax.legend()
-        fig.savefig(os.path.join(self.base_dir, 'ta_exploitability.png'))
+        fig.savefig(os.path.join(self.base_dir, 'ta_exploitability.pdf'))
         plt.close(fig)
     
     def _plot_dnn_ablation(self, dnn_ablation, ax, color='blue', label=None):
         x = 10*np.arange(dnn_ablation.shape[-1])
-        ax.fill_between(x, np.min(dnn_ablation, axis=0), np.max(dnn_ablation, axis=0), alpha=0.25, color=color)
-        ax.plot(x, np.median(dnn_ablation, axis=0), color=color, label=label)
+        ax.fill_between(x, np.min(dnn_ablation, axis=0), np.max(dnn_ablation, axis=0), alpha=0.25, color=color, rasterized=True)
+        ax.plot(x, np.median(dnn_ablation, axis=0), color=color, label=label, rasterized=True)
     
     def plot_dnn_ablation(self):
         fig, ax = plt.subplots(figsize=(4, 4))
@@ -155,17 +177,22 @@ class Trial:
             technique_eval = np.load(os.path.join(self.base_dir, f'{name}_eval.npz'))
             if not 'dnn_ablation' in technique_eval.keys():
                 continue
-            name = name.replace('_', '\_')
-            self._plot_dnn_ablation(technique_eval['dnn_ablation'], ax, color=color, label='\\texttt{'+name+'}')
+            self._plot_dnn_ablation(technique_eval['dnn_ablation'], ax, color=color, label=f'{print_names[name]}')
+            vals = technique_eval['dnn_ablation']
+            auc = []
+            for _vals in vals:
+                auc.append(_vals.mean())
+            auc = np.array(auc)
+            print(f'{name} AUC (DNN exploitability): {auc.mean()} +/- {auc.std()}')
         ax.set_xlabel('Number of ablated points')
         ax.set_ylabel('Guessing entropy')
         ax.legend()
-        fig.savefig(os.path.join(self.base_dir, f'dnn_ablation.png'))
+        fig.savefig(os.path.join(self.base_dir, f'dnn_ablation.pdf'))
         plt.close(fig)
     
     def _plot_gmm_exploitability(self, gmm_exploitability, ax, color='blue', label=None):
-        ax.fill_between(np.arange(gmm_exploitability.shape[-1]), np.min(gmm_exploitability, axis=0), np.max(gmm_exploitability, axis=0), alpha=0.25, color=color)
-        ax.plot(np.median(gmm_exploitability, axis=0), color=color, label=label)
+        ax.fill_between(np.arange(gmm_exploitability.shape[-1]), np.min(gmm_exploitability, axis=0), np.max(gmm_exploitability, axis=0), alpha=0.25, color=color, rasterized=True)
+        ax.plot(np.median(gmm_exploitability, axis=0), color=color, label=label, marker='.', linestyle='--', markersize=1, linewidth=0.5, rasterized=True)
     
     def plot_gmm_exploitability(self):
         fig, ax = plt.subplots(figsize=(4, 4))
@@ -177,14 +204,17 @@ class Trial:
             technique_eval = np.load(os.path.join(self.base_dir, f'{name}_eval.npz'))
             if not 'gmm_exploitability' in technique_eval.keys():
                 continue
-            name = name.replace('_', '\_')
-            self._plot_gmm_exploitability(technique_eval['gmm_exploitability'], ax, color=color, label='\\texttt{'+name+'}')
-            sktcc = soft_kendall_tau(technique_eval['gmm_exploitability'], -np.arange(technique_eval['gmm_exploitability'].shape[-1]))
-            print(f'{name} SKTCC: {sktcc}')
+            vals = technique_eval['gmm_exploitability']
+            self._plot_gmm_exploitability(vals[:, 0, :], ax, color=color, label=print_names[name])
+            sktcc = []
+            for _vals in vals:
+                sktcc.append(soft_kendall_tau(_vals[0, :], -np.arange(_vals.shape[-1]), x_var=_vals[1, :]**2))
+            sktcc = np.array(sktcc)
+            print(f'{name} SKTCC (GMM exploitability): {sktcc.mean()} +/- {sktcc.std()}')
         ax.set_xlabel('Estimated leakage of inputs')
         ax.set_ylabel('Guessing entropy')
         ax.legend()
-        fig.savefig(os.path.join(self.base_dir, 'gmm_exploitability.png'))
+        fig.savefig(os.path.join(self.base_dir, 'gmm_exploitability.pdf'))
         plt.close(fig)
     
     def load_leakage_assessments(self):
@@ -349,12 +379,12 @@ class Trial:
             min_val_rank = training_curves['val-rank'][-1].min()
             min_val_ranks.append(min_val_rank)
         fig, ax = plt.subplots(figsize=(4, 4))
-        ax.plot(learning_rates, min_val_ranks, color='blue')
+        ax.plot(learning_rates, min_val_ranks, color='blue', linestyle='--', marker='.')
         ax.set_xscale('log')
         ax.set_xlabel('Learning rate')
         ax.set_ylabel('Minimum validation rank achieved')
         ax.set_title('Supervised classification learning rate sweep')
-        fig.savefig(os.path.join(sweep_base_dir, 'lr_sweep.png'))
+        fig.savefig(os.path.join(sweep_base_dir, 'lr_sweep.pdf'))
         optimal_learning_rate = learning_rates[np.argmin(min_val_ranks)]
         self.optimal_learning_rate = optimal_learning_rate
     
@@ -388,6 +418,7 @@ class Trial:
         ax.set_xlabel('Erasure probs norm penalty: $\lambda$')
         ax.set_ylabel('GMM SKTCC')
         ax.set_title('Adversarial leakage localization $\lambda$ sweep')
+        fig.tight_layout()
         fig.savefig(os.path.join(sweep_base_dir, 'lambda_sweep.pdf'))
         plt.close(fig)
         optimal_lambda = lambda_vals[np.argmax(perf_corr_vals)]
@@ -469,3 +500,4 @@ class Trial:
         self.plot_all_ta_exploitabilities()
         self.plot_dnn_ablation()
         self.plot_gmm_exploitability()
+        self.plot_all_leakage_assessments()

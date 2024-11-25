@@ -186,7 +186,7 @@ def main():
             trial.run_optimal_all()
             trial.compute_neural_net_explainability_baselines()
             trial.plot_everything()
-            trial.eval_leakage_assessments(template_attack=dataset in ['DPAv4', 'AES_HD']) # indent this and get rid of the code to always compute GMM exploitability
+            trial.eval_leakage_assessments(template_attack=dataset in ['DPAv4', 'AES_HD'])
         trial.plot_everything()
     else:
         trial = PortabilityTrial(

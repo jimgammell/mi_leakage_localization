@@ -38,7 +38,7 @@ def _calculate_tau(x_mean, x_var, y_mean, y_var, count):
     tau = sum_coeff / _count
     return tau
 
-def soft_kendall_tau(x, y):
+def soft_kendall_tau(x, y, x_var=None, y_var=None):
     count = x.shape[-1]
     x = x.astype(np.float32)
     y = y.astype(np.float32)
@@ -52,9 +52,11 @@ def soft_kendall_tau(x, y):
     else:
         assert y.ndim == 2
     x_mean = mean(x)
-    x_var = var(x, x_mean)
+    if x_var is None:
+        x_var = var(x, x_mean)
     y_mean = mean(y)
-    y_var = var(y, y_mean)
+    if y_var is None:
+        y_var = var(y, y_mean)
     tau = _calculate_tau(x_mean, x_var, y_mean, y_var, count)
     return tau
 
