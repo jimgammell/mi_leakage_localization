@@ -71,7 +71,7 @@ def main():
         lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 100
         obf_epoch_count = 100
-        poi_count = 20
+        poi_count = 10
     elif dataset == 'DPAv4':
         from datasets.dpav4 import DPAv4_DataModule
         data_module = DPAv4_DataModule(root=os.path.join(DATA_DIR, 'dpav4'))
@@ -111,7 +111,7 @@ def main():
         classifier_learning_rates = np.logspace(-6, -2, 25)
         lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 10
-        obf_epoch_count = 10
+        obf_epoch_count = 100
         seed_count = 1
         poi_count = 5
     elif dataset == 'AES_PTv2-multi':
@@ -206,7 +206,6 @@ def main():
             obf_epoch_count=obf_epoch_count,
             seed_count=seed_count,
             template_attack_poi_count=poi_count,
-            train_indices=[0],
             default_supervised_classifier_kwargs=supervised_classifier_kwargs,
             default_all_style_classifier_kwargs=all_style_classifier_kwargs
         )
@@ -217,6 +216,7 @@ def main():
             trial.train_optimal_supervised_classifier()
             trial.train_optimal_all_classifier()
             trial.lambda_sweep(lambda_vals)
+            trial.run_optimal_all()
             trial.eval_leakage_assessments()
         trial.plot_everything()
 

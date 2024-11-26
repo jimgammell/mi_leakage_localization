@@ -1,6 +1,8 @@
 from typing import *
+import os
+os.environ['NUMBA_THREADING_LAYER'] = 'workqueue'
 import numpy as np
-from numba import jit
+from numba import jit, prange
 import torch
 from torch.utils.data import Subset, Dataset
 
@@ -101,11 +103,11 @@ def get_log_p_y(targets, class_count):
     log_probs = np.log(probs) - np.log(probs.sum())
     return log_probs
 
-@jit(nopython=True)
+@jit(nopython=True, parallel=True)
 def get_log_p_x_given_y(traces, means, Ls, class_count):
     datapoint_count = traces.shape[0]
     log_probs = np.full((datapoint_count, class_count), np.nan, dtype=np.float32)
-    for datapoint_idx in range(datapoint_count):
+    for datapoint_idx in prange(datapoint_count):
         trace = traces[datapoint_idx, :]
         for byte in range(class_count):
             log_probs[datapoint_idx, byte] = compute_log_gaussian_density(trace, means[byte], Ls[byte])

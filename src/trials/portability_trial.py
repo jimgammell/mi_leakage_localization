@@ -111,6 +111,16 @@ class PortabilityTrial(Trial):
                         progress_bar.update(1)
                     result.append(np.stack(ta_exploitabilities))
                 technique_eval['ta_exploitability'] = np.stack(result)
+            if not('dnn_ablation' in technique_eval.keys()) or (len(technique_eval['dnn_ablation'].shape) < 4):
+                print(f'Calculating DNN ablation results for {technique_name} technique')
+                result = np.full((len(self.train_indices), len(self.data_modules), self.seed_count, self.profiling_datasets[0].timesteps_per_trace//10+1), np.nan, dtype=np.float32)
+                for train_idx in range(len(self.train_indices)):
+                    for dev_idx, data_module in enumerate(self.data_modules):
+                        for seed in range(self.seed_count):
+                            classifier = self.load_optimal_supervised_classifier(dev_idx, seed).model
+                            _leakage_assessment = leakage_assessment[dev_idx, seed]
+                            result[train_idx, dev_idx, seed, :] = dnn_ablation(classifier, data_module.test_dataloader(), _leakage_assessment)
+                technique_eval['dnn_ablation'] = result
             np.savez(os.path.join(self.base_dir, f'{technique_name}_eval.npz'), **technique_eval)
     
     def plot_ta_exploitability(self, name):
@@ -122,7 +132,9 @@ class PortabilityTrial(Trial):
         results = technique_eval['ta_exploitability']
         dataset_count = results.shape[0]
         assert dataset_count == results.shape[1]
-        fig, axes = plt.subplots(len(self.train_indices), dataset_count, figsize=(4*dataset_count, 4*dataset_count))
+        fig, axes = plt.subplots(len(self.train_indices), dataset_count, figsize=(4*dataset_count, 4*len(self.train_indices)))
+        if len(self.train_indices) == 1:
+            axes = axes.reshape((1, -1))
         for row_idx in range(len(self.train_indices)):
             for col_idx in range(dataset_count):
                 ax = axes[row_idx, col_idx]
@@ -133,11 +145,42 @@ class PortabilityTrial(Trial):
                 ax.set_title(f'Train {row_idx}, test {col_idx}')
         fig.tight_layout()
         fig.savefig(os.path.join(self.base_dir, f'{name}_ta_exploitability.png'))
+
+    def _plot_dnn_ablation(self, dnn_ablation, ax, color='blue', label=None):
+        x = 10*np.arange(dnn_ablation.shape[-1])
+        ax.fill_between(x, np.min(dnn_ablation, axis=0), np.max(dnn_ablation, axis=0), alpha=0.25, color=color, rasterized=True)
+        ax.plot(x, np.median(dnn_ablation, axis=0), color=color, label=label, rasterized=True)
+    
+    def plot_dnn_ablation(self, name):
+        if not os.path.exists(os.path.join(self.base_dir, f'{name}_eval.npz')):
+            return
+        technique_eval = np.load(os.path.join(self.base_dir, f'{name}_eval.npz'))
+        if not 'ta_exploitability' in technique_eval.keys():
+            return
+        results = technique_eval['dnn_ablation']
+        print(results.shape)
+        dataset_count = results.shape[0]
+        fig, axes = plt.subplots(len(self.train_indices), dataset_count, figsize=(4, 4))
+        if len(self.train_indices) == 1:
+            axes = axes.reshape((1, -1))
+        for row_idx in range(len(self.train_indices)):
+            for col_idx in range(dataset_count):
+                ax = axes[row_idx, col_idx]
+                result = results[row_idx, col_idx]
+                print(result.shape)
+                assert False
+                self._plot_dnn_ablation(result, ax)
+                ax.set_xlabel('Number of ablated points')
+                ax.set_ylabel('Guessing entropy')
+                ax.set_title(f'Train {row_idx}, test {col_idx}')
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.base_dir, f'{name}_dnn_ablation.png'))
     
     def plot_everything(self):
         for technique_name in LEAKAGE_ASSESSMENT_TECHNIQUES:
             self.plot_leakage_assessment(technique_name)
             self.plot_ta_exploitability(technique_name)
+            self.plot_dnn_ablation(technique_name)
     
     def train_supervised_classifier(self, data_module, logging_dir, override_kwargs={}):
         if os.path.exists(os.path.join(logging_dir, 'training_curves.pickle')):
@@ -236,7 +279,7 @@ class PortabilityTrial(Trial):
             training_module = ALLTrainer(
                 **module_kwargs
             )
-            training_module.classifier.load_state_dict(torch.load(os.path.join(self.base_dir, 'all_classifier', f'seed={seed}', 'classifier_state.pth'), weights_only=True))
+            training_module.classifier.load_state_dict(torch.load(os.path.join(self.base_dir, 'all_classifier', f'device_{idx}', f'seed={seed}', 'classifier_state.pth'), weights_only=True))
             training_module.classifier = torch.compile(training_module.classifier)
             trainer = Trainer(
                 max_epochs=self.obf_epoch_count,
@@ -255,7 +298,7 @@ class PortabilityTrial(Trial):
     
     def supervised_lr_sweep(self, learning_rates):
         self.optimal_learning_rates = []
-        for idx in self.train_indices:
+        for idx in range(len(self.data_modules)):
             data_module = self.data_modules[idx]
             min_val_ranks = []
             sweep_base_dir = os.path.join(self.base_dir, 'lr_sweep', f'device_{idx}')
@@ -277,11 +320,12 @@ class PortabilityTrial(Trial):
             self.optimal_learning_rates.append(optimal_learning_rate)
             
     def lambda_sweep(self, lambda_vals):
+        print('Doing lambda sweep')
         self.optimal_lambdas = []
         for idx in self.train_indices:
             data_module = self.data_modules[idx]
             perf_corr_vals = []
-            sweep_base_dir = os.path.join(self.base_dir, 'lambda_sweep')
+            sweep_base_dir = os.path.join(self.base_dir, 'lambda_sweep', f'dev_{idx}')
             os.makedirs(sweep_base_dir, exist_ok=True)
             if not os.path.exists(os.path.join(sweep_base_dir, 'perf_corr_vals.pickle')):
                 for lambda_val in lambda_vals:
@@ -316,9 +360,10 @@ class PortabilityTrial(Trial):
             self.optimal_lambdas.append(optimal_lambda)
     
     def train_optimal_supervised_classifier(self):
+        print('Training optimal supervised classifier')
         assert hasattr(self, 'optimal_learning_rates')
         base_dir = os.path.join(self.base_dir, 'standard_classifier')
-        for idx in self.train_indices:
+        for idx in range(len(self.data_modules)):
             data_module = self.data_modules[idx]
             for seed in range(self.seed_count):
                 set_seed(seed)
@@ -327,6 +372,7 @@ class PortabilityTrial(Trial):
                 plot_training_curves(training_curves, logging_dir, keys=[['train-loss', 'val-loss'], ['train-rank', 'val-rank']])
     
     def train_optimal_all_classifier(self):
+        print('Training optimal ALL classifier')
         assert hasattr(self, 'optimal_learning_rates')
         base_dir = os.path.join(self.base_dir, 'all_classifier')
         for idx in self.train_indices:
@@ -336,3 +382,50 @@ class PortabilityTrial(Trial):
                 logging_dir = os.path.join(base_dir, f'device_{idx}', f'seed={seed}')
                 training_curves, _ = self.train_all_classifier(data_module, logging_dir, override_kwargs={'classifier_optimizer_kwargs': {'lr': 0.5*self.optimal_learning_rates[idx]}})
                 plot_training_curves(training_curves, logging_dir, keys=[['classifier-train-loss_epoch', 'classifier-val-loss'], ['train-rank', 'val-rank']])
+    
+    def run_optimal_all(self):
+        print('Running optimal ALL')
+        if self.load_leakage_assessment('all') is None:
+            print('Running ALL with optimal hyperparameters')
+            assert hasattr(self, 'optimal_learning_rates') and hasattr(self, 'optimal_lambdas')
+            base_dir = os.path.join(self.base_dir, 'all_leakage_assessments')
+            leakage_assessments = []
+            for idx in self.train_indices:
+                dev_dir = os.path.join(base_dir, f'dev_{idx}')
+                _leakage_assessments = []
+                for seed in range(self.seed_count):
+                    set_seed(seed)
+                    logging_dir = os.path.join(dev_dir, f'seed={seed}')
+                    training_curves, erasure_probs = self.run_all_algorithm(idx, logging_dir, seed, override_kwargs={'obfuscator_l2_norm_penalty': self.optimal_lambdas[idx]})
+                    plot_training_curves(
+                        training_curves, logging_dir,
+                        keys=[['classifier-train-loss_epoch', 'classifier-val-loss'], ['train-rank', 'val-rank'],
+                              ['obfuscator-train-loss_epoch', 'obfuscator-val-loss'], ['min-obf-weight', 'max-obf-weight', 'mean-obf-weight']]
+                    )
+                    _leakage_assessments.append(self.optimal_lambdas[idx]*erasure_probs)
+                leakage_assessments.append(np.stack(_leakage_assessments))
+            self.save_leakage_assessment('all', np.stack(leakage_assessments))
+    
+    def load_optimal_supervised_classifier(self, dev_idx, seed):
+        assert hasattr(self, 'optimal_learning_rates')
+        classifier_dir = os.path.join(self.base_dir, 'standard_classifier', f'device_{dev_idx}', f'seed={seed}')
+        checkpoint_path = os.path.join(classifier_dir, 'lightning_output', 'version_0', 'checkpoints', 'best.ckpt')
+        training_module_kwargs = copy(self.default_supervised_classifier_kwargs)
+        training_module_kwargs.update({'optimizer_kwargs': {'lr': self.optimal_learning_rates[dev_idx]}})
+        training_module = SupervisedClassificationModule.load_from_checkpoint(
+            checkpoint_path,
+            **training_module_kwargs
+        )
+        return training_module
+    
+    def load_optimal_all_classifier(self, dev_idx, seed):
+        assert hasattr(self, 'optimal_learning_rates')
+        classifier_dir = os.path.join(self.base_dir, 'all_classifier', f'device_{dev_idx}', f'seed={seed}')
+        checkpoint_path = os.path.join(classifier_dir, 'lightning_output', 'version_0', 'checkpoints', 'best.ckpt')
+        training_module_kwargs = copy(self.default_all_style_classifier_kwargs)
+        training_module_kwargs.update({'classifier_optimizer_kwargs': {'lr': 0.5*self.optimal_learning_rates[dev_idx]}})
+        training_module = ALLTrainer.load_from_checkpoint(
+            checkpoint_path,
+            **training_module_kwargs
+        )
+        return training_module

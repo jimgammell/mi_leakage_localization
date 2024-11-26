@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from tqdm.auto import tqdm
 
 from utils.metrics.rank import get_rank
 
@@ -29,7 +30,7 @@ def dnn_ablation(classifier, attack_dataloader, leakage_assessment, patch_size=1
         return rank
     ranks = np.full((trace_length//patch_size+1,), np.nan, dtype=np.float32)
     ranks[0] = compute_performance()
-    for idx, new_mask_indices in enumerate(leakage_ranking):
+    for idx, new_mask_indices in enumerate(tqdm(leakage_ranking)):
         mask[:, :, new_mask_indices.copy()] = 0.
         ranks[idx+1] = compute_performance()
     return ranks
