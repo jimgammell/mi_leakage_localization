@@ -26,6 +26,8 @@ def main():
     parser.add_argument('--dataset', action='store', choices=AVAILABLE_DATASETS)
     parser.add_argument('--seed-count', type=int, default=5, action='store')
     parser.add_argument('--plot-only', action='store_true', default=False)
+    parser.add_argument('--long-lambda-sweep', default=False, action='store_true')
+    parser.add_argument('--lambda-idx', default=None, type=int, action='store')
     clargs = parser.parse_args()
     dataset = clargs.dataset
     seed_count = clargs.seed_count
@@ -54,7 +56,10 @@ def main():
         data_module.setup('')
         profiling_dataset = data_module.profiling_dataset
         attack_dataset = data_module.attack_dataset
-        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
+        supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {
+            'input_shape': (1, profiling_dataset.timesteps_per_trace),
+            'head_kwargs': {'xor_output': True}
+        }
         classifier_learning_rates = np.logspace(-6, -2, 25)
         lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
         epoch_count = 100
@@ -192,6 +197,9 @@ def main():
             trial.train_optimal_supervised_classifier()
             trial.train_optimal_all_classifier()
             trial.lambda_sweep(lambda_vals)
+            if clargs.long_lambda_sweep:
+                _lambda_vals = [lambda_vals[clargs.lambda_idx]] if clargs.lambda_idx is not None else lambda_vals
+                trial.long_lambda_sweep(_lambda_vals)
             trial.run_optimal_all()
             trial.compute_neural_net_explainability_baselines()
             trial.eval_leakage_assessments(template_attack=dataset in ['DPAv4', 'AES_HD'])
@@ -211,7 +219,7 @@ def main():
         )
         if not clargs.plot_only:
             trial.compute_random_baseline()
-            trial.compute_first_order_baselines()
+            #trial.compute_first_order_baselines()
             trial.supervised_lr_sweep(classifier_learning_rates)
             trial.train_optimal_supervised_classifier()
             trial.train_optimal_all_classifier()

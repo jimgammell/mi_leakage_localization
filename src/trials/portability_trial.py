@@ -20,7 +20,7 @@ from utils.calculate_snr import calculate_snr
 from utils.calculate_sosd import calculate_sosd
 from .trial import Trial
 
-LEAKAGE_ASSESSMENT_TECHNIQUES = ['random', 'cpa', 'snr', 'sosd', 'ablation', 'gradvis', 'input_x_grad', 'all']
+LEAKAGE_ASSESSMENT_TECHNIQUES = ['random', 'all'] #['random', 'cpa', 'snr', 'sosd', 'ablation', 'gradvis', 'input_x_grad', 'all']
 
 class PortabilityTrial(Trial):
     def __init__(self,
@@ -89,7 +89,7 @@ class PortabilityTrial(Trial):
         fig.savefig(os.path.join(self.base_dir, f'{name}_leakage_assessment.png'))
     
     def eval_leakage_assessments(self, template_attack=True):
-        leakage_assessments = self.load_leakage_assessments()
+        leakage_assessments = self.load_leakage_assessments(LEAKAGE_ASSESSMENT_TECHNIQUES)
         for technique_name, leakage_assessment in leakage_assessments.items():
             if not os.path.exists(os.path.join(self.base_dir, f'{technique_name}_eval.npz')):
                 technique_eval = {}
@@ -160,15 +160,13 @@ class PortabilityTrial(Trial):
         results = technique_eval['dnn_ablation']
         print(results.shape)
         dataset_count = results.shape[0]
-        fig, axes = plt.subplots(len(self.train_indices), dataset_count, figsize=(4, 4))
+        fig, axes = plt.subplots(len(self.train_indices), dataset_count, figsize=(4*len(self.train_indices), 4*dataset_count))
         if len(self.train_indices) == 1:
             axes = axes.reshape((1, -1))
         for row_idx in range(len(self.train_indices)):
             for col_idx in range(dataset_count):
                 ax = axes[row_idx, col_idx]
                 result = results[row_idx, col_idx]
-                print(result.shape)
-                assert False
                 self._plot_dnn_ablation(result, ax)
                 ax.set_xlabel('Number of ablated points')
                 ax.set_ylabel('Guessing entropy')

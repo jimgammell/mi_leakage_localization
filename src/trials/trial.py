@@ -11,6 +11,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 
 from common import *
 from .utils import *
+from utils.metrics.all_plotter import TrackAndPlotThings
 from .localization_assessment import evaluate_template_attack_exploitability, dnn_ablation, evaluate_gmm_exploitability
 from training_modules.supervised_classification import SupervisedClassificationModule
 from training_modules.discrete_adversarial_localization import DiscreteAdversarialLocalizationTrainer as ALLTrainer
@@ -220,9 +221,9 @@ class Trial:
         fig.savefig(os.path.join(self.base_dir, 'gmm_exploitability.pdf'))
         plt.close(fig)
     
-    def load_leakage_assessments(self):
+    def load_leakage_assessments(self, names=LEAKAGE_ASSESSMENT_TECHNIQUES):
         leakage_assessments = {}
-        for name in LEAKAGE_ASSESSMENT_TECHNIQUES:
+        for name in names:
             leakage_assessment = self.load_leakage_assessment(name)
             if leakage_assessment is not None:
                 leakage_assessments[name] = leakage_assessment
@@ -333,7 +334,7 @@ class Trial:
         classifier_state = torch.load(os.path.join(logging_dir, 'classifier_state.pth'), map_location='cpu', weights_only=True)
         return training_curves, classifier_state
     
-    def run_all_algorithm(self, logging_dir, seed=0, override_kwargs={}):
+    def run_all_algorithm(self, logging_dir, seed=0, override_kwargs={}, trainer_callbacks=[], epoch_count=None):
         assert hasattr(self, 'optimal_learning_rate')
         if os.path.exists(os.path.join(logging_dir, 'training_curves.pickle')):
             with open(os.path.join(logging_dir, 'training_curves.pickle'), 'rb') as f:
@@ -356,12 +357,13 @@ class Trial:
             training_module.classifier.load_state_dict(torch.load(os.path.join(self.base_dir, 'all_classifier', f'seed={seed}', 'classifier_state.pth'), weights_only=True))
             training_module.classifier = torch.compile(training_module.classifier)
             trainer = Trainer(
-                max_epochs=self.obf_epoch_count,
+                max_epochs=self.obf_epoch_count if epoch_count is None else epoch_count,
                 val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
                 devices=1,
-                logger=TensorBoardLogger(logging_dir, name='lightning_output')
+                logger=TensorBoardLogger(logging_dir, name='lightning_output'),
+                callbacks=trainer_callbacks
             )
             trainer.fit(training_module, datamodule=self.data_module)
             erasure_probs = nn.functional.sigmoid(training_module.unsquashed_obfuscation_weights).detach().cpu().numpy().squeeze()
@@ -425,6 +427,20 @@ class Trial:
         plt.close(fig)
         optimal_lambda = lambda_vals[np.argmax(perf_corr_vals)]
         self.optimal_lambda = optimal_lambda
+    
+    def long_lambda_sweep(self, lambda_vals):
+        sweep_base_dir = os.path.join(self.base_dir, 'long_lambda_sweep')
+        classifier = self.load_optimal_supervised_classifier(0).model
+        os.makedirs(sweep_base_dir, exist_ok=True)
+        for lambda_val in lambda_vals:
+            logging_dir = os.path.join(sweep_base_dir, f'lambda={lambda_val}')
+            _ = self.run_all_algorithm(
+                logging_dir, override_kwargs={
+                    'obfuscator_l2_norm_penalty': lambda_val
+                },
+                epoch_count=-1,
+                trainer_callbacks=[TrackAndPlotThings(logging_dir, classifier=classifier)]
+            )
     
     def train_optimal_supervised_classifier(self):
         assert hasattr(self, 'optimal_learning_rate')

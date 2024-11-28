@@ -12,6 +12,9 @@ import models
 import utils.lr_schedulers
 from utils.metrics import Rank
 
+def rms(val):
+    return (val**2).mean().sqrt().detach().cpu().numpy()
+
 class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
     def __init__(self,
         classifier_name: str,
@@ -173,18 +176,27 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         target = target.repeat(self.obfuscator_batch_size_multiplier, *((len(target.shape)-1)*[1]))
         batch_size = target.size(0)
         loss_rv = None
-
+        if not hasattr(self, 'log_likelihood_log'):
+            self.log_likelihood_log = []
+        if not hasattr(self, 'l2_norm_penalty_log'):
+            self.l2_norm_penalty_log = []
+        if not hasattr(self, 'log_likelihood_grad_log'):
+            self.log_likelihood_grad_log = []
+        if not hasattr(self, 'l2_norm_penalty_grad_log'):
+            self.l2_norm_penalty_grad_log = []
+        
         def closure():
             nonlocal loss_rv
-            self.unsquashed_obfuscation_weights.data = torch.clamp(self.unsquashed_obfuscation_weights.data, min=-1e6, max=1e6)
-            obfuscation_weights = nn.functional.sigmoid(self.unsquashed_obfuscation_weights)
+            self.unsquashed_obfuscation_weights.data = torch.clamp(self.unsquashed_obfuscation_weights.data, 0, 1)
+            obfuscation_weights = self.unsquashed_obfuscation_weights
             l2_norm = obfuscation_weights.norm(p=2)**2
             binary_noise = self._sample_binary_noise(trace)
             logits = self._compute_logits(binary_noise*trace, binary_noise)
-            log_likelihood = -nn.functional.cross_entropy(logits, target, reduction='none')
+            #log_likelihood = -nn.functional.cross_entropy(logits, target, reduction='none')
+            log_likelihood = (nn.functional.softmax(logits, dim=-1)*nn.functional.log_softmax(logits, dim=-1)).sum(dim=-1)
             loss = 0.5*self.obfuscator_l2_norm_penalty*l2_norm + log_likelihood.mean()
             if train: # manually compute gradient
-                l2_norm_grad = obfuscation_weights*obfuscation_weights*(1-obfuscation_weights)
+                l2_norm_grad = obfuscation_weights
                 obfuscation_weights = obfuscation_weights.repeat(batch_size, *((len(trace.shape)-1)*[1]))
                 log_likelihood = log_likelihood.view(-1, *((len(trace.shape)-1)*[1]))
                 if self.log_likelihood_baseline_ema is not None:
@@ -198,8 +210,12 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
                 log_likelihood_grad = (
                     log_likelihood*((1-binary_noise)*(1-obfuscation_weights) - binary_noise*obfuscation_weights)
                 ).mean(dim=0)
-                grad = self.obfuscator_l2_norm_penalty*l2_norm_grad + log_likelihood_grad #+ 1e-2*self.unsquashed_obfuscation_weights ##########
+                grad = self.obfuscator_l2_norm_penalty*l2_norm_grad + log_likelihood_grad
                 self.unsquashed_obfuscation_weights.grad = grad
+                self.log_likelihood_log.append(rms(log_likelihood))
+                self.l2_norm_penalty_log.append(rms(l2_norm))
+                self.log_likelihood_grad_log.append(rms(log_likelihood_grad))
+                self.l2_norm_penalty_grad_log.append(rms(l2_norm_grad))
             loss_rv = loss
             return loss
 

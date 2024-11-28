@@ -14,7 +14,7 @@ class Head(Module):
         self.dense_2 = nn.Linear(self.hidden_dims, self.hidden_dims)
         self.act_2 = self.activation_constructor()
         if self.xor_output:
-            self.output = SoftXOR(self.hidden_dims, int(np.log(self.output_dims)/np.log(2)))
+            self.output = SoftXOR(self.hidden_dims, int(np.log(self.output_dims)/np.log(2)), skip=False, xor_copies=8)
         else:
             self.output = nn.Linear(self.hidden_dims, self.output_dims)
     

@@ -3,52 +3,45 @@ from numba import jit
 import torch
 from torch import nn
 
-if __name__ == '__main__':
-    import os
-    import sys
-    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from models.common import Module
-
-@jit(nopython=True)
-def get_oh_to_bits_table(bit_count=8):
-    table = np.zeros((2**bit_count, bit_count), dtype=np.float32)
-    for bit in range(bit_count):
-        for oh in range(2**bit_count):
-            if oh & (1<<bit) != 0:
-                table[oh, bit] = 1.
-    return table
+class SoftXOR(nn.Module):
+    def __init__(self, in_dims, out_bits, xor_copies=1, skip=True):
+        super().__init__()
+        self.in_dims = in_dims
+        self.out_bits = out_bits
+        self.xor_copies = xor_copies
+        self.skip = skip
+        self.to_x_y = nn.Linear(self.in_dims, (2*self.xor_copies+(1 if self.skip else 0))*2**self.out_bits)
+        self.to_out = nn.Conv1d(self.xor_copies+(1 if self.skip else 0), 1, 1)
+        nn.init.xavier_uniform_(self.to_x_y.weight)
+        nn.init.constant_(self.to_x_y.bias, 0)
+        nn.init.constant_(self.to_out.weight, 1/(2*self.xor_copies+(1 if self.skip else 0)))
+        nn.init.constant_(self.to_out.bias, 0)
+    
+    @torch.compile
+    def forward(self, input):
+        batch_size = input.size(0)
+        out_dims = 2**self.out_bits
+        input = input.view(batch_size, -1)
+        x_y = self.to_x_y(input)
+        x = x_y[:, :self.xor_copies*out_dims]
+        y = x_y[:, self.xor_copies*out_dims:2*self.xor_copies*out_dims]
+        if self.skip:
+            skip = x_y[:, 2*self.xor_copies*out_dims:]
+        x = x.reshape(batch_size*self.xor_copies, out_dims)
+        y = y.reshape(batch_size*self.xor_copies, out_dims)
+        z = soft_xor(x, y)
+        z = z.reshape(batch_size, self.xor_copies, out_dims)
+        if self.skip:
+            skip = skip.reshape(batch_size, 1, out_dims)
+            z = torch.cat([z, skip], dim=1)
+        out = self.to_out(z).squeeze(1)
+        return out
 
 @torch.compile
-def _soft_xor(share_a_oh, share_b_oh, oh_to_bits_table):
-    share_a_bits = share_a_oh @ oh_to_bits_table
-    share_b_bits = share_b_oh @ oh_to_bits_table
-    xor_probs_bits = share_a_bits*(1-share_b_bits) + (1-share_a_bits)*share_b_bits
-    xor_probs_oh = ((xor_probs_bits.unsqueeze(1) ** oh_to_bits_table) * ((1-xor_probs_bits.unsqueeze(1)) ** (1-oh_to_bits_table))).prod(dim=-1).squeeze(-1)
-    return xor_probs_oh
-
-class SoftXOR(Module):
-    def __init__(self, input_dims, bit_count=8):
-        super().__init__(input_dims=input_dims, bit_count=bit_count)
-    
-    def construct(self):
-        self.register_buffer('oh_to_bits_table', torch.as_tensor(get_oh_to_bits_table(self.bit_count), dtype=torch.float))
-        self.share_a_predictor = nn.Sequential(
-            nn.Linear(self.input_dims, 2**self.bit_count, bias=False),
-            nn.Softmax(dim=-1)
-        )
-        self.share_b_predictor = nn.Sequential(
-            nn.Linear(self.input_dims, 2**self.bit_count, bias=False),
-            nn.Softmax(dim=-1)
-        )
-    
-    def init_weights(self):
-        nn.init.xavier_uniform_(self.share_a_predictor[0].weight)
-        nn.init.xavier_uniform_(self.share_b_predictor[0].weight)
-    
-    def forward(self, x):
-        share_a = self.share_a_predictor(x)
-        share_b = self.share_b_predictor(x)
-        return _soft_xor(share_a, share_b, self.oh_to_bits_table).log()
-
-if __name__ == '__main__':
-    _test()
+def soft_xor(x, y):
+    N = x.shape[-1]
+    n = int(np.log2(N))
+    device = x.device
+    indices = torch.arange(N, device=device).unsqueeze(1) ^ torch.arange(N, device=device).unsqueeze(0)
+    z = torch.logsumexp(x.unsqueeze(2) + y[:, indices], dim=1)
+    return z
