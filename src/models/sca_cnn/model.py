@@ -18,8 +18,12 @@ class SCA_CNN(Module):
         block_kwargs: dict = {},
         noise_conditional: bool = False
     ):
+        if noise_conditional:
+            block_kwargs['noise_shape'] = input_shape
         super().__init__(**{key: val for key, val in locals().items() if key not in ('self', 'key', 'val')})
-    
+        if self.noise_conditional is not None:
+            self.block_kwargs['noise_shape'] = self.input_shape
+
     def construct(self):
         trunk_modules = []
         in_channels = self.input_shape[0]
@@ -30,11 +34,13 @@ class SCA_CNN(Module):
             trunk_modules.append((f'block_{block_idx+1}', Block(in_channels, out_channels, **self.block_kwargs)))
             in_channels = out_channels
             out_channels *= 2
-        self.trunk = nn.Sequential(OrderedDict(trunk_modules))
-        eg_input = torch.randn(1, (2 if self.noise_conditional else 1)*self.input_shape[0], *self.input_shape[1:])
-        eg_output = self.trunk(eg_input)
+        self.trunk = nn.ModuleDict(OrderedDict(trunk_modules))
+        x = torch.randn(1, (2 if self.noise_conditional else 1)*self.input_shape[0], *self.input_shape[1:])
+        x_i = x
+        for mod in self.trunk.values():
+            x = mod(*([x, torch.zeros_like(x_i[:, :1, ...])] if self.noise_conditional else [x]))
         self.heads = nn.ModuleList([
-            Head(np.prod(eg_output.shape), self.output_classes, **self.head_kwargs) for _ in range(self.head_count)
+            Head(np.prod(x.shape), self.output_classes, **self.head_kwargs) for _ in range(self.head_count)
         ])
     
     def forward(self, *args):
@@ -44,6 +50,8 @@ class SCA_CNN(Module):
         else:
             (x,) = args
         batch_size, *input_shape = x.shape
-        x = self.trunk(x).view(batch_size, -1)
+        for mod in self.trunk.values():
+            x = mod(*([x, noise] if self.noise_conditional else [x]))
+        x = x.view(batch_size, -1)
         logits = torch.stack([head(x) for head in self.heads], dim=1)
         return logits

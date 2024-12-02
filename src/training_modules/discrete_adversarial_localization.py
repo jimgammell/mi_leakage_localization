@@ -9,6 +9,7 @@ from torchmetrics.classification import Accuracy
 
 from common import *
 import models
+from models.calibrated_model import CalibratedModel
 import utils.lr_schedulers
 from utils.metrics import Rank
 
@@ -36,7 +37,8 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         obfuscator_learning_rate: Optional[float] = None,
         obfuscator_batch_size_multiplier: int = 1, # In general the obfuscator can be trained with a larger batch size than the discriminator. We will use the same training data but more binary noise samples.
         normalize_erasure_probs_for_classifier: bool = False,
-        additive_noise_augmentation: float = 0.0
+        additive_noise_augmentation: float = 0.0,
+        calibrated_classifier=True
     ):
         for key, val in locals().items():
             if key not in ('key', 'val', 'self', '__class__'):
@@ -46,7 +48,10 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         super().__init__()
         self.automatic_optimization = False
         self.classifier = models.load(classifier_name, noise_conditional=True, **self.classifier_kwargs)
-        self.unsquashed_obfuscation_weights = nn.Parameter(torch.zeros(self.classifier.input_shape[0], *self.classifier.input_shape[1:], dtype=torch.float32), requires_grad=True)
+        if self.calibrated_classifier:
+            self.classifier = CalibratedModel(self.classifier)
+        self.unsquashed_obfuscation_weights = nn.Parameter(0.5*torch.ones(self.classifier.input_shape[0], *self.classifier.input_shape[1:], dtype=torch.float32), requires_grad=True)
+        self.unsquashed_obfuscation_weights.data.fill_(0.0) ##############################
         if self.log_likelihood_baseline_ema is not None:
             self.register_buffer('log_likelihood_mean', torch.tensor(0.))
         for phase_name in ('train', 'val'):
@@ -103,6 +108,8 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
             param_groups = [{'params': yes_weight_decay, 'weight_decay': weight_decay}, {'params': no_weight_decay, 'weight_decay': 0.}]
             optimizer = optimizer_constructor(param_groups, lr=learning_rate, **optimizer_kwargs)
         else:
+            optimizer_kwargs['weight_decay'] = self.obfuscator_l2_norm_penalty
+            self.obfuscator_l2_norm_penalty = 0.0
             optimizer = optimizer_constructor([model], lr=learning_rate, **optimizer_kwargs)
         if lr_scheduler_constructor is not None:
             if self.split_training_steps is None:
@@ -133,6 +140,13 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         logits = logits.view(-1, logits.size(-1))
         return logits
     
+    def _compute_calibrated_logits(self, trace: torch.Tensor, noise: torch.Tensor):
+        if self.calibrated_classifier:
+            logits = self.classifier.calibrated_forward(trace, noise)
+        else:
+            logits = self.classifier(trace, noise)
+        return logits
+    
     @torch.no_grad()
     def _sample_binary_noise(self, trace: torch.Tensor, normalize: bool = False):
         batch_size = trace.size(0)
@@ -140,7 +154,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
             p = torch.rand(batch_size, 1, 1, device=trace.device, dtype=trace.dtype)
             erasure_probs = p*torch.ones((1, 1, trace.shape[-1]), device=trace.device, dtype=trace.dtype)
         else:
-            erasure_probs = nn.functional.sigmoid(self.unsquashed_obfuscation_weights).repeat(batch_size, *(len(trace.shape[1:])*[1]))
+            erasure_probs = torch.clamp(self.unsquashed_obfuscation_weights, 0, 1).repeat(batch_size, *(len(trace.shape[1:])*[1]))
         binary_noise = (1 - erasure_probs).bernoulli()
         return binary_noise
     
@@ -158,8 +172,9 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
             binary_noise = self._sample_binary_noise(trace, self.normalize_erasure_probs_for_classifier)
             if train:
                 trace = trace + self.additive_noise_augmentation*torch.randn_like(trace)
-            #obfuscated_trace = self._obfuscate_trace(trace, binary_noise)
-            logits = self._compute_logits(binary_noise*trace, binary_noise)
+                logits = self._compute_logits(binary_noise*trace, binary_noise)
+            else:
+                logits = self._compute_calibrated_logits(binary_noise*trace, binary_noise)
             loss = nn.functional.cross_entropy(logits, target, label_smoothing=0.0)
         if train:
             classifier_optimizer.zero_grad()
@@ -191,7 +206,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
             obfuscation_weights = self.unsquashed_obfuscation_weights
             l2_norm = obfuscation_weights.norm(p=2)**2
             binary_noise = self._sample_binary_noise(trace)
-            logits = self._compute_logits(binary_noise*trace, binary_noise)
+            logits = self._compute_calibrated_logits(binary_noise*trace, binary_noise)
             #log_likelihood = -nn.functional.cross_entropy(logits, target, reduction='none')
             log_likelihood = (nn.functional.softmax(logits, dim=-1)*nn.functional.log_softmax(logits, dim=-1)).sum(dim=-1)
             loss = 0.5*self.obfuscator_l2_norm_penalty*l2_norm + log_likelihood.mean()
@@ -208,7 +223,7 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
                         )
                     log_likelihood -= self.log_likelihood_mean
                 log_likelihood_grad = (
-                    log_likelihood*((1-binary_noise)*(1-obfuscation_weights) - binary_noise*obfuscation_weights)
+                    log_likelihood*((1-binary_noise)/(obfuscation_weights+1e-4) - binary_noise/(1-obfuscation_weights+1e-4))
                 ).mean(dim=0)
                 grad = self.obfuscator_l2_norm_penalty*l2_norm_grad + log_likelihood_grad
                 self.unsquashed_obfuscation_weights.grad = grad
@@ -235,50 +250,6 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         if loss_rv is None:
             closure()
         return loss_rv
-    
-    @torch.no_grad()
-    def _dontuse_obfuscator_step(self, trace, target, train=False, first_batch=False):
-        trace = trace.repeat(self.obfuscator_batch_size_multiplier, *((len(trace.shape)-1)*[1]))
-        target = target.repeat(self.obfuscator_batch_size_multiplier, *((len(target.shape)-1)*[1]))
-        batch_size = target.size(0)
-        if train:
-            _, obfuscator_optimizer = self.optimizers()
-            if self.obfuscator_lr_scheduler_name is not None:
-                scheduler_rv = self.lr_schedulers()
-                if self.classifier_lr_scheduler_name is not None:
-                    obfuscator_lr_scheduler = scheduler_rv[-1]
-                else:
-                    obfuscator_lr_scheduler = scheduler_rv
-            self.toggle_optimizer(obfuscator_optimizer)
-        obfuscation_weights = nn.functional.sigmoid(self.unsquashed_obfuscation_weights)
-        l2_norm = obfuscation_weights.norm(p=2)**2
-        if train: l2_norm_grad = obfuscation_weights*obfuscation_weights*(1-obfuscation_weights)
-        binary_noise = self._sample_binary_noise(trace)
-        obfuscation_weights = obfuscation_weights.repeat(batch_size, *((len(trace.shape)-1)*[1]))
-        logits = self._compute_logits(binary_noise*trace, binary_noise)
-        log_likelihood = -nn.functional.cross_entropy(logits, target, reduction='none', label_smoothing=0.0)
-        if train:
-            ll = log_likelihood.view(-1, *((len(trace.shape)-1)*[1]))
-            if self.log_likelihood_baseline_ema is not None:
-                if first_batch:
-                    self.log_likelihood_mean = log_likelihood.mean()
-                else:
-                    self.log_likelihood_mean = (
-                        (self.log_likelihood_baseline_ema)*self.log_likelihood_mean + (1-self.log_likelihood_baseline_ema)*log_likelihood.mean()
-                    )
-                ll -= self.log_likelihood_mean
-            log_likelihood_grad = (
-                ll*((1-binary_noise)*(1-obfuscation_weights) - binary_noise*obfuscation_weights)
-            ).mean(dim=0)
-        loss = 0.5*self.obfuscator_l2_norm_penalty*l2_norm + log_likelihood.mean()
-        if train:
-            grad = self.obfuscator_l2_norm_penalty*l2_norm_grad + log_likelihood_grad
-            self.unsquashed_obfuscation_weights.grad = grad
-            obfuscator_optimizer.step()
-            if self.obfuscator_lr_scheduler_name is not None:
-                obfuscator_lr_scheduler.step()
-            self.untoggle_optimizer(obfuscator_optimizer)
-        return loss
     
     def training_step(self, batch, batch_idx):
         if not hasattr(self, 'step_count'):
@@ -310,9 +281,9 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         self.log('train-clean-acc', self.train_clean_accuracy, on_epoch=True, prog_bar=False)
         self.log('train-rank', self.train_obfuscated_rank, on_epoch=True, on_step=False, prog_bar=False)
         self.log('train-clean-rank', self.train_clean_rank, on_epoch=True, on_step=False, prog_bar=False)
-        self.log('min-obf-weight', nn.functional.sigmoid(self.unsquashed_obfuscation_weights).min(), on_epoch=True, on_step=False, prog_bar=False)
-        self.log('max-obf-weight', nn.functional.sigmoid(self.unsquashed_obfuscation_weights).max(), on_epoch=True, on_step=False, prog_bar=False)
-        self.log('mean-obf-weight', nn.functional.sigmoid(self.unsquashed_obfuscation_weights).mean(), on_epoch=True, on_step=False, prog_bar=False)
+        self.log('min-obf-weight', torch.clamp(self.unsquashed_obfuscation_weights, 0, 1).min(), on_epoch=True, on_step=False, prog_bar=False)
+        self.log('max-obf-weight', torch.clamp(self.unsquashed_obfuscation_weights, 0, 1).max(), on_epoch=True, on_step=False, prog_bar=False)
+        self.log('mean-obf-weight', torch.clamp(self.unsquashed_obfuscation_weights, 0, 1).mean(), on_epoch=True, on_step=False, prog_bar=False)
         self.step_count += 1
     
     def validation_step(self, batch):
@@ -335,10 +306,14 @@ class DiscreteAdversarialLocalizationTrainer(L.LightningModule):
         self.log('val-clean-rank', self.val_clean_rank, on_epoch=True, prog_bar=False)
     
     def on_train_epoch_end(self):
-        obfuscation_weights = nn.functional.sigmoid(self.unsquashed_obfuscation_weights).squeeze()
+        self.classifier.calibrate_temperature(
+            self.trainer.datamodule.val_dataloader(),
+            lambda x: self._sample_binary_noise(x, self.normalize_erasure_probs_for_classifier),
+            self.obfuscator_batch_size_multiplier
+        )
+        obfuscation_weights = torch.clamp(self.unsquashed_obfuscation_weights, 0, 1).squeeze()
         self.trainer.logger.experiment.add_histogram('obfuscation-weights-hist', obfuscation_weights, self.trainer.current_epoch)
         fig, ax = plt.subplots(1, 1, figsize=(4, 4))
-        ax.set_ylim(0, self.obfuscator_l2_norm_penalty)
         train_dataset = self.trainer.datamodule.train_dataloader().dataset
         while isinstance(train_dataset, Subset):
             train_dataset = train_dataset.dataset

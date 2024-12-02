@@ -44,7 +44,8 @@ def main():
         classifier_optimizer_name='AdamW',
         classifier_optimizer_kwargs={'lr': 2e-4},
         obfuscator_optimizer_name='AdamW',
-        obfuscator_optimizer_kwargs={'lr': 1e-3},
+        obfuscator_optimizer_kwargs={'lr': 1e-1},
+        obfuscator_lr_scheduler_name='CosineDecayLRSched',
         obfuscator_batch_size_multiplier=8,
         obfuscator_l2_norm_penalty=0.5*np.log(256),
         additive_noise_augmentation=0.25
@@ -85,9 +86,9 @@ def main():
         attack_dataset = data_module.attack_dataset
         supervised_classifier_kwargs['model_kwargs'] = all_style_classifier_kwargs['classifier_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
         classifier_learning_rates = np.logspace(-6, -2, 25)
-        lambda_vals = np.log(256)*np.logspace(-6, 0, LAMBDA_SWEEP_COUNT)
-        epoch_count = 25
-        obf_epoch_count = 250
+        lambda_vals = np.log(256)*np.logspace(-2, 0, LAMBDA_SWEEP_COUNT)
+        epoch_count = 100
+        obf_epoch_count = 1000
         poi_count = 5
     elif dataset == 'AES_HD':
         from datasets.aes_hd import AES_HD_DataModule

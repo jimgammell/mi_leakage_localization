@@ -35,6 +35,8 @@ def plot_training_curves(training_curves, logging_dir, keys=[]):
         ax.set_xlabel('Training step')
         ax.set_ylabel('Metric value')
         ax.legend()
+        if any('loss' in key for key in keys) and all(training_curves[key][1].min() > 0 for key in keys):
+            ax.set_yscale('log')
     fig.tight_layout()
     fig.savefig(os.path.join(logging_dir, 'training_curves.png'))
     plt.close(fig)

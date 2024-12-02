@@ -349,7 +349,7 @@ class Trial:
                 shutil.rmtree(logging_dir)
             os.makedirs(logging_dir)
             module_kwargs = self.default_all_style_classifier_kwargs
-            module_kwargs.update({'classifier_optimizer_kwargs': {'lr': 0.1*self.optimal_learning_rate}})
+            module_kwargs.update({'classifier_optimizer_kwargs': {'lr': 1e-5*self.optimal_learning_rate}})
             module_kwargs.update(override_kwargs)
             training_module = ALLTrainer(
                 **module_kwargs
@@ -455,7 +455,7 @@ class Trial:
         base_dir = os.path.join(self.base_dir, 'all_classifier')
         for seed in range(self.seed_count):
             set_seed(seed)
-            training_curves, _ = self.train_all_classifier(os.path.join(base_dir, f'seed={seed}'), override_kwargs={'classifier_optimizer_kwargs': {'lr': self.optimal_learning_rate}})
+            training_curves, _ = self.train_all_classifier(os.path.join(base_dir, f'seed={seed}'), override_kwargs={'classifier_optimizer_kwargs': {'lr': 0.1*self.optimal_learning_rate}})
             plot_training_curves(training_curves, os.path.join(base_dir, f'seed={seed}'), keys=[['classifier-train-loss_epoch', 'classifier-val-loss'], ['train-rank', 'val-rank']])
     
     def run_optimal_all(self):
