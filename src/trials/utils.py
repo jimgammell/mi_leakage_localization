@@ -9,10 +9,30 @@ def extract_trace(trace):
     y = np.array([u.value for u in trace])
     return (x, y)
 
+def extract_gamma(logging_dir):
+    gamma_dir = os.path.join(logging_dir, 'gamma_log')
+    if not os.path.exists(gamma_dir):
+        return None
+    steps, gammas = [], []
+    for file in os.listdir(gamma_dir):
+        if not file.endswith('.npy'):
+            continue
+        step = int(file.split('=')[-1].split('.')[0])
+        gamma = np.load(os.path.join(gamma_dir, file))
+        steps.append(step)
+        gammas.append(gamma)
+    indices = np.argsort(steps)
+    steps = np.array(steps)[indices]
+    gammas = np.stack(gammas)[indices, ...]
+    return (steps, gammas)
+
 def get_training_curves(logging_dir):
     ea = event_accumulator.EventAccumulator(os.path.join(logging_dir, 'lightning_output', 'version_0'))
     ea.Reload()
     training_curves = {key: extract_trace(ea.Scalars(key)) for key in ea.Tags()['scalars']}
+    gamma_curves = extract_gamma(logging_dir)
+    if gamma_curves is not None:
+        training_curves.update({'gamma': gamma_curves})
     return training_curves
 
 def save_training_curves(training_curves, logging_dir):
