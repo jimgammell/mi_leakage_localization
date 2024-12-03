@@ -31,7 +31,7 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
         gammap_complement_proposal_dist: bool = False,
         theta_pretrain_dist: Literal['Uniform', 'Dirichlet'] = 'Dirichlet',
         gammap_squashing_fn: Literal['Sigmoid', 'HardSigmoid'] = 'Sigmoid',
-        gammap_identity_penalty_fn: Literal['l1', 'l2'] = 'l2',
+        gammap_identity_penalty_fn: Literal['l1', 'l2', 'Entropy'] = 'l2',
         gammap_rl_strategy: Literal['LogLikelihood', 'ENCO'] = 'LogLikelihood',
         calibrate_classifiers: bool = False
     ):
@@ -106,6 +106,8 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             return gamma.sum()
         elif self.gammap_identity_penalty_fn == 'l2':
             return 0.5*(gamma**2).sum()
+        elif self.gammap_identity_penalty_fn == 'Entropy':
+            return (gamma*gamma.log() + (1-gamma)*(1-gamma).log()).sum()
         else:
             assert False
     
@@ -116,6 +118,8 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             dpenalty_dgamma = torch.ones_like(gamma)
         elif self.gammap_identity_penalty_fn == 'l2':
             dpenalty_dgamma = gamma
+        elif self.gammap_identity_penalty_fn == 'Entropy':
+            dpenalty_dgamma = (1-gamma).log() - gamma.log()
         else:
             assert False
         return dpenalty_dgamma*dgamma_dgammap
@@ -236,7 +240,7 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
                 total_grad = mutinf_grad + self.gammap_identity_coeff*identity_grad
                 rv.update({
                     'mutinf_rms_grad': rms(mutinf_grad),
-                    'identity_rms_mean_grad': rms(self.gammap_identity_coeff*identity_grad)
+                    'identity_rms_grad': rms(self.gammap_identity_coeff*identity_grad)
                 })
                 self.gammap.grad = total_grad
         

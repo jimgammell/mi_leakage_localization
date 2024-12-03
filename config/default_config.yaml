@@ -1,0 +1,25 @@
+supervised_classifier_kwargs:
+  model_name: sca-cnn
+  optimizer_name: AdamW
+  optimizer_kwargs:
+    lr: 2e-4
+  additive_noise_augmentation: 0.25
+all_classifiers_kwargs:
+  classifiers_name: sca-cnn
+  theta_optimizer_name: AdamW
+  theta_optimizer_kwargs:
+    lr: 2e-4
+  theta_lr_scheduler_name: CosineDecayLRSched
+  gammap_optimizer_name: AdamW
+  gammap_optimizer_kwargs:
+    lr: 1e-3
+  gammap_identity_coeff: 1.0
+  theta_pretrain_steps: 1000
+  alternating_train_steps: -1
+  theta_adversarial_data_prop: 0.5
+  gammap_complement_proposal_dist: false
+  theta_pretrain_dist: Dirichlet
+  gammap_squashing_function: Sigmoid
+  gammap_identity_penalty_fn: Entropy
+  gammap_rl_strategy: ENCO
+  calibrate_classifiers: true
