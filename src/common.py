@@ -28,7 +28,7 @@ PROJ_DIR = os.path.abspath(os.path.join(SRC_DIR, '..'))
 CONFIG_DIRNAME = 'config'
 CONFIG_DIR = os.path.join(PROJ_DIR, CONFIG_DIRNAME)
 with open(os.path.join(CONFIG_DIR, 'global_variables.yaml')) as f:
-    global_config = yaml.load(f, loader=yaml.FullLoader)
+    global_config = yaml.load(f, Loader=yaml.FullLoader)
 RESOURCE_DIRNAME = global_config['resource_dirname'] if 'resource_dirname' in global_config else 'resources'
 RESOURCE_DIR = os.path.join(PROJ_DIR, RESOURCE_DIRNAME)
 OUTPUT_DIRNAME = global_config['output_dirname'] if 'output_dirname' in global_config else 'outputs'
@@ -90,7 +90,7 @@ def print(*args, **kwargs):
         builtins.print(*args, **kwargs)
 
 _seed = set_seed()
-_verbose = set_verbosity()
+set_verbosity()
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(RESOURCE_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)

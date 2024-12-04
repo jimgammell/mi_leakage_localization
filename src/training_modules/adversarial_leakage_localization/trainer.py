@@ -17,27 +17,22 @@ from .plot_things import *
 
 class AdversarialLeakageLocalizationTrainer:
     def __init__(self,
-        base_dir: Union[str, os.PathLike],
         profiling_dataset: Dataset,
         attack_dataset: Dataset,
         theta_pretrain_epochs: int = 0,
         adversarial_train_epochs: int = 100,
         gammap_posttrain_epochs: int = 0,
-        seed_count: int = 1,
         default_data_module_kwargs: dict = {},
         default_training_module_kwargs: dict = {}
     ):
-        self.base_dir = base_dir
         self.profiling_dataset = profiling_dataset
         self.attack_dataset = attack_dataset
         self.theta_pretrain_epochs = theta_pretrain_epochs
         self.adversarial_train_epochs = adversarial_train_epochs
         self.gammap_posttrain_epochs = gammap_posttrain_epochs
-        self.seed_count = seed_count
         self.default_data_module_kwargs = default_data_module_kwargs
         self.default_training_module_kwargs = default_training_module_kwargs
         
-        os.makedirs(self.base_dir, exist_ok=True)
         self.data_module = DataModule(self.profiling_dataset, self.attack_dataset, adversarial_mode=True, **self.default_data_module_kwargs)
     
     def get_training_module_kwargs(self, override_kwargs: dict = {}):

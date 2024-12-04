@@ -4,7 +4,7 @@ supervised_classifier_kwargs:
   optimizer_kwargs:
     lr: 2e-4
   additive_noise_augmentation: 0.25
-all_classifiers_kwargs:
+all_kwargs:
   classifiers_name: sca-cnn
   theta_optimizer_name: AdamW
   theta_optimizer_kwargs:
