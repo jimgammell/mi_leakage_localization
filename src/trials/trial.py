@@ -30,7 +30,7 @@ class Trial:
         
     def all_theta_lr_sweep(self, learning_rates):
         learning_rates = np.array(learning_rates, dtype=np.float32)
-        es_val_rank, es_val_loss, final_val_rank, final_val_loss = map(lambda: np.full((len(learning_rates),), np.nan, dtype=np.float32), range(4))
+        es_val_rank, es_val_loss, final_val_rank, final_val_loss = map(lambda _: np.full((len(learning_rates),), np.nan, dtype=np.float32), range(4))
         base_dir = os.path.join(self.base_dir, 'all_theta_lr_sweep')
         trainer = AdversarialLeakageLocalizationTrainer(
             profiling_dataset=self.profiling_dataset,
@@ -40,16 +40,16 @@ class Trial:
         os.makedirs(base_dir, exist_ok=True)
         for idx, learning_rate in enumerate(learning_rates):
             logging_dir = os.path.join(base_dir, f'lr={learning_rate}')
-            training_curves = get_training_curves(logging_dir)
-            if training_curves is None:
+            if not os.path.exists(os.path.join(logging_dir, 'training_curves.pickle')):
                 trainer.pretrain_classifiers(logging_dir, override_kwargs={'theta_optimizer_kwargs': {'lr': learning_rate}})
-                training_curves = get_training_curves(logging_dir)
+            with open(os.path.join(logging_dir, 'training_curves.pickle'), 'rb') as f:
+                training_curves = pickle.load(f)
             assert training_curves is not None
-            es_idx = np.argmin(training_curves['val_theta_loss'])
-            es_val_rank[idx] = training_curves['val_theta_rank'][es_idx]
-            es_val_loss[idx] = training_curves['val_theta_loss'][es_idx]
-            final_val_rank[idx] = training_curves['val_theta_rank'][-1]
-            final_val_loss[idx] = training_curves['val_theta_loss'][-1]
+            es_idx = np.argmin(training_curves['val_theta_loss'][-1])
+            es_val_rank[idx] = training_curves['val_theta_rank'][-1][es_idx]
+            es_val_loss[idx] = training_curves['val_theta_loss'][-1][es_idx]
+            final_val_rank[idx] = training_curves['val_theta_rank'][-1][-1]
+            final_val_loss[idx] = training_curves['val_theta_loss'][-1][-1]
         assert all(np.all(np.isfinite(x)) for x in [es_val_rank, es_val_loss, final_val_rank, final_val_loss])
         optimal_idx = np.argmin(smooth_sweep(learning_rates, es_val_loss)[1])
         
@@ -67,7 +67,7 @@ class Trial:
         axes[0].set_xlabel('Learning rate')
         axes[0].set_ylabel('Validation loss')
         axes[1].set_xlabel('Learning rate')
-        axes[1].set_ylabel('Validation loss')
+        axes[1].set_ylabel('Validation correct key rank')
         axes[0].set_xscale('log')
         axes[0].set_yscale('log')
         axes[1].set_xscale('log')

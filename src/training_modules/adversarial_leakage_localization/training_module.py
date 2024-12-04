@@ -64,20 +64,75 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
         self.classifiers = models.load(self.classifiers_name, noise_conditional=True, **self.classifiers_kwargs)
         if self.calibrate_classifiers:
             self.classifiers = CalibratedModel(self.classifiers)
-        self.gammap = nn.Parameter(torch.zeros(*self.classifier.input_shape, dtype=torch.float32), requires_grad=True)
+        self.gammap = nn.Parameter(torch.zeros(*self.classifiers.input_shape, dtype=torch.float32), requires_grad=True)
+    
+    def configure_optimizers(self):
+        def _configure_optimizers(prefix: Literal['theta', 'gammap']):
+            if prefix == 'theta':
+                named_params = self.classifiers.named_parameters()
+            elif prefix == 'gammap':
+                named_params = [('gammap', self.gammap)]
+            else:
+                assert False
+            optimizer_name = getattr(self, f'{prefix}_optimizer_name')
+            optimizer_kwargs = getattr(self, f'{prefix}_optimizer_kwargs')
+            lr_scheduler_name = getattr(self, f'{prefix}_lr_scheduler_name')
+            lr_scheduler_kwargs = getattr(self, f'{prefix}_lr_scheduler_kwargs')
+            optimizer_constructor = optimizer_name if isinstance(optimizer_name, optim.Optimizer) else getattr(optim, optimizer_name)
+            lr_scheduler_constructor = (
+                lr_scheduler_name if isinstance(lr_scheduler_name, (optim.lr_scheduler.LRScheduler, type(None)))
+                else getattr(utils.lr_schedulers, lr_scheduler_name) if hasattr(utils.lr_schedulers, lr_scheduler_name)
+                else getattr(optim.lr_scheduler, lr_scheduler_name)
+            )
+            weight_decay = optimizer_kwargs['weight_decay'] if 'weight_decay' in optimizer_kwargs else 0.0
+            if not('weight_decay' in optimizer_kwargs) and (optimizer_constructor not in [optim.LBFGS]):
+                optimizer_kwargs['weight_decay'] = 0.0
+            elif 'weight_decay' in optimizer_kwargs:
+                del optimizer_kwargs['weight_decay']
+            if prefix == 'theta':
+                yes_weight_decay, no_weight_decay = [], []
+                for name, param in named_params:
+                    if ('weight' in name) and not('norm' in name):
+                        yes_weight_decay.append(param)
+                    else:
+                        no_weight_decay.append(param)
+                param_groups = [{'params': yes_weight_decay, 'weight_decay': weight_decay}, {'params': no_weight_decay, 'weight_decay': 0.0}]
+                optimizer = optimizer_constructor(param_groups, **optimizer_kwargs)
+            else:
+                optimizer = optimizer_constructor([x for _, x in named_params], **optimizer_kwargs)
+            if lr_scheduler_constructor is not None:
+                total_steps = self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader())
+                if self.alternating_train_steps == -1:
+                    alternating_train_steps = total_steps - self.theta_pretrain_steps
+                else:
+                    alternating_train_steps = self.alternating_train_steps
+                if prefix == 'theta':
+                    step_count = self.theta_pretrain_steps + alternating_train_steps
+                elif prefix == 'gammap':
+                    step_count = total_steps - self.theta_pretrain_steps
+                else:
+                    assert False
+                lr_scheduler = lr_scheduler_constructor(optimizer, total_steps=step_count, **lr_scheduler_kwargs)
+            else:
+                lr_scheduler = None
+            rv = {'optimizer': optimizer, 'lr_scheduler': {'scheduler': lr_scheduler, 'interval': 'step'} if lr_scheduler is not None else optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1.0)}
+            return rv
+        return (_configure_optimizers('theta'), _configure_optimizers('gammap'))
     
     def validate_hyperparameters(self):
         assert self.classifiers_name in models.AVAILABLE_MODELS
-        assert isinstance(self.theta_optimizer_name, optim.optimizer.Optimizer) or hasattr(optim, self.theta_optimizer_name)
-        assert isinstance(self.theta_lr_scheduler_name, optim.lr_scheduler.LRScheduler) or hasattr(optim.lr_scheduler, self.theta_lr_scheduler_name) or hasattr(utils.lr_schedulers, self.theta_lr_scheduler_name)
-        assert isinstance(self.gammap_optimizer_name, optim.optimizer.Optimizer) or hasattr(optim, self.gammap_optimizer_name)
-        assert isinstance(self.gammap_lr_scheduler_name, optim.lr_scheduler.LRScheduler) or hasattr(optim.lr_scheduler, self.gammap_lr_scheduler_name) or hasattr(utils.lr_schedulers, self.gammap_lr_scheduler_name)
+        assert isinstance(self.theta_optimizer_name, optim.Optimizer) or hasattr(optim, self.theta_optimizer_name)
+        if self.theta_lr_scheduler_name is not None:
+            assert isinstance(self.theta_lr_scheduler_name, optim.lr_scheduler.LRScheduler) or hasattr(optim.lr_scheduler, self.theta_lr_scheduler_name) or hasattr(utils.lr_schedulers, self.theta_lr_scheduler_name)
+        assert isinstance(self.gammap_optimizer_name, optim.Optimizer) or hasattr(optim, self.gammap_optimizer_name)
+        if self.gammap_lr_scheduler_name is not None:
+            assert isinstance(self.gammap_lr_scheduler_name, optim.lr_scheduler.LRScheduler) or hasattr(optim.lr_scheduler, self.gammap_lr_scheduler_name) or hasattr(utils.lr_schedulers, self.gammap_lr_scheduler_name)
         assert isinstance(self.gammap_identity_coeff, float) and (0 <= self.gammap_identity_coeff < float('inf'))
         assert isinstance(self.theta_pretrain_steps, int) and (self.theta_pretrain_steps >= 0)
         assert isinstance(self.theta_adversarial_data_prop, float) and (0 <= self.theta_adversarial_data_prop <= 1)
         assert self.theta_pretrain_dist in ['Uniform', 'Dirichlet']
         assert self.gammap_squashing_fn in ['Sigmoid', 'HardSigmoid']
-        assert self.gammap_identity_penalty_fn in ['l1', 'l2']
+        assert self.gammap_identity_penalty_fn in ['l1', 'l2', 'Entropy']
         assert self.gammap_rl_strategy in ['LogLikelihood', 'ENCO']
         assert isinstance(self.calibrate_classifiers, bool)
     
@@ -159,19 +214,21 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
         if self.gammap_complement_proposal_dist:
             return 2. / (1. + ((2*alpha-1)*(gamma.log() - (1-gamma).log())).sum().exp())
         else:
-            return torch.ones(alpha.size(0))
+            return torch.ones(alpha.size(0), dtype=gamma.dtype, device=gamma.device)
     
     def get_logits(self, trace, alpha, calibrate=False):
         if calibrate:
             assert self.calibrate_classifiers
-            return self.classifiers.calibrated_forward(trace*alpha, alpha)
+            logits = self.classifiers.calibrated_forward(trace*alpha, alpha)
         else:
-            return self.classifiers(trace*alpha, alpha)
+            logits = self.classifiers(trace*alpha, alpha)
+        logits = logits.view(-1, logits.size(-1))
+        return logits
     
     @torch.no_grad()
     def get_mutual_information(self, logits):
         mutinfs = (
-            torch.log(self.classifiers.output_classes)
+            torch.full((logits.size(0),), np.log(self.classifiers.output_classes), dtype=logits.dtype, device=logits.device)
             - (nn.functional.softmax(logits, dim=-1)*nn.functional.log_softmax(logits, dim=-1)).sum(dim=-1)
         )
         return mutinfs
@@ -202,15 +259,14 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             loss = nn.functional.cross_entropy(logits, label)
         if train:
             theta_optimizer, _ = self.optimizers()
-            if self.theta_lr_scheduler_name is not None:
-                theta_lr_scheduler, *_ = self.lr_schedulers()
+            theta_lr_scheduler, _ = self.lr_schedulers()
             theta_optimizer.zero_grad()
             self.manual_backward(loss)
             theta_optimizer.step()
-            if self.theta_lr_scheduler_name is not None:
+            if theta_lr_scheduler is not None:
                 theta_lr_scheduler.step()
         rv.update({'loss': loss})
-        rv.update({'rank': get_rank(logits, label)})
+        rv.update({'rank': get_rank(logits, label).mean()})
         return rv
     
     @torch.no_grad()
@@ -221,7 +277,7 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             if rv is None:
                 rv = {}
             gamma = self.get_gamma()
-            alpha = self.sample_noise(trace, gamma, training_gamma=True)
+            alpha = self.sample_noise(trace, gamma, training_gammap=True)
             logits = self.get_logits(trace, alpha, calibrate=self.calibrate_classifiers)
             mutinfs = self.get_mutual_information(logits)
             importance_reweighting = self.get_importance_reweighting(gamma, alpha)
@@ -232,7 +288,7 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
                 'mutinf_loss': mutinf_loss,
                 'identity_loss': identity_penalty,
                 'total_loss': total_loss,
-                'rank': get_rank(logits, label)
+                'rank': get_rank(logits, label).mean()
             })
             if train:
                 mutinf_grad = self.get_log_likelihood_grad(mutinfs, alpha, importance_reweighting)
@@ -247,12 +303,8 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
         if train:
             _, gammap_optimizer = self.optimizers()
             gammap_optimizer.step(closure)
-            if self.gammap_lr_scheduler_name is not None:
-                scheduler_rv = self.lr_schedulers()
-                if self.theta_lr_scheduler_name is not None:
-                    gammap_lr_scheduler = scheduler_rv[-1]
-                else:
-                    gammap_lr_scheduler = scheduler_rv
+            _, gammap_lr_scheduler = self.lr_schedulers()
+            if gammap_lr_scheduler is not None:
                 gammap_lr_scheduler.step()
         if rv is None:
             closure()
@@ -267,33 +319,35 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
         else:
             train_theta = False
             train_gammap = True
-        theta_trace, theta_label, gammap_trace, gammap_label = batch
+        [(theta_trace, theta_label), (gammap_trace, gammap_label)] = batch
         if train_theta:
             rv = self.step_theta(theta_trace, theta_label, train=True)
             for key, val in rv.items():
-                self.log(f'train_theta__{key}', val, on_step=True, on_epoch=False)
+                self.log(f'train_theta_{key}', val, on_step=True, on_epoch=False)
         if train_gammap:
             rv = self.step_gammap(gammap_trace, gammap_label, train=True)
             for key, val in rv.items():
-                self.log(f'train_gammap__{key}', val, on_step=True, on_epoch=False)
+                self.log(f'train_gammap_{key}', val, on_step=True, on_epoch=False)
     
+    @torch.no_grad()
     def validation_step(self, batch):
         trace, label = batch
         rv = self.step_theta(trace, label, train=False)
         for key, val in rv.items():
-            self.log(f'val_theta__{key}', val, on_step=False, on_epoch=True)
+            self.log(f'val_theta_{key}', val, on_step=False, on_epoch=True)
         rv = self.step_gammap(trace, label, train=False)
         for key, val in rv.items():
-            self.log(f'val_gammap__{key}', val, on_step=False, on_epoch=True)
+            self.log(f'val_gammap_{key}', val, on_step=False, on_epoch=True)
     
     def on_train_epoch_end(self):
         gamma = self.get_gamma()
-        if self.calibrate_classifiers:
+        if self.calibrate_classifiers and ((self.alternating_train_steps == -1) or (self.global_step <= self.theta_pretrain_steps + self.alternating_train_steps)):
             self.classifiers.calibrate_temperature(
                 self.trainer.datamodule.val_dataloader(),
                 lambda x: self.sample_noise(x, gamma, training_theta=True),
                 1
             )
-        save_dir = os.path.join(self.logger.log_dir, 'gamma_log')
-        os.makedirs(save_dir, exist_ok=True)
-        np.save(os.path.join(save_dir, f'gamma__step={self.global_step}.npy'), gamma.detach().cpu().numpy().squeeze())
+        if self.global_step >= self.theta_pretrain_steps:
+            save_dir = os.path.join(self.logger.log_dir, 'gamma_log')
+            os.makedirs(save_dir, exist_ok=True)
+            np.save(os.path.join(save_dir, f'gamma__step={self.global_step}.npy'), gamma.detach().cpu().numpy().squeeze())

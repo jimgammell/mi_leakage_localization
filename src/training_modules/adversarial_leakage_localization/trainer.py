@@ -41,7 +41,7 @@ class AdversarialLeakageLocalizationTrainer:
         assert not any(x in override_kwargs for x in ['theta_pretrain_steps', 'adversarial_train_steps'])
         steps_per_epoch = len(self.data_module.train_dataloader())
         kwargs['theta_pretrain_steps'] = self.theta_pretrain_epochs*steps_per_epoch
-        kwargs['adversarial_train_steps'] = self.adversarial_train_epochs*steps_per_epoch
+        kwargs['alternating_train_steps'] = self.adversarial_train_epochs*steps_per_epoch
         return kwargs
     
     def pretrain_classifiers(self, logging_dir: Union[str, os.PathLike], override_kwargs: dict = {}):

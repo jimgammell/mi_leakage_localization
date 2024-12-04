@@ -20,7 +20,7 @@ def main():
     clargs = parser.parse_args()
     dataset = clargs.dataset
     seed_count = clargs.seed_count
-    trial_dir = dataset if clargs.trial_dir is None else clargs.trial_dir
+    trial_dir = os.path.join(OUTPUT_DIR, dataset if clargs.trial_dir is None else clargs.trial_dir)
     assert seed_count > 0
     
     supervised_classifier_kwargs = DEFAULT_CONFIG['supervised_classifier_kwargs']
@@ -50,6 +50,10 @@ def main():
         
     profiling_dataset = DatasetClass(root=trial_config['data_dir'], train=True)
     attack_dataset = DatasetClass(root=trial_config['data_dir'], train=False)
+    if 'classifiers_kwargs' in all_kwargs['default_training_module_kwargs']:
+        all_kwargs['default_training_module_kwargs']['classifiers_kwargs']['input_shape'] = (1, profiling_dataset.timesteps_per_trace)
+    else:
+        all_kwargs['default_training_module_kwargs']['classifiers_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
     trial = Trial(base_dir=trial_dir, profiling_dataset=profiling_dataset, attack_dataset=attack_dataset, supervised_classifier_kwargs=supervised_classifier_kwargs, all_kwargs=all_kwargs)
     trial.all_theta_lr_sweep(np.logspace(-6, -2, clargs.lr_count))
 
