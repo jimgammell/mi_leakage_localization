@@ -56,6 +56,7 @@ def main():
         all_kwargs['default_training_module_kwargs']['classifiers_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
     trial = Trial(base_dir=trial_dir, profiling_dataset=profiling_dataset, attack_dataset=attack_dataset, supervised_classifier_kwargs=supervised_classifier_kwargs, all_kwargs=all_kwargs)
     trial.all_theta_lr_sweep(np.logspace(-6, -2, clargs.lr_count))
+    #trial.all_theta_smith_lr_sweep()
 
 if __name__ == '__main__':
     main()

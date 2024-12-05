@@ -2,7 +2,7 @@ import numpy as np
 from torch.optim.lr_scheduler import LambdaLR
 
 class CosineDecayLRSched(LambdaLR):
-    def __init__(self, optimizer, total_steps, warmup_prop=0.1, const_prop=0.1, final_prop=0.0):
+    def __init__(self, optimizer, total_steps, warmup_prop=0.0, const_prop=0.0, final_prop=0.0):
         for key, val in locals().items():
             if key not in ('self', 'key', 'val'):
                 setattr(self, key, val)

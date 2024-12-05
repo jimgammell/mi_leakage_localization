@@ -6,6 +6,7 @@ import lightning as L
 from common import *
 import utils.lr_schedulers
 from utils.metrics import get_rank
+from utils.recalibrate_batchnorm import recalibrate_batchnorm
 import models
 from models.calibrated_model import CalibratedModel
 
@@ -262,6 +263,7 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             theta_lr_scheduler, _ = self.lr_schedulers()
             theta_optimizer.zero_grad()
             self.manual_backward(loss)
+            nn.utils.clip_grad_value_(self.classifiers.parameters(), 1.0)
             theta_optimizer.step()
             if theta_lr_scheduler is not None:
                 theta_lr_scheduler.step()
@@ -341,6 +343,7 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
     
     def on_train_epoch_end(self):
         gamma = self.get_gamma()
+        recalibrate_batchnorm(self.trainer, self, mode='ALL')
         if self.calibrate_classifiers and ((self.alternating_train_steps == -1) or (self.global_step <= self.theta_pretrain_steps + self.alternating_train_steps)):
             self.classifiers.calibrate_temperature(
                 self.trainer.datamodule.val_dataloader(),

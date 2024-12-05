@@ -1,1 +1,6 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/aes_hd
+all_kwargs:
+  theta_pretrain_epochs: 500
+  adversarial_train_epochs: 100
+classifier_epoch_count: 100
+template_attack_poi_count: 10
