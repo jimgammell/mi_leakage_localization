@@ -1,6 +1,6 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/dpav4
 all_kwargs:
-  theta_pretrain_epochs: 500
+  theta_pretrain_epochs: 100
   adversarial_train_epochs: 100
 classifier_epoch_count: 100
 template_attack_poi_count: 5

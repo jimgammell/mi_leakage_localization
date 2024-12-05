@@ -75,7 +75,7 @@ class CalibratedModel(nn.Module):
         self.to_unsquashed_temperature.bias.data.fill_(np.log(np.exp(1)-1))
         logits, targets, noises = [], [], []
         device = self.to_unsquashed_temperature.weight.device
-        self.classifier.eval()
+        #self.classifier.eval()
         for trace, target in dataloader:
             trace, target = map(lambda x: x.to(device), (trace, target))
             for _ in range(noise_samples):

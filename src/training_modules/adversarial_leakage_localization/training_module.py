@@ -246,6 +246,7 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             pos_count, neg_count = map(lambda x: x.sum(dim=0), (alpha, ~alpha))
             pos_sum, neg_sum = map(lambda x: torch.where(x, mutinfs.unsqueeze(1), torch.tensor(0., mutinfs.device, dtype=mutinfs.dtype)).sum(dim=0), (alpha, ~alpha))
             gradient = neg_sum/(neg_count.clamp(min=1)) - pos_sum/(pos_count.clamp(min=1))
+            gradient = gradient.clamp(min=0.) # Ideally, this should always be nonnegative. In practice it might be negative if the classifiers are shitty.
             gradient[(pos_count==0) or (neg_count==0)] = 0.
         elif self.gammap_rl_strategy == 'LogLikelihood':
             raise NotImplementedError
@@ -263,7 +264,8 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             theta_lr_scheduler, _ = self.lr_schedulers()
             theta_optimizer.zero_grad()
             self.manual_backward(loss)
-            nn.utils.clip_grad_value_(self.classifiers.parameters(), 1.0)
+            grad = max(param.grad.abs().max() for param in self.classifiers.parameters() if param.grad is not None)
+            rv.update({'grad': grad})
             theta_optimizer.step()
             if theta_lr_scheduler is not None:
                 theta_lr_scheduler.step()
@@ -343,7 +345,7 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
     
     def on_train_epoch_end(self):
         gamma = self.get_gamma()
-        recalibrate_batchnorm(self.trainer, self, mode='ALL')
+        #recalibrate_batchnorm(self.trainer, self, mode='ALL')
         if self.calibrate_classifiers and ((self.alternating_train_steps == -1) or (self.global_step <= self.theta_pretrain_steps + self.alternating_train_steps)):
             self.classifiers.calibrate_temperature(
                 self.trainer.datamodule.val_dataloader(),

@@ -104,8 +104,7 @@ class AdversarialLeakageLocalizationTrainer:
                 mode='min'
             )
             trainer = Trainer(
-                #max_epochs=self.theta_pretrain_epochs,
-                max_steps=1000,
+                max_epochs=self.theta_pretrain_epochs,
                 val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',

@@ -84,14 +84,15 @@ class DataModule(L.LightningDataModule):
             'num_workers': max(os.cpu_count()//2, 1),
             'pin_memory': True,
             'persistent_workers': True,
-            'prefetch_factor': 4
+            'prefetch_factor': 4,
+            'drop_last': True
         }
         dataloader_kwargs.update(self.dataloader_kwargs)
         self.dataloader_kwargs = dataloader_kwargs
     
     def train_dataloader(self, override_batch_size=None, override_aug_batch_size=None):
-        train_batch_size = self.train_batch_size if override_batch_size is None else override_batch_size
-        aug_batch_size = self.aug_train_batch_size if override_aug_batch_size is None else override_aug_batch_size
+        train_batch_size = min(self.train_batch_size if override_batch_size is None else override_batch_size, len(self.train_dataset))
+        aug_batch_size = min(self.aug_train_batch_size if override_aug_batch_size is None else override_aug_batch_size, len(self.train_dataset))
         train_dataloader = DataLoader(self.train_dataset, batch_size=train_batch_size, shuffle=True, **self.dataloader_kwargs)
         if self.adversarial_mode:
             aug_dataloader = DataLoader(self.aug_train_dataset, batch_size=aug_batch_size, shuffle=True, **self.dataloader_kwargs)
@@ -100,11 +101,11 @@ class DataModule(L.LightningDataModule):
             return train_dataloader
     
     def val_dataloader(self, override_batch_size=None):
-        batch_size = self.eval_batch_size if override_batch_size is None else override_batch_size
+        batch_size = min(self.eval_batch_size if override_batch_size is None else override_batch_size, len(self.val_dataset))
         return DataLoader(self.val_dataset, batch_size=batch_size, shuffle=False, **self.dataloader_kwargs)
     
     def test_dataloader(self, override_batch_size=None):
-        batch_size = self.eval_batch_size if override_batch_size is None else override_batch_size
+        batch_size = min(self.eval_batch_size if override_batch_size is None else override_batch_size, len(self.attack_dataset))
         return DataLoader(self.attack_dataset, batch_size=batch_size, shuffle=False, **self.dataloader_kwargs)
 
     def on_save_checkpoint(self):

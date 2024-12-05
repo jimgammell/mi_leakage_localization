@@ -14,7 +14,6 @@ all_kwargs:
     theta_optimizer_name: AdamW
     theta_optimizer_kwargs:
       lr: 2.0e-4
-    theta_lr_scheduler_name: CosineDecayLRSched
     gammap_optimizer_name: AdamW
     gammap_optimizer_kwargs:
       lr: 1.0e-3
