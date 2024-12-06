@@ -10,7 +10,7 @@ def extract_trace(trace):
     return (x, y)
 
 def extract_gamma(logging_dir):
-    gamma_dir = os.path.join(logging_dir, 'gamma_log')
+    gamma_dir = os.path.join(logging_dir, 'lightning_output', 'version_0', 'gamma_log')
     if not os.path.exists(gamma_dir):
         return None
     steps, gammas = [], []

@@ -1,7 +1,39 @@
 from matplotlib import pyplot as plt
+from matplotlib.collections import LineCollection
+import imageio
+import tempfile
 
 from common import *
 from trials.utils import *
+
+def plot_erasure_probs(erasure_probs, ax):
+    line, *_ = ax.plot(erasure_probs.squeeze(), color='blue', marker='.', linestyle='-', markersize=1, linewidth=0.1, **PLOT_KWARGS)
+    return line
+
+def animate_erasure_probs_traj(logging_dir):
+    gammas = extract_gamma(logging_dir)
+    output_path = os.path.join(logging_dir, 'erasure_prob_traj.gif')
+    fig, axes = plt.subplots(1, 2, figsize=(2*PLOT_WIDTH, PLOT_WIDTH))
+    axes[0].set_xlabel('Timestep $t$')
+    axes[0].set_ylabel('Estimated leakage of $X_t$')
+    axes[1].set_xlabel('Timestep $t$')
+    axes[1].set_ylabel('Estimated leakage of $X_t$')
+    axes[0].set_ylim(0, 1)
+    axes[1].set_yscale('log')
+    with imageio.get_writer(output_path, mode='I', fps=20) as writer:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for step, erasure_probs in zip(*gammas):
+                filename = os.path.join(temp_dir, f'ep_step={step}.png')
+                x0 = plot_erasure_probs(erasure_probs, axes[0])
+                x1 = plot_erasure_probs(erasure_probs-0.5, axes[1])
+                fig.suptitle(f'Training step: {step}')
+                fig.tight_layout()
+                fig.savefig(filename, **SAVEFIG_KWARGS)
+                x0.remove()
+                x1.remove()
+                image = imageio.imread(filename)
+                writer.append_data(image)
+    plt.close(fig)
 
 def plot_theta_pretraining_curves(logging_dir):
     training_curves = get_training_curves(logging_dir)
@@ -43,7 +75,10 @@ def plot_gammap_training_curves(logging_dir):
     axes[1].plot(*training_curves['train_gammap_identity_rms_grad'], color='blue', linestyle='none', marker='.', markersize=1, label='id', **PLOT_KWARGS)
     axes[2].plot(*training_curves['train_gammap_rank'], color='blue', linestyle='--', **PLOT_KWARGS)
     axes[2].plot(*training_curves['val_gammap_rank'], color='blue', linestyle='-', **PLOT_KWARGS)
-    axes[3].plot(training_curves['gamma'][0], training_curves['gamma'][1].T, color='blue', linestyle='-', linewidth=0.1, **PLOT_KWARGS)
+    lines = [np.column_stack([training_curves['gamma'][0], y]) for y in training_curves['gamma'][1].T]
+    lc = LineCollection(lines, color='blue', linestyle='-', linewidth=0.1, alpha=0.5, **PLOT_KWARGS)
+    axes[3].add_collection(lc)
+    axes[3].autoscale()
     axes[0].set_xlabel('Training step')
     axes[1].set_xlabel('Training step')
     axes[2].set_xlabel('Training step')
@@ -61,3 +96,4 @@ def plot_gammap_training_curves(logging_dir):
     fig.tight_layout()
     fig.savefig(os.path.join(logging_dir, 'gamma_training_curves.pdf'), **SAVEFIG_KWARGS)
     plt.close(fig)
+    animate_erasure_probs_traj(logging_dir)

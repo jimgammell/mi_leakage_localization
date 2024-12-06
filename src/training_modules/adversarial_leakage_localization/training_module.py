@@ -1,4 +1,6 @@
 import typing
+from copy import copy
+import numbers
 import torch
 from torch import nn, optim
 import lightning as L
@@ -76,9 +78,9 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             else:
                 assert False
             optimizer_name = getattr(self, f'{prefix}_optimizer_name')
-            optimizer_kwargs = getattr(self, f'{prefix}_optimizer_kwargs')
+            optimizer_kwargs = copy(getattr(self, f'{prefix}_optimizer_kwargs'))
             lr_scheduler_name = getattr(self, f'{prefix}_lr_scheduler_name')
-            lr_scheduler_kwargs = getattr(self, f'{prefix}_lr_scheduler_kwargs')
+            lr_scheduler_kwargs = copy(getattr(self, f'{prefix}_lr_scheduler_kwargs'))
             optimizer_constructor = optimizer_name if isinstance(optimizer_name, optim.Optimizer) else getattr(optim, optimizer_name)
             lr_scheduler_constructor = (
                 lr_scheduler_name if isinstance(lr_scheduler_name, (optim.lr_scheduler.LRScheduler, type(None)))
@@ -128,7 +130,7 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
         assert isinstance(self.gammap_optimizer_name, optim.Optimizer) or hasattr(optim, self.gammap_optimizer_name)
         if self.gammap_lr_scheduler_name is not None:
             assert isinstance(self.gammap_lr_scheduler_name, optim.lr_scheduler.LRScheduler) or hasattr(optim.lr_scheduler, self.gammap_lr_scheduler_name) or hasattr(utils.lr_schedulers, self.gammap_lr_scheduler_name)
-        assert isinstance(self.gammap_identity_coeff, float) and (0 <= self.gammap_identity_coeff < float('inf'))
+        assert isinstance(self.gammap_identity_coeff, numbers.Real) and (0 <= self.gammap_identity_coeff < float('inf'))
         assert isinstance(self.theta_pretrain_steps, int) and (self.theta_pretrain_steps >= 0)
         assert isinstance(self.theta_adversarial_data_prop, float) and (0 <= self.theta_adversarial_data_prop <= 1)
         assert self.theta_pretrain_dist in ['Uniform', 'Dirichlet']
@@ -156,8 +158,7 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             assert False
     
     @torch.no_grad()
-    def get_identity_penalty_fn(self):
-        gamma = self.get_gamma()
+    def get_identity_penalty_fn(self, gamma):
         if self.gammap_identity_penalty_fn == 'l1':
             return gamma.sum()
         elif self.gammap_identity_penalty_fn == 'l2':
@@ -169,13 +170,13 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
     
     @torch.no_grad()
     def get_identity_penalty_grad(self, gamma):
-        dgamma_dgammap = self.dgamma_dgammap(gamma)
+        dgamma_dgammap = self.get_dgamma_dgammap(gamma)
         if self.gammap_identity_penalty_fn == 'l1':
             dpenalty_dgamma = torch.ones_like(gamma)
         elif self.gammap_identity_penalty_fn == 'l2':
             dpenalty_dgamma = gamma
         elif self.gammap_identity_penalty_fn == 'Entropy':
-            dpenalty_dgamma = (1-gamma).log() - gamma.log()
+            dpenalty_dgamma = gamma.log() - (1-gamma).log()
         else:
             assert False
         return dpenalty_dgamma*dgamma_dgammap
@@ -211,8 +212,8 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
     
     @torch.no_grad()
     def get_importance_reweighting(self, gamma, alpha):
-        gamma = torch.clamp(gamma, 1e-6, 1-1e-6)
         if self.gammap_complement_proposal_dist:
+            gamma = torch.clamp(gamma, 1e-6, 1-1e-6)
             return 2. / (1. + ((2*alpha-1)*(gamma.log() - (1-gamma).log())).sum().exp())
         else:
             return torch.ones(alpha.size(0), dtype=gamma.dtype, device=gamma.device)
@@ -240,14 +241,15 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
     
     @torch.no_grad()
     def get_log_likelihood_grad(self, mutinfs, alpha, importance_reweighting):
+        alpha = alpha.squeeze()
         mutinfs = mutinfs*importance_reweighting
         if self.gammap_rl_strategy == 'ENCO':
             alpha = alpha.bool()
             pos_count, neg_count = map(lambda x: x.sum(dim=0), (alpha, ~alpha))
-            pos_sum, neg_sum = map(lambda x: torch.where(x, mutinfs.unsqueeze(1), torch.tensor(0., mutinfs.device, dtype=mutinfs.dtype)).sum(dim=0), (alpha, ~alpha))
+            pos_sum, neg_sum = map(lambda x: torch.where(x, mutinfs.unsqueeze(1), torch.tensor(0., device=mutinfs.device, dtype=mutinfs.dtype)).sum(dim=0), (alpha, ~alpha))
             gradient = neg_sum/(neg_count.clamp(min=1)) - pos_sum/(pos_count.clamp(min=1))
-            gradient = gradient.clamp(min=0.) # Ideally, this should always be nonnegative. In practice it might be negative if the classifiers are shitty.
-            gradient[(pos_count==0) or (neg_count==0)] = 0.
+            gradient = gradient.clamp(max=0.) # Ideally, this should always be nonpositive. In practice it might be positive if the classifiers are shitty.
+            gradient[torch.logical_or(pos_count==0, neg_count==0)] = 0.
         elif self.gammap_rl_strategy == 'LogLikelihood':
             raise NotImplementedError
         return gradient
@@ -286,7 +288,7 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             mutinfs = self.get_mutual_information(logits)
             importance_reweighting = self.get_importance_reweighting(gamma, alpha)
             mutinf_loss = self.get_log_likelihood(mutinfs, importance_reweighting)
-            identity_penalty = self.get_identity_penalty_fn()
+            identity_penalty = self.get_identity_penalty_fn(gamma)
             total_loss = mutinf_loss + self.gammap_identity_coeff*identity_penalty
             rv.update({
                 'mutinf_loss': mutinf_loss,
@@ -296,13 +298,14 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             })
             if train:
                 mutinf_grad = self.get_log_likelihood_grad(mutinfs, alpha, importance_reweighting)
-                identity_grad = self.get_identity_penalty_grad()
+                identity_grad = self.get_identity_penalty_grad(gamma)
                 total_grad = mutinf_grad + self.gammap_identity_coeff*identity_grad
                 rv.update({
                     'mutinf_rms_grad': rms(mutinf_grad),
                     'identity_rms_grad': rms(self.gammap_identity_coeff*identity_grad)
                 })
                 self.gammap.grad = total_grad
+            return total_loss
         
         if train:
             _, gammap_optimizer = self.optimizers()

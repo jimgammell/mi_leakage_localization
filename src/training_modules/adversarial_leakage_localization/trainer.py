@@ -127,7 +127,7 @@ class AdversarialLeakageLocalizationTrainer:
                 shutil.rmtree(logging_dir)
             os.makedirs(logging_dir)
             if starting_module_path is not None:
-                training_module = AdversarialLeakageLocalizationModule.load_from_checkpoint(starting_module_path, **override_kwargs)
+                training_module = AdversarialLeakageLocalizationModule.load_from_checkpoint(starting_module_path, **self.get_training_module_kwargs(override_kwargs))
             else:
                 training_module = AdversarialLeakageLocalizationModule(**self.get_training_module_kwargs(override_kwargs))
             trainer = Trainer(
@@ -138,7 +138,7 @@ class AdversarialLeakageLocalizationTrainer:
                 devices=1,
                 logger=TensorBoardLogger(logging_dir, name='lightning_output')
             )
-            trainer.fit(training_module, datamodule=self.data_module)
+            trainer.fit(training_module, datamodule=self.data_module, ckpt_path=starting_module_path)
             trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             training_curves = get_training_curves(logging_dir)
             save_training_curves(training_curves, logging_dir)

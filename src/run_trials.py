@@ -3,6 +3,7 @@ import yaml
 import argparse
 
 from common import *
+from utils.flatten_dict import flatten_dict, unflatten_dict
 from training_modules.adversarial_leakage_localization import AdversarialLeakageLocalizationTrainer
 from trials.trial import Trial
 
@@ -17,6 +18,7 @@ def main():
     parser.add_argument('--lr-count', type=int, default=20, action='store')
     parser.add_argument('--lambda-count', type=int, default=20, action='store')
     parser.add_argument('--trial-dir', default=None, action='store')
+    parser.add_argument('--override-theta-pretrain-path', default=None, action='store')
     clargs = parser.parse_args()
     dataset = clargs.dataset
     seed_count = clargs.seed_count
@@ -54,9 +56,25 @@ def main():
         all_kwargs['default_training_module_kwargs']['classifiers_kwargs']['input_shape'] = (1, profiling_dataset.timesteps_per_trace)
     else:
         all_kwargs['default_training_module_kwargs']['classifiers_kwargs'] = {'input_shape': (1, profiling_dataset.timesteps_per_trace)}
-    trial = Trial(base_dir=trial_dir, profiling_dataset=profiling_dataset, attack_dataset=attack_dataset, supervised_classifier_kwargs=supervised_classifier_kwargs, all_kwargs=all_kwargs)
-    trial.all_theta_lr_sweep(np.logspace(-4, -2, clargs.lr_count))
-    #trial.all_theta_smith_lr_sweep()
+    if clargs.override_theta_pretrain_path is None:
+        for channel_count in [32, 64]:
+            for gaussian_noise in [0.0, 1.0]:
+                for weight_decay in [0.0, 1e-2]:
+                    all_kwargs['default_training_module_kwargs']['classifiers_kwargs']['base_channels'] = channel_count
+                    all_kwargs['default_data_module_kwargs']['gaussian_noise_std'] = gaussian_noise
+                    all_kwargs['default_training_module_kwargs']['theta_optimizer_kwargs']['weight_decay'] = weight_decay
+                    trial = Trial(
+                        base_dir=trial_dir, profiling_dataset=profiling_dataset, attack_dataset=attack_dataset,
+                        supervised_classifier_kwargs=supervised_classifier_kwargs, all_kwargs=all_kwargs
+                    )
+                    optimal_checkpoint = trial.all_theta_lr_sweep(np.logspace(-5, -3, clargs.lr_count), base_dir_name=f'lr_sweep__channels={channel_count}_noise={gaussian_noise}_weight_decay={weight_decay}')
+        trial.all_lambda_sweep([1.0], starting_module_path=optimal_checkpoint)
+    else:
+        trial = Trial(
+            base_dir=trial_dir, profiling_dataset=profiling_dataset, attack_dataset=attack_dataset,
+            supervised_classifier_kwargs=supervised_classifier_kwargs, all_kwargs=all_kwargs
+        )
+        trial.all_lambda_sweep([0.0], starting_module_path=clargs.override_theta_pretrain_path)
 
 if __name__ == '__main__':
     main()
