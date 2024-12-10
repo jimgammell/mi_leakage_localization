@@ -14,7 +14,7 @@ from torch import multiprocessing
 plt.rcParams['font.size'] = 10
 plt.rcParams['font.family'] = 'Times New Roman'
 plt.rcParams['text.usetex'] = True
-plt.rcParams['text.latex.preamble'] = r'\usepackage{times}'
+plt.rcParams['text.latex.preamble'] = r'\usepackage{times} \usepackage{amssymb}'
 
 if torch.cuda.is_available():
     torch.backends.cudnn.benchmark = True

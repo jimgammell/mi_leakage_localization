@@ -41,10 +41,11 @@ class AdversarialLeakageLocalizationTrainer:
     def get_training_module_kwargs(self, override_kwargs: dict = {}):
         kwargs = copy(self.default_training_module_kwargs)
         kwargs.update(override_kwargs)
-        assert not any(x in override_kwargs for x in ['theta_pretrain_steps', 'adversarial_train_steps'])
         steps_per_epoch = max(len(x) for x in self.data_module.train_dataloader())
-        kwargs['theta_pretrain_steps'] = self.theta_pretrain_epochs*steps_per_epoch
-        kwargs['alternating_train_steps'] = self.adversarial_train_epochs*steps_per_epoch
+        if not 'theta_pretrain_steps' in override_kwargs:
+            kwargs['theta_pretrain_steps'] = self.theta_pretrain_epochs*steps_per_epoch
+        if not 'alternating_train_steps' in override_kwargs:
+            kwargs['alternating_train_steps'] = self.adversarial_train_epochs*steps_per_epoch
         return kwargs
     
     def smith_lr_sweep(self, logging_dir, override_kwargs: dict = {}):
@@ -126,19 +127,20 @@ class AdversarialLeakageLocalizationTrainer:
             if os.path.exists(logging_dir):
                 shutil.rmtree(logging_dir)
             os.makedirs(logging_dir)
+            override_kwargs.update({'theta_pretrain_steps': 0})
+            training_module = AdversarialLeakageLocalizationModule(**self.get_training_module_kwargs(override_kwargs))
             if starting_module_path is not None:
-                training_module = AdversarialLeakageLocalizationModule.load_from_checkpoint(starting_module_path, **self.get_training_module_kwargs(override_kwargs))
-            else:
-                training_module = AdversarialLeakageLocalizationModule(**self.get_training_module_kwargs(override_kwargs))
+                override_training_module = AdversarialLeakageLocalizationModule.load_from_checkpoint(starting_module_path)
+                training_module.classifiers.load_state_dict(override_training_module.classifiers.state_dict())
             trainer = Trainer(
-                max_epochs=self.theta_pretrain_epochs+self.adversarial_train_epochs+self.gammap_posttrain_epochs,
+                max_epochs=self.adversarial_train_epochs+self.gammap_posttrain_epochs,
                 val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
                 devices=1,
                 logger=TensorBoardLogger(logging_dir, name='lightning_output')
             )
-            trainer.fit(training_module, datamodule=self.data_module, ckpt_path=starting_module_path)
+            trainer.fit(training_module, datamodule=self.data_module)
             trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             training_curves = get_training_curves(logging_dir)
             save_training_curves(training_curves, logging_dir)

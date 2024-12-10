@@ -80,7 +80,7 @@ class SyntheticAES(Dataset):
             masks = numpy_rng.choice(2**self.bit_count, count, replace=True)
         subbytes = AES_SBOX[keys ^ plaintexts]
         masked_subbytes = masks ^ subbytes
-        traces = np.empty((count, self.timesteps_per_trace), dtype=np.float32)
+        traces = np.empty((count, 1, self.timesteps_per_trace), dtype=np.float32)
         for idx in range(count):
             data = numpy_rng.choice(2**self.bit_count, self.timesteps_per_trace+LPF_BURN_IN_CYCLES, replace=True).astype(np.uint32)
             locs = np.array([], dtype=np.uint32)
@@ -109,7 +109,7 @@ class SyntheticAES(Dataset):
             if self.lpf_beta > 0:
                 trace = apply_ema(trace, self.lpf_beta)
             trace = trace[LPF_BURN_IN_CYCLES:]
-            traces[idx, ...] = trace
+            traces[idx, 0, ...] = trace
         metadata = {'key': keys, 'plaintext': plaintexts, 'subbytes': subbytes, 'mask': masks, 'masked_subbytes': masked_subbytes}
         return traces, metadata
     

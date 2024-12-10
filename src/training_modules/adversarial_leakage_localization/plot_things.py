@@ -50,7 +50,6 @@ def plot_theta_pretraining_curves(logging_dir):
     axes[0].set_ylabel('Loss')
     axes[1].set_ylabel('Correct key rank')
     axes[2].set_ylabel('Max grad element')
-    axes[0].set_yscale('log')
     axes[2].set_yscale('log')
     fig.suptitle('Classifiers pretraining stage')
     fig.tight_layout()

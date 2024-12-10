@@ -69,58 +69,59 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             self.classifiers = CalibratedModel(self.classifiers)
         self.gammap = nn.Parameter(torch.zeros(*self.classifiers.input_shape, dtype=torch.float32), requires_grad=True)
     
+    def configure_theta_optimizer(self):
+        optim_constructor = self.theta_optimizer_name if isinstance(self.theta_optimizer_name, optim.Optimizer) else getattr(optim, self.theta_optimizer_name)
+        lr_scheduler_constructor = (
+            self.theta_lr_scheduler_name if isinstance(self.theta_lr_scheduler_name, (optim.lr_scheduler.LRScheduler, type(None)))
+            else getattr(utils.lr_schedulers, self.theta_lr_scheduler_name) if hasattr(utils.lr_schedulers, self.theta_lr_scheduler_name)
+            else getattr(optim.lr_scheduler, self.theta_lr_scheduler_name)
+        )
+        weight_decay = self.theta_optimizer_kwargs['weight_decay'] if 'weight_decay' in self.theta_optimizer_kwargs.keys() else 0.0
+        if 'weight_decay' in self.theta_optimizer_kwargs.keys():
+            weight_decay = self.theta_optimizer_kwargs['weight_decay']
+            del self.theta_optimizer_kwargs['weight_decay']
+        else:
+            weight_decay = 0.0
+        yes_weight_decay, no_weight_decay = [], []
+        for name, param in self.classifiers.named_parameters():
+            if ('weight' in name) and not('norm' in name):
+                yes_weight_decay.append(param)
+            else:
+                no_weight_decay.append(param)
+        param_groups = [{'params': yes_weight_decay, 'weight_decay': weight_decay}, {'params': no_weight_decay, 'weight_decay': 0.0}]
+        self.theta_optimizer = optim_constructor(param_groups, **self.theta_optimizer_kwargs)
+        if lr_scheduler_constructor is not None:
+            total_steps = self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader())
+            if self.alternating_train_steps == -1:
+                alternating_train_steps = total_steps - self.theta_pretrain_steps
+            else:
+                alternating_train_steps = self.alternating_train_steps
+            step_count = self.theta_pretrain_steps + alternating_train_steps
+            self.theta_lr_scheduler = lr_scheduler_constructor(self.theta_optimizer, total_steps=step_count, **self.theta_lr_scheduler_kwargs)
+        else:
+            self.theta_lr_scheduler = optim.lr_scheduler.LambdaLR(self.theta_optimizer, lr_lambda=lambda _: 1.0)
+        return {'optimizer': self.theta_optimizer, 'lr_scheduler': {'scheduler': self.theta_lr_scheduler, 'interval': 'step'}}
+    
+    def configure_gammap_optimizer(self):
+        optim_constructor = self.gammap_optimizer_name if isinstance(self.gammap_optimizer_name, optim.Optimizer) else getattr(optim, self.gammap_optimizer_name)
+        lr_scheduler_constructor = (
+            self.gammap_lr_scheduler_name if isinstance(self.gammap_lr_scheduler_name, (optim.lr_scheduler.LRScheduler, type(None)))
+            else getattr(utils.lr_schedulers, self.gammap_lr_scheduler_name) if hasattr(utils.lr_schedulers, self.gammap_lr_scheduler_name)
+            else getattr(optim.lr_scheduler, self.gammap_lr_scheduler_name)
+        )
+        if not(optim_constructor in [optim.LBFGS]):
+            self.gammap_optimizer_kwargs['weight_decay'] = 0.0
+        self.gammap_optimizer = optim_constructor([self.gammap], **self.gammap_optimizer_kwargs)
+        if lr_scheduler_constructor is not None:
+            total_steps = self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader())
+            step_count = total_steps - self.theta_pretrain_steps
+            self.gammap_lr_scheduler = lr_scheduler_constructor(self.gammap_optimizer, total_steps=step_count, **self.gammap_lr_scheduler_kwargs)
+        else:
+            self.gammap_lr_scheduler = optim.lr_scheduler.LambdaLR(self.gammap_optimizer, lr_lambda=lambda _: 1.0)
+        return {'optimizer': self.gammap_optimizer, 'lr_scheduler': {'scheduler': self.gammap_lr_scheduler, 'interval': 'step'}}
+    
     def configure_optimizers(self):
-        def _configure_optimizers(prefix: Literal['theta', 'gammap']):
-            if prefix == 'theta':
-                named_params = self.classifiers.named_parameters()
-            elif prefix == 'gammap':
-                named_params = [('gammap', self.gammap)]
-            else:
-                assert False
-            optimizer_name = getattr(self, f'{prefix}_optimizer_name')
-            optimizer_kwargs = copy(getattr(self, f'{prefix}_optimizer_kwargs'))
-            lr_scheduler_name = getattr(self, f'{prefix}_lr_scheduler_name')
-            lr_scheduler_kwargs = copy(getattr(self, f'{prefix}_lr_scheduler_kwargs'))
-            optimizer_constructor = optimizer_name if isinstance(optimizer_name, optim.Optimizer) else getattr(optim, optimizer_name)
-            lr_scheduler_constructor = (
-                lr_scheduler_name if isinstance(lr_scheduler_name, (optim.lr_scheduler.LRScheduler, type(None)))
-                else getattr(utils.lr_schedulers, lr_scheduler_name) if hasattr(utils.lr_schedulers, lr_scheduler_name)
-                else getattr(optim.lr_scheduler, lr_scheduler_name)
-            )
-            weight_decay = optimizer_kwargs['weight_decay'] if 'weight_decay' in optimizer_kwargs else 0.0
-            if not('weight_decay' in optimizer_kwargs) and (optimizer_constructor not in [optim.LBFGS]):
-                optimizer_kwargs['weight_decay'] = 0.0
-            elif 'weight_decay' in optimizer_kwargs:
-                del optimizer_kwargs['weight_decay']
-            if prefix == 'theta':
-                yes_weight_decay, no_weight_decay = [], []
-                for name, param in named_params:
-                    if ('weight' in name) and not('norm' in name):
-                        yes_weight_decay.append(param)
-                    else:
-                        no_weight_decay.append(param)
-                param_groups = [{'params': yes_weight_decay, 'weight_decay': weight_decay}, {'params': no_weight_decay, 'weight_decay': 0.0}]
-                optimizer = optimizer_constructor(param_groups, **optimizer_kwargs)
-            else:
-                optimizer = optimizer_constructor([x for _, x in named_params], **optimizer_kwargs)
-            if lr_scheduler_constructor is not None:
-                total_steps = self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader())
-                if self.alternating_train_steps == -1:
-                    alternating_train_steps = total_steps - self.theta_pretrain_steps
-                else:
-                    alternating_train_steps = self.alternating_train_steps
-                if prefix == 'theta':
-                    step_count = self.theta_pretrain_steps + alternating_train_steps
-                elif prefix == 'gammap':
-                    step_count = total_steps - self.theta_pretrain_steps
-                else:
-                    assert False
-                lr_scheduler = lr_scheduler_constructor(optimizer, total_steps=step_count, **lr_scheduler_kwargs)
-            else:
-                lr_scheduler = None
-            rv = {'optimizer': optimizer, 'lr_scheduler': {'scheduler': lr_scheduler, 'interval': 'step'} if lr_scheduler is not None else optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1.0)}
-            return rv
-        return (_configure_optimizers('theta'), _configure_optimizers('gammap'))
+        return [self.configure_theta_optimizer(), self.configure_gammap_optimizer()]
     
     def validate_hyperparameters(self):
         assert self.classifiers_name in models.AVAILABLE_MODELS
