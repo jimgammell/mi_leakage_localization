@@ -9,7 +9,7 @@ from utils.metrics import get_rank
 import models
 from models.calibrated_model import CalibratedModel
 
-class AdversarialLeakageLocalization(L.LightningModule):
+class AdversarialLeakageLocalizationModule(L.LightningModule):
     def __init__(self,
         classifiers_name: str,
         classifiers_kwargs: dict = {},
@@ -22,15 +22,16 @@ class AdversarialLeakageLocalization(L.LightningModule):
         gammap_lr: float = 1e-3,
         initial_taup: float = 0.0,
         initial_etap: float = 0.0,
-        train_taup_etap: bool = False,
         theta_weight_decay: float = 0.0,
-        calibrate_classifiers: bool = False
+        calibrate_classifiers: bool = False,
+        timesteps_per_trace: int = None
     ):
+        assert timesteps_per_trace is not None
         super().__init__()
         self.save_hyperparameters()
         self.automatic_optimization = False
         
-        self.classifiers = models.load(self.hparams.classifiers_name, noise_conditional=True, **self.hparams.classifiers_kwargs)
+        self.classifiers = models.load(self.hparams.classifiers_name, noise_conditional=True, input_shape=(1, self.hparams.timesteps_per_trace), **self.hparams.classifiers_kwargs)
         if self.hparams.calibrate_classifiers:
             self.classifiers = CalibratedModel(self.classifiers)
         self.gammap = nn.Parameter(torch.zeros((1, self.hparams.timesteps_per_trace), dtype=torch.float), requires_grad=True)
@@ -67,21 +68,24 @@ class AdversarialLeakageLocalization(L.LightningModule):
         return [
             {'optimizer': self.theta_optimizer, 'lr_scheduler': {'scheduler': self.theta_lr_scheduler, 'interval': 'step'}},
             {'optimizer': self.gammap_optimizer, 'lr_scheduler': {'scheduler': self.gammap_lr_scheduler, 'interval': 'step'}},
-            self.etap_taup_optimizer
+            {'optimizer': self.etap_taup_optimizer}
         ]
     
     def get_gamma(self):
-        return nn.functional.sigmoid(self.gammap)
+        return 1e-4 + (1-2e-4)*nn.functional.sigmoid(self.gammap)
     
     def get_eta(self):
-        return nn.functional.sigmoid(self.etap)
+        return 1e-4 + (1-2e-4)*nn.functional.sigmoid(self.etap)
     
     def get_tau(self):
-        return nn.functional.softplus(self.taup)
+        return 1e-4 + nn.functional.softplus(self.taup)
+
+    def clipped_rand_like(self, x):
+        return 1e-4 + (1-2e-4)*torch.rand_like(x)
     
     def get_mutinf(self, logits):
         return (
-            torch.full((logits.size(0)), np.log(self.classifiers.output_classes), dtype=logits.dtype, device=logits.device)
+            torch.full((logits.size(0),), np.log(self.classifiers.output_classes), dtype=logits.dtype, device=logits.device)
             + (nn.functional.softmax(logits, dim=-1)*nn.functional.log_softmax(logits, dim=-1)).sum(dim=-1)
         )
         
@@ -93,11 +97,14 @@ class AdversarialLeakageLocalization(L.LightningModule):
         if train:
             _, gammap_optimizer, etap_taup_optimizer = self.optimizers()
             _, gammap_lr_scheduler = self.lr_schedulers()
-        gamma = self.get_gamma()
+            gammap_optimizer.zero_grad()
+            etap_taup_optimizer.zero_grad()
+        batch_size = trace.size(0)
+        gamma = self.get_gamma().unsqueeze(0).repeat(batch_size, 1, 1)
         rv = {}
         if gradient_estimator == 'CONCRETE':
             tau = self.get_tau()
-            u = torch.rand_like(gamma)
+            u = self.clipped_rand_like(gamma)
             z = gamma.log() - (1-gamma).log() + u.log() - (1-u).log()
             soft_b = nn.functional.sigmoid(z/tau)
             noise = torch.randn_like(trace)
@@ -110,8 +117,8 @@ class AdversarialLeakageLocalization(L.LightningModule):
         elif gradient_estimator == 'REBAR':
             tau = self.get_tau()
             eta = self.get_eta()
-            u = torch.rand_like(gamma)
-            v = torch.rand_like(gamma)
+            u = self.clipped_rand_like(gamma)
+            v = self.clipped_rand_like(gamma)
             v = torch.where(u <= gamma, v*gamma, gamma + v*(1-gamma))
             z = gamma.log() - (1-gamma).log() + u.log() - (1-u).log()
             b = torch.where(z >= 0, torch.ones_like(gamma), torch.zeros_like(gamma))
@@ -135,7 +142,7 @@ class AdversarialLeakageLocalization(L.LightningModule):
             soft_mutinf = self.get_mutinf(soft_logits)
             soft_mutinf_tilde = self.get_mutinf(soft_logits_tilde)
             log_p_b = ((1-b)*gamma.log() + b*(1-gamma).log()).sum(dim=-1)
-            mutinf_loss = (hard_mutinf - eta*soft_mutinf_tilde).detach()*log_p_b + eta*soft_mutinf - eta*soft_mutinf_tilde
+            mutinf_loss = ((hard_mutinf - eta*soft_mutinf_tilde).detach()*log_p_b + eta*soft_mutinf - eta*soft_mutinf_tilde).mean()
             identity_loss = self.get_identity_loss()
             loss = self.hparams.identity_lambda*identity_loss + mutinf_loss
         else:
@@ -144,26 +151,44 @@ class AdversarialLeakageLocalization(L.LightningModule):
             'loss': loss, 'mutinf_loss': mutinf_loss, 'identity_loss': identity_loss
         })
         if train:
-            gammap_optimizer.zero_grad()
-            self.manual_backward(loss)
+            mutinf_grad = torch.autograd.grad(mutinf_loss, [self.gammap], create_graph=gradient_estimator=='REBAR')
+            identity_grad = torch.autograd.grad(identity_loss, [self.gammap], create_graph=False)
+            rv.update({
+                'mutinf_rms_grad': (mutinf_grad[0].detach()**2).mean().sqrt(),
+                'identity_rms_grad': (identity_grad[0].detach()**2).mean().sqrt()
+            })
+            self.gammap.grad = mutinf_grad[0] + self.hparams.identity_lambda*identity_grad[0]
             gammap_optimizer.step()
             gammap_lr_scheduler.step()
+            if gradient_estimator == 'REBAR':
+                if not hasattr(self, 'mutinf_grad_ema'):
+                    self.register_buffer('mutinf_grad_ema', torch.zeros_like(self.gammap))
+                grad_variance = ((mutinf_grad[0] - self.mutinf_grad_ema)**2).mean()
+                etap_taup_grad = torch.autograd.grad(grad_variance, [self.etap, self.taup])
+                self.etap.grad = etap_taup_grad[0]
+                self.taup.grad = etap_taup_grad[1]
+                self.mutinf_grad_ema = 0.01*mutinf_grad[0].detach() + 0.99*self.mutinf_grad_ema
+                etap_taup_optimizer.step()
         return rv
     
     def step_theta(self, trace, label, train=False):
+        batch_size = trace.size(0)
         rv = {}
         if train:
             theta_optimizer, *_ = self.optimizers()
             theta_lr_scheduler, *_ = self.lr_schedulers()
-        gamma = self.get_gamma()
+        gamma = self.get_gamma().unsqueeze(0).repeat(batch_size, 1, 1)
+        trace = trace.repeat(2, 1, 1)
+        label = label.repeat(2)
         tau = self.get_tau()
-        u = torch.rand_like(gamma)
+        u = self.clipped_rand_like(gamma)
         z = gamma.log() - (1-gamma).log() + u.log() - (1-u).log()
         hard_b = torch.where(z >= 0, torch.ones_like(gamma), torch.zeros_like(gamma))
         soft_b = nn.functional.sigmoid(z/tau)
         b = torch.cat([hard_b, soft_b], dim=0)
         obfuscated_trace = b*torch.randn_like(trace) + (1-b)*trace
         logits = self.classifiers(obfuscated_trace, b)
+        logits = logits.view(-1, logits.size(-1))
         loss = nn.functional.cross_entropy(logits, label)
         if train:
             theta_optimizer.zero_grad()
@@ -173,16 +198,16 @@ class AdversarialLeakageLocalization(L.LightningModule):
         rv.update({'loss': loss, 'rank': get_rank(logits, label).mean()})
         return rv
     
-    def train_step(self, batch):
+    def training_step(self, batch):
         trace, label = batch
         theta_rv = self.step_theta(trace, label, train=True)
         gammap_rv = self.step_gammap(trace, train=True)
         for key, val in theta_rv.items():
-            self.log(f'train_theta_{key}', val, on_step=True, on_epoch=False)
+            self.log(f'train_theta_{key}', val, on_step=False, on_epoch=True)
         for key, val in gammap_rv.items():
-            self.log(f'train_gammap_{key}', val, on_step=True, on_epoch=False)
+            self.log(f'train_gammap_{key}', val, on_step=False, on_epoch=True)
     
-    def val_step(self, batch):
+    def validation_step(self, batch):
         trace, label = batch
         theta_rv = self.step_theta(trace, label, train=False)
         gammap_rv = self.step_gammap(trace, train=False)
@@ -192,15 +217,16 @@ class AdversarialLeakageLocalization(L.LightningModule):
             self.log(f'val_gammap_{key}', val, on_step=False, on_epoch=True)
     
     def on_train_epoch_end(self):
-        gamma = self.get_gamma()
         if self.hparams.calibrate_classifiers:
             def get_classifier_args(trace):
+                gamma = self.get_gamma().unsqueeze(0).repeat(trace.size(0), 1, 1)
                 tau = self.get_tau()
                 u = torch.randn_like(gamma)
                 z = gamma.log() - (1-gamma).log() + u.log() - (1-u).log()
                 hard_b = torch.where(z >= 0, torch.ones_like(gamma), torch.zeros_like(gamma))
                 soft_b = nn.functional.sigmoid(z/tau)
                 b = torch.cat([hard_b, soft_b], dim=0)
+                trace = trace.repeat(2, 1, 1)
                 obfuscated_trace = b*torch.randn_like(trace) + (1-b)*trace
                 classifier_args = (obfuscated_trace, b)
                 return classifier_args
@@ -208,6 +234,7 @@ class AdversarialLeakageLocalization(L.LightningModule):
                 self.trainer.datamodule.val_dataloader(),
                 get_classifier_args
             )
+        gamma = self.get_gamma()
         theta_save_dir = os.path.join(self.logger.log_dir, 'gamma_log')
         os.makedirs(theta_save_dir, exist_ok=True)
         np.save(os.path.join(theta_save_dir, f'gamma__step={self.global_step}.npy'), gamma.detach().cpu().numpy().squeeze())

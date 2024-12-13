@@ -15,41 +15,37 @@ from lightning.pytorch.tuner import Tuner
 from common import *
 from trials.utils import *
 from datasets.data_module import DataModule
-from .reinforce_training_module import AdversarialLeakageLocalizationModule
 from .plot_things import *
 
 class AdversarialLeakageLocalizationTrainer:
     def __init__(self,
         profiling_dataset: Dataset,
         attack_dataset: Dataset,
-        theta_pretrain_epochs: int = 0,
-        adversarial_train_epochs: int = 100,
-        gammap_posttrain_epochs: int = 0,
+        max_epochs: int = 100,
+        gradient_estimation_strategy: Literal['REINFORCE', 'Relaxed'] = 'Relaxed',
         default_data_module_kwargs: dict = {},
         default_training_module_kwargs: dict = {}
     ):
         self.profiling_dataset = profiling_dataset
         self.attack_dataset = attack_dataset
-        self.theta_pretrain_epochs = theta_pretrain_epochs
-        self.adversarial_train_epochs = adversarial_train_epochs
-        self.gammap_posttrain_epochs = gammap_posttrain_epochs
+        self.max_epochs = max_epochs
+        self.gradient_estimation_strategy = gradient_estimation_strategy
         self.default_data_module_kwargs = default_data_module_kwargs
         self.default_training_module_kwargs = default_training_module_kwargs
         
-        self.data_module = DataModule(self.profiling_dataset, self.attack_dataset, adversarial_mode=True, **self.default_data_module_kwargs)
+        self.data_module = DataModule(self.profiling_dataset, self.attack_dataset, adversarial_mode=False, **self.default_data_module_kwargs)
+        if self.gradient_estimation_strategy == 'REINFORCE':
+            from .reinforce_training_module import AdversarialLeakageLocalizationModule
+        elif self.gradient_estimation_strategy == 'Relaxed':
+            from .relaxed_training_module import AdversarialLeakageLocalizationModule
+        self.training_module_class = AdversarialLeakageLocalizationModule
     
     def get_training_module_kwargs(self, override_kwargs: dict = {}):
         kwargs = copy(self.default_training_module_kwargs)
-        kwargs.update(override_kwargs)
-        steps_per_epoch = max(len(x) for x in self.data_module.train_dataloader())
-        if not 'theta_pretrain_steps' in override_kwargs:
-            kwargs['theta_pretrain_steps'] = self.theta_pretrain_epochs*steps_per_epoch
-        if not 'alternating_train_steps' in override_kwargs:
-            kwargs['alternating_train_steps'] = self.adversarial_train_epochs*steps_per_epoch
         return kwargs
     
     def smith_lr_sweep(self, logging_dir, override_kwargs: dict = {}):
-        training_module = AdversarialLeakageLocalizationModule(**self.get_training_module_kwargs(override_kwargs))
+        training_module = self.training_module_class(**self.get_training_module_kwargs(override_kwargs))
         class ModuleWrapper(LightningModule):
             def __init__(self, all_module, lr=None):
                 super().__init__()
@@ -98,7 +94,7 @@ class AdversarialLeakageLocalizationTrainer:
             if os.path.exists(logging_dir):
                 shutil.rmtree(logging_dir)
             os.makedirs(logging_dir)
-            training_module = AdversarialLeakageLocalizationModule(**self.get_training_module_kwargs(override_kwargs))
+            training_module = self.training_module_class(**self.get_training_module_kwargs(override_kwargs))
             checkpoint = ModelCheckpoint(
                 filename='best',
                 monitor='val_theta_loss',
@@ -117,7 +113,7 @@ class AdversarialLeakageLocalizationTrainer:
             trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             training_curves = get_training_curves(logging_dir)
             save_training_curves(training_curves, logging_dir)
-            training_module = AdversarialLeakageLocalizationModule.load_from_checkpoint(os.path.join(logging_dir, 'lightning_output', 'version_0', 'checkpoints', 'best.ckpt'))
+            training_module = self.training_module_class.load_from_checkpoint(os.path.join(logging_dir, 'lightning_output', 'version_0', 'checkpoints', 'best.ckpt'))
             classifier_state = training_module.classifiers.state_dict()
             torch.save(classifier_state, os.path.join(logging_dir, 'classifier_state.pth'))
         plot_theta_pretraining_curves(logging_dir)
@@ -128,12 +124,12 @@ class AdversarialLeakageLocalizationTrainer:
                 shutil.rmtree(logging_dir)
             os.makedirs(logging_dir)
             override_kwargs.update({'theta_pretrain_steps': 0})
-            training_module = AdversarialLeakageLocalizationModule(**self.get_training_module_kwargs(override_kwargs))
+            training_module = self.training_module_class(**self.get_training_module_kwargs(override_kwargs))
             if starting_module_path is not None:
-                override_training_module = AdversarialLeakageLocalizationModule.load_from_checkpoint(starting_module_path)
+                override_training_module = self.training_module_class.load_from_checkpoint(starting_module_path)
                 training_module.classifiers.load_state_dict(override_training_module.classifiers.state_dict())
             trainer = Trainer(
-                max_epochs=self.adversarial_train_epochs+self.gammap_posttrain_epochs,
+                max_epochs=self.max_epochs,
                 val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',

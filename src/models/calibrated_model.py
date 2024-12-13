@@ -82,6 +82,10 @@ class CalibratedModel(nn.Module):
                 with torch.no_grad():
                     obfuscated_trace, noise = get_classifier_args(trace)
                     logits.append(self.classifier(obfuscated_trace, noise).squeeze(1))
+                    if logits[-1].size(0) > trace.size(0):
+                        factor = logits[-1].size(0) // trace.size(0)
+                        assert logits[-1].size(0) == factor*trace.size(0)
+                        target = target.repeat(factor)
                     noises.append(noise)
                     targets.append(target)
         logits, targets, noises = map(lambda x: torch.cat(x, dim=0), (logits, targets, noises))

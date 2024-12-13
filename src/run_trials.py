@@ -83,8 +83,13 @@ def main():
             from datasets.one_truth_prevails import OneTruthPrevails as DatasetClass
         else:
             assert False, f'Dataset `{dataset}` is not implemented. Available choices: `{"`, `".join(AVAILABLE_DATASETS)}`.'
-        profiling_datasets = [DatasetClass(root=trial_config['data_dir'], train=True)]
-        attack_datasets = [DatasetClass(root=trial_config['data_dir'], train=False)]
+        profiling_dataset = DatasetClass(root=trial_config['data_dir'], train=True)
+        attack_dataset = DatasetClass(root=trial_config['data_dir'], train=False)
+        from training_modules.adversarial_leakage_localization import AdversarialLeakageLocalizationTrainer
+        kwargs = trial_config['all_kwargs']
+        kwargs.update({'timesteps_per_trace': profiling_dataset.timesteps_per_trace})
+        trainer = AdversarialLeakageLocalizationTrainer(profiling_dataset, attack_dataset, max_epochs=trial_config['max_epochs'], default_training_module_kwargs=kwargs)
+        trainer.train_gamma(trial_dir)
     
     #if 'classifiers_kwargs' in all_kwargs['default_training_module_kwargs']:
     #    all_kwargs['default_training_module_kwargs']['classifiers_kwargs']['input_shape'] = (1, profiling_datasets[0].timesteps_per_trace)
