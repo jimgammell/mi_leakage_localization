@@ -15,7 +15,7 @@ from lightning.pytorch.tuner import Tuner
 from common import *
 from trials.utils import *
 from datasets.data_module import DataModule
-from .training_module import AdversarialLeakageLocalizationModule
+from .reinforce_training_module import AdversarialLeakageLocalizationModule
 from .plot_things import *
 
 class AdversarialLeakageLocalizationTrainer:

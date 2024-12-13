@@ -70,7 +70,7 @@ class CalibratedModel(nn.Module):
         optimizer.step(closure)
         self.unsquashed_temperature.requires_grad_(False)
     
-    def _calibrate_temperature_conditional(self, dataloader, noise_generator, noise_samples=1):
+    def _calibrate_temperature_conditional(self, dataloader, get_classifier_args, noise_samples=1):
         self.to_unsquashed_temperature.weight.data.zero_()
         self.to_unsquashed_temperature.bias.data.fill_(np.log(np.exp(1)-1))
         logits, targets, noises = [], [], []
@@ -80,8 +80,8 @@ class CalibratedModel(nn.Module):
             trace, target = map(lambda x: x.to(device), (trace, target))
             for _ in range(noise_samples):
                 with torch.no_grad():
-                    noise = noise_generator(trace)
-                    logits.append(self.classifier(noise*trace, noise).squeeze(1))
+                    obfuscated_trace, noise = get_classifier_args(trace)
+                    logits.append(self.classifier(obfuscated_trace, noise).squeeze(1))
                     noises.append(noise)
                     targets.append(target)
         logits, targets, noises = map(lambda x: torch.cat(x, dim=0), (logits, targets, noises))

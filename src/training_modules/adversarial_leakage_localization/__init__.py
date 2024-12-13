@@ -1,2 +1,2 @@
 from .trainer import AdversarialLeakageLocalizationTrainer
-from .training_module import AdversarialLeakageLocalizationModule
+from .reinforce_training_module import AdversarialLeakageLocalizationModule
