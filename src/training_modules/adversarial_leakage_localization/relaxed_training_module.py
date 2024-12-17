@@ -25,8 +25,8 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
         theta_weight_decay: float = 0.0,
         calibrate_classifiers: bool = False,
         timesteps_per_trace: int = None,
-        eps: float = 1e-4,
-        train_eta_and_tau: bool = False,
+        eps: float = 1e-12,
+        train_eta_and_tau: bool = True,
         gaussian_noise_scale: Optional[float] = None,
         gamma_mode: Literal['minimax', 'maximin'] = 'minimax',
         mi_decay_rate: Optional[float] = None
@@ -149,16 +149,17 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             logits_rb_tilde = self.classifiers(rb_tilde*trace + (1-rb_tilde)*noise, 1-rb_tilde)
             mutinf_rb_tilde = self.get_mutinf(logits_rb_tilde)
             log_p_b = (b*gammam1.log() + (1-b)*(1-gammam1).log()).squeeze(1).sum(dim=-1)
-            mutinf_loss = ((mutinf_b - eta*mutinf_rb_tilde).detach()*log_p_b + eta*mutinf_rb - eta*mutinf_rb_tilde).mean()
+            mutinf_loss = ((mutinf_b - eta*mutinf_rb_tilde).detach()*log_p_b + eta*mutinf_rb - eta*mutinf_rb_tilde)
+            mean_mutinf_loss = mutinf_loss.mean()
             identity_loss = self.get_identity_loss()
-            loss = self.hparams.identity_lambda*identity_loss + mutinf_loss
+            loss = self.hparams.identity_lambda*identity_loss + mean_mutinf_loss
         else:
             assert False
         rv.update({
-            'loss': loss, 'mutinf_loss': mutinf_loss, 'identity_loss': identity_loss
+            'loss': loss, 'mutinf_loss': mean_mutinf_loss, 'identity_loss': identity_loss
         })
         if train:
-            mutinf_grad = torch.autograd.grad(mutinf_loss, [self.gammap], retain_graph=True, create_graph=gradient_estimator=='REBAR' and self.hparams.train_eta_and_tau)[0]
+            mutinf_grad = torch.autograd.grad(mean_mutinf_loss, [self.gammap], retain_graph=True)[0]
             identity_grad = torch.autograd.grad(identity_loss, [self.gammap], retain_graph=gradient_estimator=='REBAR' and self.hparams.train_eta_and_tau)[0]
             rv.update({
                 'mutinf_rms_grad': (mutinf_grad.detach()**2).mean().sqrt(),
@@ -167,19 +168,14 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             if self.hparams.gamma_mode == 'minimax':
                 self.gammap.grad = mutinf_grad + self.hparams.identity_lambda*identity_grad
             elif self.hparams.gamma_mode == 'maximin':
-                self.gammap.grad = -(mutinf_grad + self.hparams.identity_lambda*identity_grad)
+                self.gammap.grad = -(mutinf_gra + self.hparams.identity_lambda*identity_grad)
             else:
                 raise NotImplementedError
             gammap_optimizer.step()
             gammap_lr_scheduler.step()
             if gradient_estimator == 'REBAR' and self.hparams.train_eta_and_tau:
-                if not hasattr(self, 'mutinf_grad_ema'):
-                    self.register_buffer('mutinf_grad_ema', torch.zeros_like(self.gammap))
-                grad_variance = ((mutinf_grad - self.mutinf_grad_ema)**2).mean()
-                etap_taup_grad = torch.autograd.grad(grad_variance, [self.etap, self.taup])
-                self.etap.grad = etap_taup_grad[0]
-                self.taup.grad = etap_taup_grad[1]
-                self.mutinf_grad_ema = 0.01*mutinf_grad[0].detach() + 0.99*self.mutinf_grad_ema
+                loss_variance = mutinf_loss.var() # The original paper said variance of the gradient estimator, but that's super expensive to compute + backprop through. I feel like this should have a similar effect.
+                self.etap.grad, self.taup.grad = torch.autograd.grad(loss_variance, [self.etap, self.taup])
                 etap_taup_optimizer.step()
         assert torch.isfinite(self.etap)
         assert torch.isfinite(self.taup)
