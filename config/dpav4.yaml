@@ -1,8 +1,10 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/dpav4
-max_epochs: 10000
+max_epochs: 1000
 all_kwargs:
   classifiers_name: sca-cnn
   theta_lr: 1.0e-3
+  theta_weight_decay: 1.0e-2
   gammap_lr: 1.0e-2
-  identity_lambda: 1.0e-2
+  identity_lambda: 1.0e-1
   calibrate_classifiers: false
+  gaussian_noise_scale: 1.0

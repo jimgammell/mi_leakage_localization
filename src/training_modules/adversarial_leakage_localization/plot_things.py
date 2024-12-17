@@ -59,13 +59,13 @@ def plot_theta_pretraining_curves(logging_dir):
     fig.savefig(os.path.join(logging_dir, 'theta_pretraining_curves.pdf'), **SAVEFIG_KWARGS)
     plt.close(fig)
 
-def plot_gammap_training_curves(logging_dir):
+def plot_gammap_training_curves(logging_dir, anim_gammas=True):
     training_curves = get_training_curves(logging_dir)
     assert all(key in training_curves for key in [
         'train_gammap_mutinf_loss', 'train_gammap_identity_loss', 'train_gammap_loss', 'train_gammap_mutinf_rms_grad', 'train_gammap_identity_rms_grad',
-        'val_gammap_mutinf_loss', 'val_gammap_identity_loss', 'val_gammap_loss', 'gamma', 'train_theta_rank', 'val_theta_rank'
+        'val_gammap_mutinf_loss', 'val_gammap_identity_loss', 'val_gammap_loss', 'gamma', 'train_theta_rank', 'val_theta_rank', 'tau', 'eta'
     ])
-    fig, axes = plt.subplots(2, 2, figsize=(2*PLOT_WIDTH, 2*PLOT_WIDTH))
+    fig, axes = plt.subplots(2, 3, figsize=(3*PLOT_WIDTH, 2*PLOT_WIDTH))
     axes = axes.flatten()
     axes[0].plot(*training_curves['train_gammap_mutinf_loss'], color='red', linestyle='--', **PLOT_KWARGS)
     axes[0].plot(*training_curves['train_gammap_identity_loss'], color='blue', linestyle='--', **PLOT_KWARGS)
@@ -81,21 +81,27 @@ def plot_gammap_training_curves(logging_dir):
     lc = LineCollection(lines, color='blue', linestyle='-', linewidth=0.1, alpha=0.5, **PLOT_KWARGS)
     axes[3].add_collection(lc)
     axes[3].autoscale()
+    axes[4].plot(*training_curves['tau'], color='red', linestyle='-', **PLOT_KWARGS)
+    axes[4].plot(*training_curves['eta'], color='blue', linestyle='-', **PLOT_KWARGS)
     axes[0].set_xlabel('Training step')
     axes[1].set_xlabel('Training step')
     axes[2].set_xlabel('Training step')
     axes[3].set_xlabel('Training step')
+    axes[4].set_xlabel('Training step')
     axes[0].set_ylabel('Loss')
     axes[1].set_ylabel('RMS gradient')
     axes[2].set_ylabel('Correct key rank')
-    axes[3].set_ylabel('$\gamma_t$')
+    axes[3].set_ylabel(r'$\gamma_t$')
+    axes[4].set_ylabel(r'$\tau$ and $\eta$')
     axes[0].legend()
     axes[1].legend()
     axes[0].set_yscale('symlog')
     axes[1].set_yscale('log')
     axes[3].set_yscale('log')
+    axes[4].set_yscale('log')
     fig.suptitle('Erasure probabilities training stage')
     fig.tight_layout()
     fig.savefig(os.path.join(logging_dir, 'gamma_training_curves.pdf'), **SAVEFIG_KWARGS)
     plt.close(fig)
-    animate_erasure_probs_traj(logging_dir)
+    if anim_gammas:
+        animate_erasure_probs_traj(logging_dir)

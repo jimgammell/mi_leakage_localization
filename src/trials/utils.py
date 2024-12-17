@@ -24,6 +24,8 @@ def extract_gamma(logging_dir):
     indices = np.argsort(steps)
     steps = np.array(steps)[indices]
     gammas = np.stack(gammas)[indices, ...]
+    if len(gammas.shape) < 2:
+        gammas = gammas.reshape(-1, 1)
     return (steps, gammas)
 
 def get_training_curves(logging_dir):

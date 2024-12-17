@@ -118,7 +118,12 @@ class AdversarialLeakageLocalizationTrainer:
             torch.save(classifier_state, os.path.join(logging_dir, 'classifier_state.pth'))
         plot_theta_pretraining_curves(logging_dir)
     
-    def train_gamma(self, logging_dir: Union[str, os.PathLike], starting_module_path: Optional[Union[str, os.PathLike]] = None, override_kwargs: dict = {}):
+    def train_gamma(self, 
+            logging_dir: Union[str, os.PathLike],
+            starting_module_path: Optional[Union[str, os.PathLike]] = None,
+            override_kwargs: dict = {},
+            anim_gammas: bool = True
+        ):
         if not os.path.exists(os.path.join(logging_dir, 'training_curves.pickle')):
             if os.path.exists(logging_dir):
                 shutil.rmtree(logging_dir)
@@ -140,4 +145,4 @@ class AdversarialLeakageLocalizationTrainer:
             trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             training_curves = get_training_curves(logging_dir)
             save_training_curves(training_curves, logging_dir)
-        plot_gammap_training_curves(logging_dir)
+        plot_gammap_training_curves(logging_dir, anim_gammas=anim_gammas)
