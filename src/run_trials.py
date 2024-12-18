@@ -59,6 +59,7 @@ def main():
         from trials.simple_gaussian import Trial
         trial = Trial(trial_dir)
         trial.numerical_experiments()
+        trial.leaky_point_count_sweep()
         trial.sigma_sweep()
     else:
         supervised_classifier_kwargs = DEFAULT_CONFIG['supervised_classifier_kwargs']

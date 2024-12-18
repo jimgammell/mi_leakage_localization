@@ -74,7 +74,7 @@ class SimpleGaussianDataset(Dataset):
         self.transform = transform
         self.target_transform = target_transform
         self.sigma = sigma
-        self.timesteps_per_trace = sum(point_count*min(1, leakage_dim) for point_count, leakage_dim in enumerate(point_counts))
+        self.timesteps_per_trace = sum(point_count*max(1, leakage_dim) for leakage_dim, point_count in enumerate(point_counts))
         assert self.timesteps_per_trace > 0
         if self.infinite_dataset:
             self.used_points = 0

@@ -28,8 +28,9 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
         eps: float = 1e-12,
         train_eta_and_tau: bool = True,
         gaussian_noise_scale: Optional[float] = None,
-        gamma_mode: Literal['minimax', 'maximin'] = 'minimax',
-        mi_decay_rate: Optional[float] = None
+        mi_decay_rate: Optional[float] = None,
+        identity_loss_fn: Literal['l1', 'l2', 'ent', 'logsumexp'] = 'l2',
+        direction: Literal['minimax', 'maximin'] = 'maximin'
     ):
         assert timesteps_per_trace is not None
         super().__init__()
@@ -103,10 +104,25 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
         return rv
         
     def get_identity_loss(self):
-        return 0.5*(self.get_gamma()**2).sum()
+        if self.hparams.identity_loss_fn == 'l1':
+            if self.hparams.direction == 'minimax':
+                return self.get_gamma().sum()
+            elif self.hparams.direction == 'maximin':
+                return -(1 - self.gamma).sum()
+            else:
+                raise NotImplementedError
+        elif self.hparams.identity_loss_fn == 'l2':
+            if self.hparams.direction == 'minimax':
+                return 0.5*(self.get_gamma()**2).sum()
+            elif self.hparams.direction == 'maximin':
+                return -0.5*((1 - self.get_gamma())**2).sum()
+            else:
+                raise NotImplementedError
+        else:
+            raise NotImplementedError
     
     # Uses the REBAR gradient estimator: https://arxiv.org/pdf/1703.07370
-    def step_gammap(self, trace, train: bool = False, gradient_estimator: Literal['CONCRETE', 'REBAR'] = 'REBAR'):
+    def step_gammap(self, trace, train: bool = False, gradient_estimator: Literal['CONCRETE', 'REBAR'] = 'CONCRETE'):
         self.clip_gammap()
         if train:
             _, gammap_optimizer, etap_taup_optimizer = self.optimizers()
@@ -120,38 +136,40 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             tau = self.get_tau()
             gammam1 = 1 - gamma
             u = self.rand_like(gammam1)
-            z = nn.functional.logsigmoid(-self.gammap) - nn.functional.logsigmoid(self.gammap) + u.log() - (1-u).log()
+            z = gammam1.log() - (1-gammam1).log() + u.log() - (1-u).log()
+            #z = nn.functional.logsigmoid(-self.gammap) - nn.functional.logsigmoid(self.gammap) + u.log() - (1-u).log()
             rb = nn.functional.sigmoid(z/tau)
             noise = torch.randn_like(trace)
             logits = self.classifiers(rb*trace + (1-rb)*noise, 1-rb)
-            mutinf_loss = self.get_mutinf(logits).mean()
+            mutinf_loss = self.get_mutinf(logits)
+            mean_mutinf_loss = mutinf_loss.mean()
             identity_loss = self.get_identity_loss()
-            loss = self.hparams.identity_lambda*identity_loss + mutinf_loss
-        elif gradient_estimator == 'REBAR':
+            loss = self.hparams.identity_lambda*identity_loss + mean_mutinf_loss
+        elif gradient_estimator == 'REBAR': # Based on https://arxiv.org/pdf/1703.07370
             tau = self.get_tau() # renamed from \lambda in the paper since we are already calling the identity penalty coefficient \lambda
             eta = self.get_eta()
             gammam1 = 1 - gamma # these are the Bernoulli parameters so that we can just plug it into the equations from the paper
             u = self.rand_like(gammam1)
-            z = nn.functional.logsigmoid(-self.gammap) - nn.functional.logsigmoid(self.gammap) + u.log() - (1-u).log()
-            b = torch.where(z >= 0, torch.ones_like(z), torch.zeros_like(z))
-            uprime = 1 - gammam1
+            z = nn.functional.logsigmoid(-self.gammap) - nn.functional.logsigmoid(self.gammap) + u.log() - (1-u).log() # z = g(u, \theta)
+            b = torch.where(z >= 0, torch.ones_like(z), torch.zeros_like(z)) # b = H(z)
+            uprime = 1 - gammam1 # u' such that g(u', \theta) = 0
             v = self.rand_like(gammam1)
-            v = torch.where(b == 1, uprime + v*(1 - uprime), v*uprime)
-            z_tilde = torch.where(b == 1, (v.log() - (1-v).log() - (1-gammam1).log()).exp().log1p(), -(v.log() - (1-v).log() - gammam1.log()).exp().log1p())
-            rb = nn.functional.sigmoid(z/tau)
-            rb_tilde = nn.functional.sigmoid(z_tilde/tau)
+            v = torch.where(b == 1, uprime + v*(1 - uprime), v*uprime) # make u and v common random numbers
+            z_tilde = torch.where(b == 1, (v.log() - (1-v).log() - (1-gammam1).log()).exp().log1p(), -(v.log() - (1-v).log() - gammam1.log()).exp().log1p()) # \tilde{z} \mid b = \tilde{g}(v, b, \theta)
+            rb = nn.functional.sigmoid(z/tau) # \sigma_\lambda(z)
+            rb_tilde = nn.functional.sigmoid(z_tilde/tau) # \sigma_\lambda(\tilde{x})
             noise = torch.randn_like(trace)
             with torch.no_grad():
                 logits_b = self.classifiers(b*trace + (1-b)*noise, 1-b)
-                mutinf_b = self.get_mutinf(logits_b)
+                mutinf_b = self.get_mutinf(logits_b) # f(H(z))
             logits_rb = self.classifiers(rb*trace + (1-rb)*noise, 1-rb)
-            mutinf_rb = self.get_mutinf(logits_rb)
+            mutinf_rb = self.get_mutinf(logits_rb) # f(\sigma_\lambda(z))
             logits_rb_tilde = self.classifiers(rb_tilde*trace + (1-rb_tilde)*noise, 1-rb_tilde)
-            mutinf_rb_tilde = self.get_mutinf(logits_rb_tilde)
-            log_p_b = (b*gammam1.log() + (1-b)*(1-gammam1).log()).squeeze(1).sum(dim=-1)
+            mutinf_rb_tilde = self.get_mutinf(logits_rb_tilde) # f(\sigma_\lambda(\tilde{z}))
+            log_p_b = (b*gammam1.log() + (1-b)*(1-gammam1).log()).squeeze(1).sum(dim=-1) # \log p(b)
             mutinf_loss = ((mutinf_b - eta*mutinf_rb_tilde).detach()*log_p_b + eta*mutinf_rb - eta*mutinf_rb_tilde)
             mean_mutinf_loss = mutinf_loss.mean()
-            identity_loss = self.get_identity_loss()
+            identity_loss = self.get_identity_loss() # this is another term in the loss which we compute explicitly rather than with REBAR
             loss = self.hparams.identity_lambda*identity_loss + mean_mutinf_loss
         else:
             assert False
@@ -165,10 +183,10 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
                 'mutinf_rms_grad': (mutinf_grad.detach()**2).mean().sqrt(),
                 'identity_rms_grad': (self.hparams.identity_lambda*identity_grad.detach()**2).mean().sqrt()
             })
-            if self.hparams.gamma_mode == 'minimax':
+            if self.hparams.direction == 'minimax':
                 self.gammap.grad = mutinf_grad + self.hparams.identity_lambda*identity_grad
-            elif self.hparams.gamma_mode == 'maximin':
-                self.gammap.grad = -(mutinf_gra + self.hparams.identity_lambda*identity_grad)
+            elif self.hparams.direction == 'maximin':
+                self.gammap.grad = -(mutinf_grad + self.hparams.identity_lambda*identity_grad)
             else:
                 raise NotImplementedError
             gammap_optimizer.step()

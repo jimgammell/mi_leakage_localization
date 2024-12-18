@@ -61,10 +61,10 @@ def plot_theta_pretraining_curves(logging_dir):
 
 def plot_gammap_training_curves(logging_dir, anim_gammas=True):
     training_curves = get_training_curves(logging_dir)
-    assert all(key in training_curves for key in [
-        'train_gammap_mutinf_loss', 'train_gammap_identity_loss', 'train_gammap_loss', 'train_gammap_mutinf_rms_grad', 'train_gammap_identity_rms_grad',
-        'val_gammap_mutinf_loss', 'val_gammap_identity_loss', 'val_gammap_loss', 'gamma', 'train_theta_rank', 'val_theta_rank', 'tau', 'eta'
-    ])
+    #assert all(key in training_curves for key in [
+    #    'train_gammap_mutinf_loss', 'train_gammap_identity_loss', 'train_gammap_loss', 'train_gammap_mutinf_rms_grad', 'train_gammap_identity_rms_grad',
+    #    'val_gammap_mutinf_loss', 'val_gammap_identity_loss', 'val_gammap_loss', 'gamma', 'train_theta_rank', 'val_theta_rank', 'tau', 'eta'
+    #])
     fig, axes = plt.subplots(2, 3, figsize=(3*PLOT_WIDTH, 2*PLOT_WIDTH))
     axes = axes.flatten()
     axes[0].plot(*training_curves['train_gammap_mutinf_loss'], color='red', linestyle='--', **PLOT_KWARGS)
@@ -73,16 +73,18 @@ def plot_gammap_training_curves(logging_dir, anim_gammas=True):
     axes[0].plot(*training_curves['val_gammap_mutinf_loss'], color='red', linestyle='-', label='mutinf', **PLOT_KWARGS)
     axes[0].plot(*training_curves['val_gammap_identity_loss'], color='blue', linestyle='-', label='id', **PLOT_KWARGS)
     axes[0].plot(*training_curves['val_gammap_loss'], color='purple', linestyle='-', label='total', **PLOT_KWARGS)
-    axes[1].plot(*training_curves['train_gammap_mutinf_rms_grad'], color='red', linestyle='none', marker='.', markersize=1, label='mutinf', **PLOT_KWARGS)
-    axes[1].plot(*training_curves['train_gammap_identity_rms_grad'], color='blue', linestyle='none', marker='.', markersize=1, label='id', **PLOT_KWARGS)
+    if 'train_gammap_mutinf_rms_grad' in training_curves and 'train_gammap_identity_rms_grad' in training_curves:
+        axes[1].plot(*training_curves['train_gammap_mutinf_rms_grad'], color='red', linestyle='none', marker='.', markersize=1, label='mutinf', **PLOT_KWARGS)
+        axes[1].plot(*training_curves['train_gammap_identity_rms_grad'], color='blue', linestyle='none', marker='.', markersize=1, label='id', **PLOT_KWARGS)
     axes[2].plot(*training_curves['train_theta_rank'], color='blue', linestyle='--', **PLOT_KWARGS)
     axes[2].plot(*training_curves['val_theta_rank'], color='blue', linestyle='-', **PLOT_KWARGS)
     lines = [np.column_stack([training_curves['gamma'][0], y]) for y in training_curves['gamma'][1].T]
     lc = LineCollection(lines, color='blue', linestyle='-', linewidth=0.1, alpha=0.5, **PLOT_KWARGS)
     axes[3].add_collection(lc)
     axes[3].autoscale()
-    axes[4].plot(*training_curves['tau'], color='red', linestyle='-', **PLOT_KWARGS)
-    axes[4].plot(*training_curves['eta'], color='blue', linestyle='-', **PLOT_KWARGS)
+    if 'eta' in training_curves and 'tau' in training_curves:
+        axes[4].plot(*training_curves['tau'], color='red', linestyle='-', **PLOT_KWARGS)
+        axes[4].plot(*training_curves['eta'], color='blue', linestyle='-', **PLOT_KWARGS)
     axes[0].set_xlabel('Training step')
     axes[1].set_xlabel('Training step')
     axes[2].set_xlabel('Training step')
