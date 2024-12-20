@@ -156,6 +156,9 @@ class AdversarialLeakageLocalizationModule(L.LightningModule):
             v = self.rand_like(gammam1)
             v = torch.where(b == 1, uprime + v*(1 - uprime), v*uprime) # make u and v common random numbers
             z_tilde = torch.where(b == 1, (v.log() - (1-v).log() - (1-gammam1).log()).exp().log1p(), -(v.log() - (1-v).log() - gammam1.log()).exp().log1p()) # \tilde{z} \mid b = \tilde{g}(v, b, \theta)
+            if not torch.all(torch.isfinite(z_tilde)):
+                print(v.log().min(), v.log().max())
+                assert False
             rb = nn.functional.sigmoid(z/tau) # \sigma_\lambda(z)
             rb_tilde = nn.functional.sigmoid(z_tilde/tau) # \sigma_\lambda(\tilde{x})
             noise = torch.randn_like(trace)

@@ -26,6 +26,7 @@ class CondMutInfEstimator(nn.Module):
         self.classifiers = models.load(
             self.classifiers_name,
             input_shape=self.input_shape,
+            noise_conditional=True,
             **self.classifiers_kwargs
         )
     
@@ -75,7 +76,7 @@ class SelectionMechanism(nn.Module):
     
     def get_gammat(self):
         etat = self.get_etat()
-        gammat = etat + self.C.log() - torch.logsumexp(etat)
+        gammat = etat + self.C.log() - torch.logsumexp(etat.squeeze(0), dim=0)
         return gammat
     
     def get_gamma(self):
@@ -86,17 +87,21 @@ class SelectionMechanism(nn.Module):
         gammat = self.get_gammat()
         return nn.functional.logsigmoid(gammat)
     
+    def get_log_1mgamma(self):
+        gammat = self.get_gammat()
+        return nn.functional.logsigmoid(-gammat)
+    
     @torch.no_grad()
     def sample(self, batch_size):
         gammat = self.get_gammat()
         gamma = nn.functional.sigmoid(gammat)
-        gamma = gamma.unsqueeze(0).expand(batch_size, 1, 1)
+        gamma = gamma.unsqueeze(0).repeat(batch_size, 1, 1)
         alpha = gamma.bernoulli_()
         return alpha
     
     def log_pmf(self, alpha):
         gammat = self.get_gammat().unsqueeze(0)
-        log_pdf = (alpha*nn.functional.logsigmoid(gammat) + (1-alpha)*nn.functional.logsigmoid(-gammat)).mean(dim=0).sum()
+        log_pdf = (alpha*nn.functional.logsigmoid(gammat) + (1-alpha)*nn.functional.logsigmoid(-gammat)).sum(-1).squeeze(-1)
         return log_pdf
     
     def forward(self, *args, **kwargs):

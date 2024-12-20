@@ -1,5 +1,5 @@
 from torch.utils.data import Dataset
-from lightning import LightningModule, Trainer
+from lightning import LightningModule, Trainer as LightningTrainer
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
 
@@ -42,7 +42,7 @@ class Trainer:
                 shutil.rmtree(logging_dir)
             os.makedirs(logging_dir)
             training_module = Module(**self.default_training_module_kwargs)
-            trainer = Trainer(
+            trainer = LightningTrainer(
                 max_steps=self.max_steps,
                 val_check_interval=1.,
                 default_root_dir=logging_dir,

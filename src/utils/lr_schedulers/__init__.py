@@ -4,4 +4,4 @@ from .cosine_decay import CosineDecayLRSched
 
 class NoOpLRSched(LambdaLR):
     def __init__(self, optimizer, **kwargs):
-        super().__init__(optimizer, lr_lambda=lambda: _ = 1.0)
+        super().__init__(optimizer, lr_lambda=lambda _: 1.0)

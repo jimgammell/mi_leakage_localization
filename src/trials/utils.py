@@ -29,7 +29,7 @@ def extract_gamma(logging_dir):
     return (steps, gammas)
 
 def extract_log_gamma(logging_dir):
-    log_gamma_dir = os.path.join(logging_dir, 'lightning_output', 'version_0', 'log_gamma_log')
+    log_gamma_dir = os.path.join(logging_dir, 'lightning_output', 'version_0', 'log_gamma_over_time')
     if not os.path.exists(log_gamma_dir):
         return None
     steps, log_gammas = [], []
@@ -52,8 +52,11 @@ def get_training_curves(logging_dir):
     ea.Reload()
     training_curves = {key: extract_trace(ea.Scalars(key)) for key in ea.Tags()['scalars']}
     gamma_curves = extract_gamma(logging_dir)
+    log_gamma_curves = extract_log_gamma(logging_dir)
     if gamma_curves is not None:
         training_curves.update({'gamma': gamma_curves})
+    if log_gamma_curves is not None:
+        training_curves.update({'log_gamma': log_gamma_curves})
     return training_curves
 
 def save_training_curves(training_curves, logging_dir):
