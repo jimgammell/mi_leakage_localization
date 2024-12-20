@@ -20,7 +20,7 @@ def animate_erasure_probs_traj(logging_dir):
     axes[1].set_ylabel('Estimated leakage of $X_t$')
     axes[0].set_ylim(0, 1)
     axes[1].set_yscale('log')
-    indices = np.linspace(0, len(gammas[1]), 100).astype(int)
+    indices = np.linspace(0, len(gammas[1])-1, 100).astype(int)
     with imageio.get_writer(output_path, mode='I', fps=20) as writer:
         with tempfile.TemporaryDirectory() as temp_dir:
             for idx in indices:

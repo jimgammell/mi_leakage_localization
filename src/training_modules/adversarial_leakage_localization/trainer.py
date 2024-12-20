@@ -22,7 +22,7 @@ class AdversarialLeakageLocalizationTrainer:
         profiling_dataset: Dataset,
         attack_dataset: Dataset,
         max_epochs: int = 100,
-        gradient_estimation_strategy: Literal['REINFORCE', 'Relaxed', 'Dependent'] = 'Dependent',
+        gradient_estimation_strategy: Literal['REINFORCE', 'Relaxed', 'Dependent', 'WinnerTakeAll'] = 'WinnerTakeAll',
         default_data_module_kwargs: dict = {},
         default_training_module_kwargs: dict = {}
     ):
@@ -40,6 +40,8 @@ class AdversarialLeakageLocalizationTrainer:
             from .relaxed_training_module import AdversarialLeakageLocalizationModule
         elif self.gradient_estimation_strategy == 'Dependent':
             from .dependent_training_module import AdversarialLeakageLocalizationModule
+        elif self.gradient_estimation_strategy == 'WinnerTakeAll':
+            from .winner_take_all_module import AdversarialLeakageLocalizationModule
         else:
             raise NotImplementedError
         self.training_module_class = AdversarialLeakageLocalizationModule

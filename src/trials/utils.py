@@ -28,6 +28,25 @@ def extract_gamma(logging_dir):
         gammas = gammas.reshape(-1, 1)
     return (steps, gammas)
 
+def extract_log_gamma(logging_dir):
+    log_gamma_dir = os.path.join(logging_dir, 'lightning_output', 'version_0', 'log_gamma_log')
+    if not os.path.exists(log_gamma_dir):
+        return None
+    steps, log_gammas = [], []
+    for file in os.listdir(log_gamma_dir):
+        if not file.endswith('.npy'):
+            continue
+        step = int(file.split('=')[-1].split('.')[0])
+        log_gamma = np.load(os.path.join(log_gamma_dir, file))
+        steps.append(step)
+        log_gammas.append(log_gamma)
+    indices = np.argsort(steps)
+    steps = np.array(steps)[indices]
+    log_gammas = np.stack(log_gammas)[indices, ...]
+    if len(log_gammas) < 2:
+        log_gammas = log_gammas.reshape(-1, 1)
+    return (steps, log_gammas)
+
 def get_training_curves(logging_dir):
     ea = event_accumulator.EventAccumulator(os.path.join(logging_dir, 'lightning_output', 'version_0'))
     ea.Reload()

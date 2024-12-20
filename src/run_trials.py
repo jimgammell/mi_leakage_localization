@@ -90,8 +90,13 @@ def main():
         from training_modules.adversarial_leakage_localization import AdversarialLeakageLocalizationTrainer
         kwargs = trial_config['all_kwargs']
         kwargs.update({'timesteps_per_trace': profiling_dataset.timesteps_per_trace})
-        trainer = AdversarialLeakageLocalizationTrainer(profiling_dataset, attack_dataset, max_epochs=trial_config['max_epochs'], default_training_module_kwargs=kwargs)
-        trainer.train_gamma(trial_dir)
+        for entropy_weight in [1e-2, 1e-1, 1e0, 1e1, 1e2]:
+            for occluded_point_count in [1, 2, 4, 8]:
+                experiment_dir = os.path.join(trial_dir, f'lambda={entropy_weight}__occluded_point_count={occluded_point_count}')
+                os.makedirs(experiment_dir, exist_ok=True)
+                kwargs.update({'entropy_weight': entropy_weight, 'occluded_point_count': occluded_point_count})
+                trainer = AdversarialLeakageLocalizationTrainer(profiling_dataset, attack_dataset, max_epochs=trial_config['max_epochs'], default_training_module_kwargs=kwargs)
+                trainer.train_gamma(experiment_dir)
     
     #if 'classifiers_kwargs' in all_kwargs['default_training_module_kwargs']:
     #    all_kwargs['default_training_module_kwargs']['classifiers_kwargs']['input_shape'] = (1, profiling_datasets[0].timesteps_per_trace)

@@ -1,0 +1,103 @@
+from typing import *
+import numpy as np
+import torch
+from torch import nn
+
+import models
+
+@torch.no_grad()
+def get_rms_grad(model):
+    rms_grad, param_count = 0.0, 0
+    for param in model.parameters():
+        if param.grad is not None:
+            rms_grad += (param.grad**2).sum().item()
+            param_count += torch.numel(param)
+    rms_grad = (rms_grad / param_count)**0.5
+    return rms_grad
+
+class CondMutInfEstimator(nn.Module):
+    def __init__(self, classifiers_name: str, input_shape: Sequence[int], mutinf_estimate_with_labels: bool = False, classifiers_kwargs: dict = {}):
+        super().__init__()
+        self.classifiers_name = classifiers_name
+        self.input_shape = input_shape
+        self.mutinf_estimate_with_labels = mutinf_estimate_with_labels
+        self.classifiers_kwargs = classifiers_kwargs
+        
+        self.classifiers = models.load(
+            self.classifiers_name,
+            input_shape=self.input_shape,
+            **self.classifiers_kwargs
+        )
+    
+    def get_logits(self, input: torch.Tensor, condition_mask: torch.Tensor):
+        masked_input = condition_mask*input + (1-condition_mask)*torch.randn_like(input)
+        logits = self.classifiers(masked_input, condition_mask)
+        logits = logits.reshape(-1, logits.size(-1))
+        return logits
+    
+    def get_mutinf_estimate_from_logits(self, logits: torch.Tensor, labels: Optional[torch.Tensor] = None):
+        ent_y = torch.full((logits.size(0),), np.log(self.classifiers.output_classes), dtype=logits.dtype, device=logits.device)
+        if self.mutinf_estimate_with_labels:
+            assert labels is not None
+            ent_y_mid_x = nn.functional.cross_entropy(logits, labels)
+        else:
+            ent_y_mid_x = -(nn.functional.softmax(logits, dim=-1)*nn.functional.log_softmax(logits, dim=-1)).sum(dim=-1)
+        mutinf = ent_y - ent_y_mid_x
+        return mutinf
+    
+    def get_mutinf_estimate(self, input: torch.Tensor, condition_mask: torch.Tensor, labels: Optional[torch.Tensor] = None):
+        logits = self.get_logits(input, condition_mask)
+        mutinf = self.get_mutinf_estimate_from_logits(logits, labels)
+        return mutinf
+    
+    def forward(self, *args, **kwargs):
+        assert False
+
+class SelectionMechanism(nn.Module):
+    def __init__(self, timesteps_per_trace: int, C: float = 1.0):
+        super().__init__()
+        self.timesteps_per_trace = timesteps_per_trace
+        self.register_buffer('C', torch.tensor(C, dtype=torch.float))
+        self.etat = nn.Parameter(torch.zeros((1, self.timesteps_per_trace), dtype=torch.float), requires_grad=True)
+    
+    def get_etat(self):
+        return self.etat
+    
+    def get_eta(self):
+        etat = self.get_etat()
+        eta = nn.functional.softmax(etat.reshape(-1), dim=-1).reshape(*etat.shape)
+        return eta
+    
+    def get_log_eta(self):
+        etat = self.get_etat()
+        log_eta = nn.functional.log_softmax(etat.reshape(-1), dim=-1).reshape(*etat.shape)
+        return log_eta
+    
+    def get_gammat(self):
+        etat = self.get_etat()
+        gammat = etat + self.C.log() - torch.logsumexp(etat)
+        return gammat
+    
+    def get_gamma(self):
+        gammat = self.get_gammat()
+        return nn.functional.sigmoid(gammat)
+    
+    def get_log_gamma(self):
+        gammat = self.get_gammat()
+        return nn.functional.logsigmoid(gammat)
+    
+    @torch.no_grad()
+    def sample(self, batch_size):
+        gammat = self.get_gammat()
+        gamma = nn.functional.sigmoid(gammat)
+        gamma = gamma.unsqueeze(0).expand(batch_size, 1, 1)
+        alpha = gamma.bernoulli_()
+        return alpha
+    
+    def log_pmf(self, alpha):
+        gammat = self.get_gammat().unsqueeze(0)
+        log_pdf = (alpha*nn.functional.logsigmoid(gammat) + (1-alpha)*nn.functional.logsigmoid(-gammat)).mean(dim=0).sum()
+        return log_pdf
+    
+    def forward(self, *args, **kwargs):
+        assert False

@@ -57,7 +57,7 @@ class Trial:
     def leaky_point_count_sweep(self):
         output_dir = os.path.join(self.base_dir, 'leaky_point_sweep')
         os.makedirs(output_dir, exist_ok=True)
-        leaky_point_counts = [1, 4, 16, 64]
+        leaky_point_counts = [16]
         for leaky_point_count in leaky_point_counts:
             trial_dir = os.path.join(output_dir, f'leaky_point_count={leaky_point_count}')
             os.makedirs(trial_dir, exist_ok=True)
@@ -70,7 +70,9 @@ class Trial:
                     classifiers_name='multilayer-perceptron',
                     classifiers_kwargs={'output_classes': 2},
                     timesteps_per_trace=profiling_dataset.timesteps_per_trace,
-                    identity_lambda = 1.0
+                    entropy_weight = 1.,
+                    gumbel_tau = 1.,
+                    occluded_point_count=1
                 )
             )
             trainer.train_gamma(trial_dir, anim_gammas=False)
