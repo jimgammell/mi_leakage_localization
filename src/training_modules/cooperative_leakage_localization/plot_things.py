@@ -38,21 +38,35 @@ def anim_inclusion_probs_traj(logging_dir):
                 image = imageio.imread(filename)
                 writer.append_data(image)
     plt.close(fig)
+    
+def plot_vs_reference(logging_dir, inclusion_probs, reference):
+    fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
+    ax.set_xlabel('Reference')
+    ax.set_ylabel('Gammas')
+    ax.plot(reference.squeeze(), inclusion_probs.squeeze(), marker='.', markersize=1, linestyle='none', color='blue')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    fig.tight_layout()
+    fig.savefig(os.path.join(logging_dir, 'comparison_to_reference.png'))
+    plt.close(fig)
 
-def plot_training_curves(logging_dir, anim_gammas=True):
+def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     training_curves = get_training_curves(logging_dir)
     fig, axes = plt.subplots(2, 3, figsize=(3*PLOT_WIDTH, 2*PLOT_WIDTH))
     axes = axes.flatten()
     if all(x in training_curves for x in ['train_etat_loss', 'val_etat_loss']):
         axes[0].plot(*training_curves['train_etat_loss'], color='blue', linestyle='--', label='train', **PLOT_KWARGS)
         axes[0].plot(*training_curves['val_etat_loss'], color='blue', linestyle='-', label='val', **PLOT_KWARGS)
-    axes[1].plot(*training_curves['train_theta_loss'], color='red', linestyle='--', label='train', **PLOT_KWARGS)
-    axes[1].plot(*training_curves['val_theta_loss'], color='red', linestyle='-', label='val', **PLOT_KWARGS)
-    axes[2].plot(*training_curves['train_theta_rank'], color='red', linestyle='--', label='train', **PLOT_KWARGS)
-    axes[2].plot(*training_curves['val_theta_rank'], color='red', linestyle='-', label='val', **PLOT_KWARGS)
+    if all(x in training_curves for x in ['train_theta_loss', 'val_theta_loss']):
+        axes[1].plot(*training_curves['train_theta_loss'], color='red', linestyle='--', label='train', **PLOT_KWARGS)
+        axes[1].plot(*training_curves['val_theta_loss'], color='red', linestyle='-', label='val', **PLOT_KWARGS)
+    if all(x in training_curves for x in ['train_theta_rank', 'val_theta_rank']):
+        axes[2].plot(*training_curves['train_theta_rank'], color='red', linestyle='--', label='train', **PLOT_KWARGS)
+        axes[2].plot(*training_curves['val_theta_rank'], color='red', linestyle='-', label='val', **PLOT_KWARGS)
     if 'train_etat_rms_grad' in training_curves:
         axes[3].plot(*training_curves['train_etat_rms_grad'], color='blue', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
-    axes[4].plot(*training_curves['train_theta_rms_grad'], color='red', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
+    if 'train_theta_rms_grad' in training_curves:
+        axes[4].plot(*training_curves['train_theta_rms_grad'], color='red', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
     lines = [np.column_stack([training_curves['log_gamma'][0], np.exp(y)]) for y in training_curves['log_gamma'][1].T]
     if not anim_gammas: # this is a simple Gaussian dataset trial where the first line is the nonleaky point
         nonleaky_line = lines[0]
@@ -83,5 +97,7 @@ def plot_training_curves(logging_dir, anim_gammas=True):
     fig.tight_layout()
     fig.savefig(os.path.join(logging_dir, 'training_curves.png'), **SAVEFIG_KWARGS)
     plt.close(fig)
+    if reference is not None:
+        plot_vs_reference(logging_dir, np.exp(training_curves['log_gamma'][1][-1, ...].squeeze()), reference.squeeze())
     if anim_gammas:
         anim_inclusion_probs_traj(logging_dir)

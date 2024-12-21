@@ -100,6 +100,14 @@ def main():
                 max_steps=trial_config['max_classifiers_pretrain_steps'],
                 override_kwargs=classifiers_pretrain_kwargs
             )
+        hparam_tuning_dir = os.path.join(trial_dir, 'hparam_tune')
+        os.makedirs(hparam_tuning_dir, exist_ok=True)
+        trainer.hparam_tune(
+            logging_dir=hparam_tuning_dir,
+            pretrained_classifiers_logging_dir=classifiers_pretrain_dir if trial_config['pretrain_classifiers'] else None,
+            max_steps=trial_config['max_leakage_localization_steps'],
+            override_kwargs=leakage_localization_kwargs
+        )
         leakage_localization_dir = os.path.join(trial_dir, 'leakage_localization')
         os.makedirs(leakage_localization_dir, exist_ok=True)
         trainer.run(
@@ -108,11 +116,6 @@ def main():
             max_steps=trial_config['max_leakage_localization_steps'],
             override_kwargs=leakage_localization_kwargs
         )
-    
-    #if 'classifiers_kwargs' in all_kwargs['default_training_module_kwargs']:
-    #    all_kwargs['default_training_module_kwargs']['classifiers_kwargs']['input_shape'] = (1, profiling_datasets[0].timesteps_per_trace)
-    #else:
-    #    all_kwargs['default_training_module_kwargs']['classifiers_kwargs'] = {'input_shape': (1, profiling_datasets[0].timesteps_per_trace)}
 
 if __name__ == '__main__':
     main()

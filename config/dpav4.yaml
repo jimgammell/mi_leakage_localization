@@ -4,9 +4,13 @@ max_classifiers_pretrain_steps: 1000
 max_leakage_localization_steps: 10000
 default_kwargs:
   classifiers_name: sca-cnn
-  budget: 1000.
+  calibrate_classifiers: true
 classifiers_pretrain_kwargs:
   theta_lr: 1.e-4
+  budget: 1000.
 leakage_localization_kwargs:
   theta_lr: 1.e-5
-  etat_lr: 1.e-3
+  etat_lr: 1.e-2
+  etat_lr_scheduler_name: CosineDecayLRSched
+  gradient_estimator: REBAR
+  budget: 100.

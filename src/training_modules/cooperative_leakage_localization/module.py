@@ -4,7 +4,6 @@ from torch import nn, optim
 import lightning as L
 
 from common import *
-import models
 from .utils import *
 import utils.lr_schedulers
 from utils.metrics import get_rank
@@ -26,7 +25,9 @@ class Module(L.LightningModule):
         gradient_estimator: Literal['REINFORCE', 'REBAR'] = 'REBAR',
         noise_scale: Optional[float] = None,
         eps: float = 1e-6,
-        classifiers_pretrain_phase: bool = False
+        train_theta: bool = True,
+        train_etat: bool = True,
+        calibrate_classifiers: bool = False
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -41,7 +42,8 @@ class Module(L.LightningModule):
         self.cmi_estimator = CondMutInfEstimator(
             self.hparams.classifiers_name,
             input_shape=(1, self.hparams.timesteps_per_trace),
-            classifiers_kwargs=self.hparams.classifiers_kwargs
+            classifiers_kwargs=self.hparams.classifiers_kwargs,
+            calibrate_classifiers=self.hparams.calibrate_classifiers
         )
         self.selection_mechanism = SelectionMechanism(
             self.hparams.timesteps_per_trace,
@@ -63,7 +65,7 @@ class Module(L.LightningModule):
     def configure_optimizers(self):
         self.etat_optimizer = optim.AdamW(
             self.selection_mechanism.parameters(), lr=self.hparams.etat_lr, weight_decay=self.hparams.etat_weight_decay,
-            betas=(0.9, 0.99999) if self.hparams.gradient_estimator == 'REBAR' else (0.9, 0.999)
+            betas=(0.9, 0.999) #(0.9, 0.99999) if self.hparams.gradient_estimator == 'REBAR' else (0.9, 0.999)
         )
         theta_yes_weight_decay, theta_no_weight_decay = [], []
         for name, param in self.cmi_estimator.named_parameters():
@@ -80,7 +82,7 @@ class Module(L.LightningModule):
                 else getattr(optim.lr_scheduler, x)
             ), (self.hparams.theta_lr_scheduler_name, self.hparams.etat_lr_scheduler_name)
         )
-        if self.trainer.max_epochs is not None:
+        if self.trainer.max_epochs != -1:
             total_steps = self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader())
         elif self.trainer.max_steps != -1:
             total_steps = self.trainer.max_steps
@@ -129,8 +131,7 @@ class Module(L.LightningModule):
             else:
                 self.mutinf_ema = 0.9*self.mutinf_ema + 0.1*mutinf.detach().mean()
             loss = -((mutinf - self.mutinf_ema)*log_prob_mass).mean()
-            with torch.no_grad():
-                display_loss = -mutinf.mean()
+            display_loss = -mutinf.detach().mean()
         elif self.hparams.gradient_estimator == 'REBAR':
             eta, tau = self.get_eta_and_tau()
             log_gamma = self.selection_mechanism.get_log_gamma().unsqueeze(0)
@@ -154,8 +155,7 @@ class Module(L.LightningModule):
             mutinf_rb = self.cmi_estimator.get_mutinf_estimate(trace, rb)
             mutinf_rb_tilde = self.cmi_estimator.get_mutinf_estimate(trace, rb_tilde)
             log_p_b = self.selection_mechanism.log_pmf(b)
-            with torch.no_grad():
-                display_loss = -mutinf_b.mean()
+            display_loss = -mutinf_b.detach().mean()
             if not hasattr(self, 'mutinf_ema'):
                 self.mutinf_ema = mutinf_b.detach().mean()
             else:
@@ -193,6 +193,7 @@ class Module(L.LightningModule):
         if train:
             theta_optimizer, *_ = self.optimizers()
             theta_lr_scheduler, _ = self.lr_schedulers()
+            theta_optimizer.zero_grad()
         trace, label = self.unpack_batch(batch)
         batch_size = trace.size(0)
         rv = {}
@@ -221,25 +222,51 @@ class Module(L.LightningModule):
         return rv
     
     def training_step(self, batch):
-        theta_rv = self.step_theta(batch, train=True)
-        if not self.hparams.classifiers_pretrain_phase:
+        if self.hparams.train_theta:
+            theta_rv = self.step_theta(batch, train=True)
+            for key, val in theta_rv.items():
+                self.log(f'train_theta_{key}', val, on_step=False, on_epoch=True)
+        if self.hparams.train_etat:
             etat_rv = self.step_etat(batch, train=True)
             for key, val in etat_rv.items():
                 self.log(f'train_etat_{key}', val, on_step=False, on_epoch=True)
-        for key, val in theta_rv.items():
-            self.log(f'train_theta_{key}', val, on_step=False, on_epoch=True)
     
     def validation_step(self, batch):
-        theta_rv = self.step_theta(batch, train=False)
-        if not self.hparams.classifiers_pretrain_phase:
+        if self.hparams.train_theta:
+            theta_rv = self.step_theta(batch, train=False)
+            for key, val in theta_rv.items():
+                self.log(f'val_theta_{key}', val, on_step=False, on_epoch=True)
+        if self.hparams.train_etat:
             etat_rv = self.step_etat(batch, train=False)
             for key, val in etat_rv.items():
                 self.log(f'val_etat_{key}', val, on_step=False, on_epoch=True)
-        for key, val in theta_rv.items():
-            self.log(f'val_theta_{key}', val, on_step=False, on_epoch=True)
+    
+    def calibrate_classifiers(self):
+        def get_classifier_input(trace):
+            batch_size = trace.size(0)
+            if self.hparams.gradient_estimator == 'REBAR': # we need to train it on the interpolated masks, not just hard masks
+                _, tau = self.get_eta_and_tau()
+                log_gamma = self.selection_mechanism.get_log_gamma().unsqueeze(0)
+                log_1mgamma = self.selection_mechanism.get_log_1mgamma().unsqueeze(0)
+                u = self.rand_like(trace)
+                z = log_gamma - log_1mgamma + u.log() - (1-u).log()
+                z_b = z[:batch_size//2]
+                z_rb = z[batch_size//2:]
+                b = torch.where(z_b >= 0, torch.ones_like(z_b), torch.zeros_like(z_b))
+                rb = nn.functional.sigmoid(z_rb/tau)
+                alpha = torch.cat([b, rb], dim=0)
+            else:
+                alpha = self.selection_mechanism.sample(batch_size)
+            obfuscated_trace = alpha*trace + (1-alpha)*torch.randn_like(trace)
+            return (obfuscated_trace, alpha)
+        self.cmi_estimator.classifiers.calibrate_temperature(
+            self.trainer.datamodule.val_dataloader(), get_classifier_input
+        )
     
     def on_train_epoch_end(self):
         log_gamma = self.selection_mechanism.get_log_gamma().detach().cpu().numpy().squeeze()
         log_gamma_save_dir = os.path.join(self.logger.log_dir, 'log_gamma_over_time')
         os.makedirs(log_gamma_save_dir, exist_ok=True)
         np.save(os.path.join(log_gamma_save_dir, f'log_gamma__step={self.global_step}.npy'), log_gamma)
+        if self.hparams.train_etat and self.hparams.calibrate_classifiers:
+            self.calibrate_classifiers()

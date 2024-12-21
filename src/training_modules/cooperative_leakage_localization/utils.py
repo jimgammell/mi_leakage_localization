@@ -4,6 +4,7 @@ import torch
 from torch import nn
 
 import models
+from models.calibrated_model import CalibratedModel
 
 @torch.no_grad()
 def get_rms_grad(model):
@@ -16,12 +17,19 @@ def get_rms_grad(model):
     return rms_grad
 
 class CondMutInfEstimator(nn.Module):
-    def __init__(self, classifiers_name: str, input_shape: Sequence[int], mutinf_estimate_with_labels: bool = False, classifiers_kwargs: dict = {}):
+    def __init__(self,
+        classifiers_name: str,
+        input_shape: Sequence[int],
+        mutinf_estimate_with_labels: bool = False,
+        classifiers_kwargs: dict = {},
+        calibrate_classifiers: bool = False
+    ):
         super().__init__()
         self.classifiers_name = classifiers_name
         self.input_shape = input_shape
         self.mutinf_estimate_with_labels = mutinf_estimate_with_labels
         self.classifiers_kwargs = classifiers_kwargs
+        self.calibrate_classifiers = calibrate_classifiers
         
         self.classifiers = models.load(
             self.classifiers_name,
@@ -29,10 +37,16 @@ class CondMutInfEstimator(nn.Module):
             noise_conditional=True,
             **self.classifiers_kwargs
         )
+        if self.calibrate_classifiers:
+            self.classifiers = CalibratedModel(self.classifiers)
     
-    def get_logits(self, input: torch.Tensor, condition_mask: torch.Tensor):
+    def get_logits(self, input: torch.Tensor, condition_mask: torch.Tensor, calibrated: bool = False):
         masked_input = condition_mask*input + (1-condition_mask)*torch.randn_like(input)
-        logits = self.classifiers(masked_input, condition_mask)
+        if calibrated:
+            assert self.calibrate_classifiers
+            logits = self.classifiers.calibrated_forward(masked_input, condition_mask)
+        else:
+            logits = self.classifiers(masked_input, condition_mask)
         logits = logits.reshape(-1, logits.size(-1))
         return logits
     
@@ -47,7 +61,7 @@ class CondMutInfEstimator(nn.Module):
         return mutinf
     
     def get_mutinf_estimate(self, input: torch.Tensor, condition_mask: torch.Tensor, labels: Optional[torch.Tensor] = None):
-        logits = self.get_logits(input, condition_mask)
+        logits = self.get_logits(input, condition_mask, calibrated=self.calibrate_classifiers)
         mutinf = self.get_mutinf_estimate_from_logits(logits, labels)
         return mutinf
     
