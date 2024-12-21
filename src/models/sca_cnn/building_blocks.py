@@ -9,9 +9,12 @@ class NoiseConditionalBatchNorm1d(nn.BatchNorm1d):
         kwargs['affine'] = False
         super().__init__(**kwargs)
         self.to_weight_and_bias = nn.Linear(np.prod(noise_shape), 2*self.num_features)
+        self.to_weight_and_bias.weight.data.zero_()
+        self.to_weight_and_bias.bias.data.zero_()
+        self.to_weight_and_bias.bias.data[:self.num_features] = 1.
 
     def forward(self, x, noise):
-        x_norm = nn.BatchNorm1d.forward(self, x)
+        x_norm = super().forward(x)
         weight_and_bias = self.to_weight_and_bias(noise.view(noise.size(0), -1))
         weight = weight_and_bias[:, :self.num_features].view(-1, self.num_features, 1)
         bias = weight_and_bias[:, self.num_features:].view(-1, self.num_features, 1)

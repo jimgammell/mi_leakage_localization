@@ -1,10 +1,12 @@
 import os
+from copy import copy
 import yaml
 import argparse
 
 from common import *
 from utils.flatten_dict import flatten_dict, unflatten_dict
 from training_modules.adversarial_leakage_localization import AdversarialLeakageLocalizationTrainer
+from training_modules.cooperative_leakage_localization import LeakageLocalizationTrainer
 from trials.trial import Trial
 
 AVAILABLE_DATASETS = [x.split('.')[0] for x in os.listdir(CONFIG_DIR) if x.endswith('.yaml') and not(x in ['default_config.yaml', 'global_variables.yaml'])]
@@ -62,11 +64,8 @@ def main():
         trial.sigma_sweep()
         trial.leaky_point_count_sweep()
     else:
-        supervised_classifier_kwargs = DEFAULT_CONFIG['supervised_classifier_kwargs']
-        all_kwargs = DEFAULT_CONFIG['all_kwargs']
         with open(os.path.join(CONFIG_DIR, f'{dataset}.yaml'), 'r') as f:
             trial_config = yaml.load(f, Loader=yaml.FullLoader)
-        all_kwargs.update(trial_config['all_kwargs'])
         if dataset == 'aes_hd':
             from datasets.aes_hd import AES_HD as DatasetClass
         elif dataset == 'aes_ptv2_multi':
@@ -87,16 +86,28 @@ def main():
             assert False, f'Dataset `{dataset}` is not implemented. Available choices: `{"`, `".join(AVAILABLE_DATASETS)}`.'
         profiling_dataset = DatasetClass(root=trial_config['data_dir'], train=True)
         attack_dataset = DatasetClass(root=trial_config['data_dir'], train=False)
-        from training_modules.adversarial_leakage_localization import AdversarialLeakageLocalizationTrainer
-        kwargs = trial_config['all_kwargs']
-        kwargs.update({'timesteps_per_trace': profiling_dataset.timesteps_per_trace})
-        for entropy_weight in [1e-2, 1e-1, 1e0, 1e1, 1e2]:
-            for occluded_point_count in [1, 2, 4, 8]:
-                experiment_dir = os.path.join(trial_dir, f'lambda={entropy_weight}__occluded_point_count={occluded_point_count}')
-                os.makedirs(experiment_dir, exist_ok=True)
-                kwargs.update({'entropy_weight': entropy_weight, 'occluded_point_count': occluded_point_count})
-                trainer = AdversarialLeakageLocalizationTrainer(profiling_dataset, attack_dataset, max_epochs=trial_config['max_epochs'], default_training_module_kwargs=kwargs)
-                trainer.train_gamma(experiment_dir)
+        default_kwargs = trial_config['default_kwargs']
+        leakage_localization_kwargs = copy(default_kwargs)
+        leakage_localization_kwargs.update(trial_config['leakage_localization_kwargs'])
+        trainer = LeakageLocalizationTrainer(profiling_dataset, attack_dataset, default_training_module_kwargs=default_kwargs)
+        if trial_config['pretrain_classifiers']:
+            classifiers_pretrain_kwargs = copy(default_kwargs)
+            classifiers_pretrain_kwargs.update(trial_config['classifiers_pretrain_kwargs'])
+            classifiers_pretrain_dir = os.path.join(trial_dir, 'classifiers_pretrain')
+            os.makedirs(classifiers_pretrain_dir, exist_ok=True)
+            trainer.pretrain_classifiers(
+                logging_dir=classifiers_pretrain_dir,
+                max_steps=trial_config['max_classifiers_pretrain_steps'],
+                override_kwargs=classifiers_pretrain_kwargs
+            )
+        leakage_localization_dir = os.path.join(trial_dir, 'leakage_localization')
+        os.makedirs(leakage_localization_dir, exist_ok=True)
+        trainer.run(
+            logging_dir=leakage_localization_dir,
+            pretrained_classifiers_logging_dir=classifiers_pretrain_dir if trial_config['pretrain_classifiers'] else None,
+            max_steps=trial_config['max_leakage_localization_steps'],
+            override_kwargs=leakage_localization_kwargs
+        )
     
     #if 'classifiers_kwargs' in all_kwargs['default_training_module_kwargs']:
     #    all_kwargs['default_training_module_kwargs']['classifiers_kwargs']['input_shape'] = (1, profiling_datasets[0].timesteps_per_trace)

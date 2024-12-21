@@ -1,7 +1,12 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/dpav4
-max_epochs: 10000
-all_kwargs:
+pretrain_classifiers: true
+max_classifiers_pretrain_steps: 1000
+max_leakage_localization_steps: 10000
+default_kwargs:
   classifiers_name: sca-cnn
-  theta_lr: 2.0e-4
-  theta_weight_decay: 1.0e-2
-  gammap_lr: 1.0e-3
+  budget: 1000.
+classifiers_pretrain_kwargs:
+  theta_lr: 1.e-4
+leakage_localization_kwargs:
+  theta_lr: 1.e-5
+  etat_lr: 1.e-3

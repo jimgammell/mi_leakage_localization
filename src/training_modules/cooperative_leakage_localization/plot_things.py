@@ -43,13 +43,15 @@ def plot_training_curves(logging_dir, anim_gammas=True):
     training_curves = get_training_curves(logging_dir)
     fig, axes = plt.subplots(2, 3, figsize=(3*PLOT_WIDTH, 2*PLOT_WIDTH))
     axes = axes.flatten()
-    axes[0].plot(*training_curves['train_etat_loss'], color='blue', linestyle='--', label='train', **PLOT_KWARGS)
-    axes[0].plot(*training_curves['val_etat_loss'], color='blue', linestyle='-', label='val', **PLOT_KWARGS)
+    if all(x in training_curves for x in ['train_etat_loss', 'val_etat_loss']):
+        axes[0].plot(*training_curves['train_etat_loss'], color='blue', linestyle='--', label='train', **PLOT_KWARGS)
+        axes[0].plot(*training_curves['val_etat_loss'], color='blue', linestyle='-', label='val', **PLOT_KWARGS)
     axes[1].plot(*training_curves['train_theta_loss'], color='red', linestyle='--', label='train', **PLOT_KWARGS)
     axes[1].plot(*training_curves['val_theta_loss'], color='red', linestyle='-', label='val', **PLOT_KWARGS)
     axes[2].plot(*training_curves['train_theta_rank'], color='red', linestyle='--', label='train', **PLOT_KWARGS)
     axes[2].plot(*training_curves['val_theta_rank'], color='red', linestyle='-', label='val', **PLOT_KWARGS)
-    axes[3].plot(*training_curves['train_etat_rms_grad'], color='blue', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
+    if 'train_etat_rms_grad' in training_curves:
+        axes[3].plot(*training_curves['train_etat_rms_grad'], color='blue', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
     axes[4].plot(*training_curves['train_theta_rms_grad'], color='red', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
     lines = [np.column_stack([training_curves['log_gamma'][0], np.exp(y)]) for y in training_curves['log_gamma'][1].T]
     if not anim_gammas: # this is a simple Gaussian dataset trial where the first line is the nonleaky point
@@ -58,7 +60,8 @@ def plot_training_curves(logging_dir, anim_gammas=True):
     linekwargs = {'linewidth': 0.1, 'alpha': 0.5} if anim_gammas else {'linewidth': 1, 'alpha': 1.0}
     lc = LineCollection(lines, color='blue', linestyle='-', **linekwargs, **PLOT_KWARGS)
     axes[5].add_collection(lc)
-    axes[5].plot(nonleaky_line[:, 0], nonleaky_line[:, 1], color='red')
+    if not anim_gammas:
+        axes[5].plot(nonleaky_line[:, 0], nonleaky_line[:, 1], color='red')
     axes[5].autoscale()
     for ax in axes:
         ax.set_xlabel('Training step')

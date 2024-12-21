@@ -19,12 +19,15 @@ class SCA_CNN(Module):
         noise_conditional: bool = False
     ):
         if noise_conditional:
-            block_kwargs['noise_shape'] = input_shape
+            self.embedded_noise_dim = base_channels*2**block_count
+            block_kwargs['noise_shape'] = (self.embedded_noise_dim,)
         super().__init__(**{key: val for key, val in locals().items() if key not in ('self', 'key', 'val')})
-        if self.noise_conditional is not None:
-            self.block_kwargs['noise_shape'] = self.input_shape
 
     def construct(self):
+        self.noise_embedding = nn.Sequential(
+                nn.Linear(np.prod(self.input_shape), self.embedded_noise_dim),
+                nn.ELU()
+        )
         trunk_modules = []
         in_channels = self.input_shape[0]
         if self.noise_conditional:
@@ -38,7 +41,7 @@ class SCA_CNN(Module):
         x = torch.randn(1, (2 if self.noise_conditional else 1)*self.input_shape[0], *self.input_shape[1:])
         x_i = x
         for mod in self.trunk.values():
-            x = mod(*([x, torch.zeros_like(x_i[:, :1, ...])] if self.noise_conditional else [x]))
+            x = mod(*([x, torch.zeros(1, self.embedded_noise_dim)] if self.noise_conditional else [x]))
         self.heads = nn.ModuleList([
             Head(np.prod(x.shape), self.output_classes, **self.head_kwargs) for _ in range(self.head_count)
         ])
@@ -46,12 +49,14 @@ class SCA_CNN(Module):
     def forward(self, *args):
         if self.noise_conditional:
             (x, noise) = args
+            noise = (noise - noise.mean())/(noise.std() + 1e-4)
+            embedded_noise = self.noise_embedding(noise.flatten(start_dim=1))
             x = torch.cat([x, noise], dim=1)
         else:
             (x,) = args
         batch_size, *input_shape = x.shape
         for mod in self.trunk.values():
-            x = mod(*([x, noise] if self.noise_conditional else [x]))
+            x = mod(*([x, embedded_noise] if self.noise_conditional else [x]))
         x = x.view(batch_size, -1)
         logits = torch.stack([head(x) for head in self.heads], dim=1)
         return logits

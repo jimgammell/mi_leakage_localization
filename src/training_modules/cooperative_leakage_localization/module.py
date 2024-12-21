@@ -25,7 +25,8 @@ class Module(L.LightningModule):
         timesteps_per_trace: Optional[int] = None,
         gradient_estimator: Literal['REINFORCE', 'REBAR'] = 'REBAR',
         noise_scale: Optional[float] = None,
-        eps: float = 1e-6
+        eps: float = 1e-6,
+        classifiers_pretrain_phase: bool = False
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -199,10 +200,12 @@ class Module(L.LightningModule):
             _, tau = self.get_eta_and_tau()
             log_gamma = self.selection_mechanism.get_log_gamma().unsqueeze(0)
             log_1mgamma = self.selection_mechanism.get_log_1mgamma().unsqueeze(0)
-            u = self.rand_like(trace[:batch_size//2, ...])
-            z = log_1mgamma - log_gamma + u.log() - (1-u).log()
-            b = torch.where(z >= 0, torch.ones_like(z), torch.zeros_like(z))
-            rb = nn.functional.sigmoid(z/tau)
+            u = self.rand_like(trace)
+            z = log_gamma - log_1mgamma + u.log() - (1-u).log()
+            z_b = z[:batch_size//2]
+            z_rb = z[batch_size//2:]
+            b = torch.where(z_b >= 0, torch.ones_like(z_b), torch.zeros_like(z_b))
+            rb = nn.functional.sigmoid(z_rb/tau)
             alpha = torch.cat([b, rb], dim=0)
         else:
             alpha = self.selection_mechanism.sample(batch_size)
@@ -219,19 +222,21 @@ class Module(L.LightningModule):
     
     def training_step(self, batch):
         theta_rv = self.step_theta(batch, train=True)
-        etat_rv = self.step_etat(batch, train=True)
+        if not self.hparams.classifiers_pretrain_phase:
+            etat_rv = self.step_etat(batch, train=True)
+            for key, val in etat_rv.items():
+                self.log(f'train_etat_{key}', val, on_step=False, on_epoch=True)
         for key, val in theta_rv.items():
             self.log(f'train_theta_{key}', val, on_step=False, on_epoch=True)
-        for key, val in etat_rv.items():
-            self.log(f'train_etat_{key}', val, on_step=False, on_epoch=True)
     
     def validation_step(self, batch):
         theta_rv = self.step_theta(batch, train=False)
-        etat_rv = self.step_etat(batch, train=False)
+        if not self.hparams.classifiers_pretrain_phase:
+            etat_rv = self.step_etat(batch, train=False)
+            for key, val in etat_rv.items():
+                self.log(f'val_etat_{key}', val, on_step=False, on_epoch=True)
         for key, val in theta_rv.items():
             self.log(f'val_theta_{key}', val, on_step=False, on_epoch=True)
-        for key, val in etat_rv.items():
-            self.log(f'val_etat_{key}', val, on_step=False, on_epoch=True)
     
     def on_train_epoch_end(self):
         log_gamma = self.selection_mechanism.get_log_gamma().detach().cpu().numpy().squeeze()
