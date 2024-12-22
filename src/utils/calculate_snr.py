@@ -10,6 +10,7 @@ def calculate_snr(dataset: Dataset, base_dataset: Dataset, targets: Union[str, S
         targets = [targets]
     if (bytes is None) or isinstance(bytes, int):
         bytes = [bytes]
+    base_dataset.return_metadata = True
     per_target_means = {(key, byte): np.zeros((256, base_dataset.timesteps_per_trace), dtype=np.float32) for key in targets for byte in bytes}
     per_target_counts = {(key, byte): np.zeros((256,), dtype=int) for key in targets for byte in bytes}
     for trace, _, metadata in chunk_iterator(dataset, chunk_size=chunk_size):
@@ -34,4 +35,5 @@ def calculate_snr(dataset: Dataset, base_dataset: Dataset, targets: Union[str, S
                 noise_variance[(target, byte)] = (count/(count+1))*current_var + (1/(count+1))*(trace - mean)**2
     signal_variance = {key: np.var(val, axis=0) for key, val in per_target_means.items()}
     snr_vals = {key: signal_variance[key]/noise_variance[key] for key in signal_variance.keys()}
+    base_dataset.return_metadata = False
     return snr_vals

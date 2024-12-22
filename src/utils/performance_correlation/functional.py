@@ -42,7 +42,6 @@ def soft_kendall_tau(x, y, x_var=None, y_var=None):
     count = x.shape[-1]
     x = x.astype(np.float32)
     y = y.astype(np.float32)
-    assert count == y.shape[-1]
     if x.ndim == 1:
         x = x[np.newaxis, :]
     else:

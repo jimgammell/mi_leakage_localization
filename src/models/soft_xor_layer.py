@@ -4,7 +4,7 @@ import torch
 from torch import nn
 
 class SoftXOR(nn.Module):
-    def __init__(self, in_dims, out_bits, xor_copies=1, skip=True):
+    def __init__(self, in_dims, out_bits, xor_copies=1, skip=False):
         super().__init__()
         self.in_dims = in_dims
         self.out_bits = out_bits
@@ -37,7 +37,6 @@ class SoftXOR(nn.Module):
         out = self.to_out(z).squeeze(1)
         return out
 
-@torch.compile
 def soft_xor(x, y):
     N = x.shape[-1]
     n = int(np.log2(N))

@@ -2,12 +2,15 @@ import os
 from copy import copy
 import yaml
 import argparse
+import time
 
 from common import *
 from utils.flatten_dict import flatten_dict, unflatten_dict
 from training_modules.adversarial_leakage_localization import AdversarialLeakageLocalizationTrainer
 from training_modules.cooperative_leakage_localization import LeakageLocalizationTrainer
 from trials.trial import Trial
+from utils.calculate_snr import calculate_snr
+from utils.cuda_template_attack import TemplateAttack
 
 AVAILABLE_DATASETS = [x.split('.')[0] for x in os.listdir(CONFIG_DIR) if x.endswith('.yaml') and not(x in ['default_config.yaml', 'global_variables.yaml'])]
 with open(os.path.join(CONFIG_DIR, 'default_config.yaml'), 'r') as f:
@@ -86,10 +89,16 @@ def main():
             assert False, f'Dataset `{dataset}` is not implemented. Available choices: `{"`, `".join(AVAILABLE_DATASETS)}`.'
         profiling_dataset = DatasetClass(root=trial_config['data_dir'], train=True)
         attack_dataset = DatasetClass(root=trial_config['data_dir'], train=False)
+        snr = calculate_snr(profiling_dataset, profiling_dataset, 'label')[('label', None)].reshape(-1)
         default_kwargs = trial_config['default_kwargs']
         leakage_localization_kwargs = copy(default_kwargs)
         leakage_localization_kwargs.update(trial_config['leakage_localization_kwargs'])
-        trainer = LeakageLocalizationTrainer(profiling_dataset, attack_dataset, default_training_module_kwargs=default_kwargs)
+        trainer = LeakageLocalizationTrainer(
+            profiling_dataset,
+            attack_dataset,
+            default_training_module_kwargs=default_kwargs,
+            reference_leakage_assessment=np.log(snr)
+        )
         if trial_config['pretrain_classifiers']:
             classifiers_pretrain_kwargs = copy(default_kwargs)
             classifiers_pretrain_kwargs.update(trial_config['classifiers_pretrain_kwargs'])

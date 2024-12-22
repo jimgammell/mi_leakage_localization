@@ -2,11 +2,13 @@ import numpy as np
 import torch
 from torch import nn, optim
 import lightning as L
+from scipy.stats import kendalltau, pearsonr
 
 from common import *
 from .utils import *
 import utils.lr_schedulers
 from utils.metrics import get_rank
+from utils.cuda_template_attack import TemplateAttack
 
 class Module(L.LightningModule):
     def __init__(self,
@@ -27,7 +29,9 @@ class Module(L.LightningModule):
         eps: float = 1e-6,
         train_theta: bool = True,
         train_etat: bool = True,
-        calibrate_classifiers: bool = False
+        calibrate_classifiers: bool = False,
+        compute_gmm_ktcc: bool = False,
+        reference_leakage_assessment: Optional[np.ndarray] = None
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -83,13 +87,13 @@ class Module(L.LightningModule):
             ), (self.hparams.theta_lr_scheduler_name, self.hparams.etat_lr_scheduler_name)
         )
         if self.trainer.max_epochs != -1:
-            total_steps = self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader())
+            self.total_steps = self.trainer.max_epochs*len(self.trainer.datamodule.train_dataloader())
         elif self.trainer.max_steps != -1:
-            total_steps = self.trainer.max_steps
+            self.total_steps = self.trainer.max_steps
         else:
             assert False
-        self.theta_lr_scheduler = theta_lr_scheduler_constructor(self.theta_optimizer, total_steps=total_steps, **self.hparams.theta_lr_scheduler_kwargs)
-        self.etat_lr_scheduler = etat_lr_scheduler_constructor(self.etat_optimizer, total_steps=total_steps, **self.hparams.etat_lr_scheduler_kwargs)
+        self.theta_lr_scheduler = theta_lr_scheduler_constructor(self.theta_optimizer, total_steps=self.total_steps, **self.hparams.theta_lr_scheduler_kwargs)
+        self.etat_lr_scheduler = etat_lr_scheduler_constructor(self.etat_optimizer, total_steps=self.total_steps, **self.hparams.etat_lr_scheduler_kwargs)
         rv = [
             {'optimizer': self.theta_optimizer, 'lr_scheduler': {'scheduler': self.theta_lr_scheduler, 'interval': 'step'}},
             {'optimizer': self.etat_optimizer, 'lr_scheduler': {'scheduler': self.etat_lr_scheduler, 'interval': 'step'}}
@@ -270,3 +274,21 @@ class Module(L.LightningModule):
         np.save(os.path.join(log_gamma_save_dir, f'log_gamma__step={self.global_step}.npy'), log_gamma)
         if self.hparams.train_etat and self.hparams.calibrate_classifiers:
             self.calibrate_classifiers()
+        if self.hparams.reference_leakage_assessment is not None:
+            gamma = self.selection_mechanism.get_gamma().detach().cpu().numpy().reshape(-1)
+            ktcc = kendalltau(gamma, self.hparams.reference_leakage_assessment.reshape(-1)).statistic
+            correlation = pearsonr(gamma, self.hparams.reference_leakage_assessment.reshape(-1)).statistic
+            #print(f'Kendal Tau: {ktcc}, Correlation: {correlation}')
+            self.log('ref_ktcc', ktcc)
+            self.log('ref_corr', correlation)
+        if self.hparams.compute_gmm_ktcc and self.current_epoch % (self.total_steps//(100*len(self.trainer.datamodule.train_dataloader()))) == 0:
+            gamma = self.selection_mechanism.get_gamma().detach().cpu().numpy().reshape(-1)
+            profiling_dataset = self.trainer.datamodule.profiling_dataset
+            attack_dataset = self.trainer.datamodule.attack_dataset
+            poi_count = len(profiling_dataset)//(5*256)
+            partitions = gamma.argsort()[-poi_count*(len(gamma)//poi_count):].reshape(-1, poi_count)
+            template_attacker = TemplateAttack(partitions=partitions)
+            template_attacker.profile(profiling_dataset)
+            mean_gmm_ktcc = template_attacker.get_mean_gmm_ktcc(attack_dataset)
+            self.log('mean_gmm_ktcc', mean_gmm_ktcc)
+            print('Current metric:', mean_gmm_ktcc)

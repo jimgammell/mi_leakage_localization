@@ -34,32 +34,62 @@ def extract_dataset(
 
 @torch.compile()
 @torch.no_grad()
-def fit_means_and_covs(traces, labels):
-    class_count = len(labels.unique())
+def get_class_count(labels):
+    return len(labels.unique())
+
+@torch.compile()
+@torch.no_grad()
+def fit_means_and_covs(traces, labels, class_count):
     partition_count, datapoint_count, points_per_partition = traces.shape
-    means = torch.empty((class_count, partition_count, points_per_partition), dtype=traces.dtype, device=traces.device)
+    means = torch.empty((partition_count, class_count, points_per_partition), dtype=traces.dtype, device=traces.device)
     for label in range(class_count):
-        means[label, ...] = traces[:, labels==label, :].mean(dim=1)
-    covs = torch.empty((class_count, partition_count, points_per_partition, points_per_partition), dtype=traces.dtype, device=traces.device)
+        means[:, label, :] = traces[:, labels==label, :].mean(dim=1)
+    covs = torch.full((partition_count, class_count, points_per_partition, points_per_partition), torch.nan, dtype=traces.dtype, device=traces.device)
     for label in range(class_count):
-        mean = means[label, ...].unsqueeze(1)
+        mean = means[:, label, :].unsqueeze(1)
         trace = traces[:, labels==label, :]
         trace_count = trace.size(1)
-        diff = trace - mean
-        cov = diff.permute(0, 2, 1) @ diff / (trace_count - 1)
+        diff = (trace - mean)
+        cov = diff.mT @ diff / (trace_count - 1)
+        covs[:, label, ...] = cov
+    pooled_cov = covs.mean(dim=1)
+    for label in range(class_count):
+        cov = covs[:, label, ...]
+        cov = 0.5*cov + 0.5*pooled_cov
         cov = 0.5*(cov + cov.mT)
         D, U = torch.linalg.eigh(cov)
-        D[D < 0] = 0
-        cov = U @ torch.diag(D) @ U.mT
-        covs[label] = cov
+        assert torch.all(D > 0)
+        cov = U @ torch.diag_embed(D) @ U.mT
+        covs[:, label, ...] = cov
+    assert torch.all(torch.isfinite(covs))
     return means, covs
 
 @torch.compile()
 @torch.no_grad()
-def choldecomp_covs(covs):
-    class_count, partition_count, points_per_partition, points_per_partition = covs.shape
-    covs = covs.reshape(-1, points_per_partition, points_per_partition)
+def get_choldecomp_covs(covs):
     L, error = torch.linalg.cholesky_ex(covs)
     assert torch.all(error == 0)
-    L = L.reshape(class_count, partition_count, points_per_partition, points_per_partition)
     return L
+
+@torch.compile()
+@torch.no_grad()
+def compute_log_gaussian_density(x, mu, L):
+    y = torch.linalg.solve(L, (x-mu).unsqueeze(-1)).squeeze(-1)
+    logdets = 2*(torch.diagonal(L, dim1=-2, dim2=-1) + 1e-4).log().sum(dim=-1)
+    return -0.5*(y*y).sum(dim=-1) - 0.5*logdets
+
+@torch.compile()
+@torch.no_grad()
+def get_log_p_y(labels):
+    _, counts = torch.unique(labels, sorted=True, return_counts=True)
+    return counts.log() - counts.sum().log()
+
+@torch.no_grad()
+def get_log_p_x_given_y(traces, means, Ls):
+    _, datapoint_count, _ = traces.shape
+    _, class_count, _ = means.shape
+    traces = traces.unsqueeze(1).repeat(1, class_count, 1, 1)
+    means = means.unsqueeze(2).repeat(1, 1, datapoint_count, 1)
+    Ls = Ls.unsqueeze(2).repeat(1, 1, datapoint_count, 1, 1)
+    log_gaussian_densities = compute_log_gaussian_density(traces, means, Ls)
+    return log_gaussian_densities

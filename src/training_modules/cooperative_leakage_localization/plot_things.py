@@ -52,7 +52,7 @@ def plot_vs_reference(logging_dir, inclusion_probs, reference):
 
 def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     training_curves = get_training_curves(logging_dir)
-    fig, axes = plt.subplots(2, 3, figsize=(3*PLOT_WIDTH, 2*PLOT_WIDTH))
+    fig, axes = plt.subplots(3, 3, figsize=(3*PLOT_WIDTH, 2*PLOT_WIDTH))
     axes = axes.flatten()
     if all(x in training_curves for x in ['train_etat_loss', 'val_etat_loss']):
         axes[0].plot(*training_curves['train_etat_loss'], color='blue', linestyle='--', label='train', **PLOT_KWARGS)
@@ -77,6 +77,10 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     if not anim_gammas:
         axes[5].plot(nonleaky_line[:, 0], nonleaky_line[:, 1], color='red')
     axes[5].autoscale()
+    if 'ref_ktcc' in training_curves:
+        axes[6].plot(*training_curves['ref_ktcc'], color='blue')
+    if 'ref_corr' in training_curves:
+        axes[7].plot(*training_curves['ref_corr'], color='blue')
     for ax in axes:
         ax.set_xlabel('Training step')
     axes[0].set_ylabel(r'Loss ($\tilde{\eta}$)')
@@ -85,6 +89,8 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     axes[3].set_ylabel(r'RMS gradient ($\tilde{\eta}$)')
     axes[4].set_ylabel(r'RMS gradient ($\theta$)')
     axes[5].set_ylabel(r'Inclusion probability $\gamma_t$')
+    axes[6].set_ylabel('KTCC with reference leakage assessment')
+    axes[7].set_ylabel('Correlation with reference leakage assessment')
     axes[0].legend()
     axes[1].legend()
     axes[2].legend()
