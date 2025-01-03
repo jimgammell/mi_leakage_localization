@@ -9,7 +9,6 @@ from trials.utils import *
 from datasets.data_module import DataModule
 from .module import Module
 from .plot_things import *
-from utils.calculate_snr import calculate_snr
 
 class Trainer:
     def __init__(self,
@@ -111,7 +110,6 @@ class Trainer:
         override_kwargs: dict = {}
     ):
         self.profiling_dataset.return_metadata = True
-        snr = calculate_snr(self.profiling_dataset, self.profiling_dataset, 'label')[('label', None)].squeeze()
         self.profiling_dataset.return_metadata = False
         for gradient_estimator in ['REINFORCE', 'REBAR']:
             for budget in [1.0, 10.0, 100.0, 1000.0, 10000.0]:
@@ -125,6 +123,5 @@ class Trainer:
                         pretrained_classifiers_logging_dir=pretrained_classifiers_logging_dir,
                         max_steps=max_steps,
                         anim_gammas=anim_gammas,
-                        override_kwargs=override_kwargs,
-                        reference=snr
+                        override_kwargs=override_kwargs
                     )
