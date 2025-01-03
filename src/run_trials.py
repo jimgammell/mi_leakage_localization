@@ -9,7 +9,7 @@ from utils.flatten_dict import flatten_dict, unflatten_dict
 from training_modules.adversarial_leakage_localization import AdversarialLeakageLocalizationTrainer
 from training_modules.cooperative_leakage_localization import LeakageLocalizationTrainer
 from trials.trial import Trial
-from utils.baseline_assessments import FirstOrderStatistics
+from utils.baseline_assessments import FirstOrderStatistics, NeuralNetAttribution
 
 AVAILABLE_DATASETS = [x.split('.')[0] for x in os.listdir(CONFIG_DIR) if x.endswith('.yaml') and not(x in ['default_config.yaml', 'global_variables.yaml'])]
 with open(os.path.join(CONFIG_DIR, 'default_config.yaml'), 'r') as f:
@@ -88,10 +88,15 @@ def main():
             assert False, f'Dataset `{dataset}` is not implemented. Available choices: `{"`, `".join(AVAILABLE_DATASETS)}`.'
         profiling_dataset = DatasetClass(root=trial_config['data_dir'], train=True)
         attack_dataset = DatasetClass(root=trial_config['data_dir'], train=False)
-        first_order_statistics = FirstOrderStatistics(profiling_dataset)
-        snr = first_order_statistics.snr_vals['label'].reshape(-1)
-        sosd = first_order_statistics.sosd_vals['label'].reshape(-1)
-        cpa = first_order_statistics.cpa_vals['label'].reshape(-1)
+        if trial_config['compute_first_order_stats']:
+            first_order_statistics = FirstOrderStatistics(profiling_dataset)
+            snr = first_order_statistics.snr_vals['label'].reshape(-1)
+            sosd = first_order_statistics.sosd_vals['label'].reshape(-1)
+            cpa = first_order_statistics.cpa_vals['label'].reshape(-1)
+        if trial_config['train_supervised_model']:
+            raise NotImplementedError
+        if trial_config['compute_nn_attributions']:
+            raise NotImplementedError
         default_kwargs = trial_config['default_kwargs']
         leakage_localization_kwargs = copy(default_kwargs)
         leakage_localization_kwargs.update(trial_config['leakage_localization_kwargs'])
