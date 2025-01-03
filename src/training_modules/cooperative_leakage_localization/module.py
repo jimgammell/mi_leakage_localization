@@ -56,6 +56,15 @@ class Module(L.LightningModule):
         if self.hparams.gradient_estimator == 'REBAR':
             self.etat = nn.Parameter(torch.tensor(0.0, dtype=torch.float32), requires_grad=True)
             self.taut = nn.Parameter(torch.tensor(0.0, dtype=torch.float32), requires_grad=True)
+        if not isinstance(self.hparams.reference_leakage_assessment, dict):
+            if isinstance(self.hparams.reference_leakage_assessment, np.ndarray):
+                self.hparams.reference_leakage_assessment = {'ref_0': self.hparams.reference_leakage_assessment}
+            elif isinstance(self.hparams.reference_leakage_assessment, list):
+                self.hparams.reference_leakage_assessment = {f'ref_{idx}': x for idx, x in enumerate(self.hparams.reference_leakage_assessment)}
+            elif isinstance(self.hparams.reference_leakage_assessment, type(None)):
+                pass
+            else:
+                assert False
         
     def rand_like(self, x):
         return self.hparams.eps + (1 - 2*self.hparams.eps)*torch.rand_like(x)
@@ -276,11 +285,11 @@ class Module(L.LightningModule):
             self.calibrate_classifiers()
         if self.hparams.reference_leakage_assessment is not None:
             gamma = self.selection_mechanism.get_gamma().detach().cpu().numpy().reshape(-1)
-            ktcc = kendalltau(gamma, self.hparams.reference_leakage_assessment.reshape(-1)).statistic
-            correlation = pearsonr(gamma, self.hparams.reference_leakage_assessment.reshape(-1)).statistic
-            #print(f'Kendal Tau: {ktcc}, Correlation: {correlation}')
-            self.log('ref_ktcc', ktcc)
-            self.log('ref_corr', correlation)
+            for key, leakage_assessment in self.hparams.reference_leakage_assessment.items():
+                ktcc = kendalltau(gamma, leakage_assessment.reshape(-1)).statistic
+                correlation = pearsonr(gamma, leakage_assessment.reshape(-1)).statistic
+                self.log(f'{key}_ktcc', ktcc)
+                self.log(f'{key}_corr', correlation)
         if self.hparams.compute_gmm_ktcc and self.current_epoch % (self.total_steps//(100*len(self.trainer.datamodule.train_dataloader()))) == 0:
             gamma = self.selection_mechanism.get_gamma().detach().cpu().numpy().reshape(-1)
             profiling_dataset = self.trainer.datamodule.profiling_dataset

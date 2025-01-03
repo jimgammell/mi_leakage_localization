@@ -47,6 +47,7 @@ class SyntheticAES(Dataset):
             self.target_values = [self.target_values]
         if self.should_generate_data:
             self.generate_data()
+        self.class_count = 2**self.bit_count
     
     def generate_data(self):
         leaking_cycles = NUMPY_RNG.choice(

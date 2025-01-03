@@ -37,6 +37,7 @@ class OneTruthPrevails(Dataset):
         assert self.dataset_length == len(self.labels)
         self.data_shape = self.traces[0, np.newaxis, :].shape
         self.timesteps_per_trace = np.prod(self.data_shape)
+        self.class_count = 16
     
     def __getitem__(self, indices):
         trace = self.traces[indices, np.newaxis, :].astype(np.float32)

@@ -9,8 +9,7 @@ from utils.flatten_dict import flatten_dict, unflatten_dict
 from training_modules.adversarial_leakage_localization import AdversarialLeakageLocalizationTrainer
 from training_modules.cooperative_leakage_localization import LeakageLocalizationTrainer
 from trials.trial import Trial
-from utils.calculate_snr import calculate_snr
-from utils.cuda_template_attack import TemplateAttack
+from utils.baseline_assessments import FirstOrderStatistics
 
 AVAILABLE_DATASETS = [x.split('.')[0] for x in os.listdir(CONFIG_DIR) if x.endswith('.yaml') and not(x in ['default_config.yaml', 'global_variables.yaml'])]
 with open(os.path.join(CONFIG_DIR, 'default_config.yaml'), 'r') as f:
@@ -89,7 +88,10 @@ def main():
             assert False, f'Dataset `{dataset}` is not implemented. Available choices: `{"`, `".join(AVAILABLE_DATASETS)}`.'
         profiling_dataset = DatasetClass(root=trial_config['data_dir'], train=True)
         attack_dataset = DatasetClass(root=trial_config['data_dir'], train=False)
-        snr = calculate_snr(profiling_dataset, profiling_dataset, 'label')[('label', None)].reshape(-1)
+        first_order_statistics = FirstOrderStatistics(profiling_dataset)
+        snr = first_order_statistics.snr_vals['label'].reshape(-1)
+        sosd = first_order_statistics.sosd_vals['label'].reshape(-1)
+        cpa = first_order_statistics.cpa_vals['label'].reshape(-1)
         default_kwargs = trial_config['default_kwargs']
         leakage_localization_kwargs = copy(default_kwargs)
         leakage_localization_kwargs.update(trial_config['leakage_localization_kwargs'])
@@ -97,7 +99,7 @@ def main():
             profiling_dataset,
             attack_dataset,
             default_training_module_kwargs=default_kwargs,
-            reference_leakage_assessment=np.log(snr)
+            reference_leakage_assessment={'snr': np.log(snr), 'sosd': np.log(sosd), 'cpa': np.abs(cpa)}
         )
         if trial_config['pretrain_classifiers']:
             classifiers_pretrain_kwargs = copy(default_kwargs)
@@ -109,14 +111,15 @@ def main():
                 max_steps=trial_config['max_classifiers_pretrain_steps'],
                 override_kwargs=classifiers_pretrain_kwargs
             )
-        hparam_tuning_dir = os.path.join(trial_dir, 'hparam_tune')
-        os.makedirs(hparam_tuning_dir, exist_ok=True)
-        trainer.hparam_tune(
-            logging_dir=hparam_tuning_dir,
-            pretrained_classifiers_logging_dir=classifiers_pretrain_dir if trial_config['pretrain_classifiers'] else None,
-            max_steps=trial_config['max_leakage_localization_steps'],
-            override_kwargs=leakage_localization_kwargs
-        )
+        if trial_config['hparam_tune']:
+            hparam_tuning_dir = os.path.join(trial_dir, 'hparam_tune')
+            os.makedirs(hparam_tuning_dir, exist_ok=True)
+            trainer.hparam_tune(
+                logging_dir=hparam_tuning_dir,
+                pretrained_classifiers_logging_dir=classifiers_pretrain_dir if trial_config['pretrain_classifiers'] else None,
+                max_steps=trial_config['max_leakage_localization_steps'],
+                override_kwargs=leakage_localization_kwargs
+            )
         leakage_localization_dir = os.path.join(trial_dir, 'leakage_localization')
         os.makedirs(leakage_localization_dir, exist_ok=True)
         trainer.run(

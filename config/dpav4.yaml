@@ -1,7 +1,8 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/dpav4
 pretrain_classifiers: true
+hparam_tune: false
 max_classifiers_pretrain_steps: 1000
-max_leakage_localization_steps: 1000
+max_leakage_localization_steps: 1000000
 default_kwargs:
   classifiers_name: sca-cnn
   calibrate_classifiers: true
@@ -10,7 +11,6 @@ classifiers_pretrain_kwargs:
   budget: 1000.
 leakage_localization_kwargs:
   theta_lr: 1.e-5
-  etat_lr: 1.e-3
-  etat_lr_scheduler_name: CosineDecayLRSched
+  etat_lr: 1.e-4
   gradient_estimator: REBAR
   budget: 100.

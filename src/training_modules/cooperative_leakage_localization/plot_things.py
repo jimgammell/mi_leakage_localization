@@ -77,10 +77,16 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     if not anim_gammas:
         axes[5].plot(nonleaky_line[:, 0], nonleaky_line[:, 1], color='red')
     axes[5].autoscale()
-    if 'ref_ktcc' in training_curves:
-        axes[6].plot(*training_curves['ref_ktcc'], color='blue')
-    if 'ref_corr' in training_curves:
-        axes[7].plot(*training_curves['ref_corr'], color='blue')
+    ktcc_curves = {key: val for key, val in training_curves.items() if key.endswith('_ktcc')}
+    corr_curves = {key: val for key, val in training_curves.items() if key.endswith('_corr')}
+    if len(ktcc_curves) > 0:
+        for key, val in ktcc_curves.items():
+            axes[6].plot(*val, label=key.replace('_', r'\_'), **PLOT_KWARGS)
+        axes[6].legend()
+    if len(corr_curves) > 0:
+        for key, val in corr_curves.items():
+            axes[7].plot(*val, label=key.replace('_', r'\_'), **PLOT_KWARGS)
+        axes[7].legend()
     for ax in axes:
         ax.set_xlabel('Training step')
     axes[0].set_ylabel(r'Loss ($\tilde{\eta}$)')

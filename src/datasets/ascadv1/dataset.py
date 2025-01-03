@@ -57,6 +57,7 @@ class ASCADv1(Dataset):
         eg_trace, _ = self.load_datapoints(0)
         self.data_shape = eg_trace.shape
         self.timesteps_per_trace = self.data_shape[-1]
+        self.class_count = 256
     
     def _load_datapoints_from_disk(self, indices):
         with h5py.File(self.data_path) as _database_file:
