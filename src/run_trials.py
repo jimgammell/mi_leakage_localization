@@ -3,13 +3,14 @@ from copy import copy
 import yaml
 import argparse
 import time
+from torch.utils.data import DataLoader
 
 from common import *
 from utils.flatten_dict import flatten_dict, unflatten_dict
-from training_modules.adversarial_leakage_localization import AdversarialLeakageLocalizationTrainer
+from training_modules.supervised_deep_sca import SupervisedTrainer
 from training_modules.cooperative_leakage_localization import LeakageLocalizationTrainer
-from trials.trial import Trial
 from utils.baseline_assessments import FirstOrderStatistics, NeuralNetAttribution
+from trials.utils import *
 
 AVAILABLE_DATASETS = [x.split('.')[0] for x in os.listdir(CONFIG_DIR) if x.endswith('.yaml') and not(x in ['default_config.yaml', 'global_variables.yaml'])]
 with open(os.path.join(CONFIG_DIR, 'default_config.yaml'), 'r') as f:
@@ -17,7 +18,6 @@ with open(os.path.join(CONFIG_DIR, 'default_config.yaml'), 'r') as f:
 
 SYNTHETIC_LEAKAGE_TYPES = ['1o', '2o', '12o', 'shuffling', 'no_ops', 'multi_1o']
 GAUSSIAN_LEAKAGE_TYPES = ['1o-sweep']
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -88,23 +88,80 @@ def main():
             assert False, f'Dataset `{dataset}` is not implemented. Available choices: `{"`, `".join(AVAILABLE_DATASETS)}`.'
         profiling_dataset = DatasetClass(root=trial_config['data_dir'], train=True)
         attack_dataset = DatasetClass(root=trial_config['data_dir'], train=False)
-        if trial_config['compute_first_order_stats']:
-            first_order_statistics = FirstOrderStatistics(profiling_dataset)
-            snr = first_order_statistics.snr_vals['label'].reshape(-1)
-            sosd = first_order_statistics.sosd_vals['label'].reshape(-1)
-            cpa = first_order_statistics.cpa_vals['label'].reshape(-1)
-        if trial_config['train_supervised_model']:
-            raise NotImplementedError
-        if trial_config['compute_nn_attributions']:
-            raise NotImplementedError
         default_kwargs = trial_config['default_kwargs']
+        if trial_config['compute_first_order_stats']:
+            stats_dir = os.path.join(trial_dir, 'first_order_stats')
+            os.makedirs(stats_dir, exist_ok=True)
+            if not os.path.exists(os.path.join(stats_dir, 'stats.npy')):
+                print('Computing first-order statistical assessments...')
+                first_order_statistics = FirstOrderStatistics(profiling_dataset)
+                snr = first_order_statistics.snr_vals['label'].reshape(-1)
+                print('\tDone computing SNR.')
+                sosd = first_order_statistics.sosd_vals['label'].reshape(-1)
+                print('\tDone computing SOSD.')
+                cpa = first_order_statistics.cpa_vals['label'].reshape(-1)
+                print('\tDone computing CPA.')
+                np.save(os.path.join(stats_dir, 'stats.npy'), np.stack([snr, sosd, cpa]))
+            else:
+                rv = np.load(os.path.join(stats_dir, 'stats.npy'))
+                snr = rv[0, :]
+                sosd = rv[1, :]
+                cpa = rv[2, :]
+            plot_leakage_assessment(snr, os.path.join(stats_dir, 'snr.png'))
+            plot_leakage_assessment(sosd, os.path.join(stats_dir, 'sosd.png'))
+            plot_leakage_assessment(cpa, os.path.join(stats_dir, 'cpa.png'))
+        supervised_model_dir = os.path.join(trial_dir, 'supervised_model')
+        os.makedirs(supervised_model_dir, exist_ok=True)
+        if trial_config['train_supervised_model']:
+            print('Training supervised model...')
+            supervised_trainer = SupervisedTrainer(profiling_dataset, attack_dataset, default_training_module_kwargs=trial_config['supervised_training_kwargs'])
+            supervised_trainer.run(logging_dir=supervised_model_dir, max_steps=trial_config['max_classifiers_pretrain_steps'])
+            print('\tDone.')
+        if trial_config['compute_nn_attributions']:
+            print('Computing neural net attribution assessments...')
+            nn_attr_dir = os.path.join(trial_dir, 'nn_attr_assessments')
+            os.makedirs(nn_attr_dir, exist_ok=True)
+            assert os.path.exists(os.path.join(supervised_model_dir, 'final_checkpoint.ckpt'))
+            profiling_dataloader = DataLoader(profiling_dataset, batch_size=1024, shuffle=False)
+            nn_attributor = NeuralNetAttribution(profiling_dataloader, supervised_model_dir)
+            if not os.path.exists(os.path.join(nn_attr_dir, 'gradvis.npy')):
+                gradvis = nn_attributor.compute_gradvis().reshape(-1)
+                print('\tDone computing GradVis.')
+                np.save(os.path.join(nn_attr_dir, 'gradvis.npy'), gradvis)
+            else:
+                gradvis = np.load(os.path.join(nn_attr_dir, 'gradvis.npy'))
+            if not os.path.exists(os.path.join(nn_attr_dir, 'saliency.npy')):
+                saliency = nn_attributor.compute_saliency().reshape(-1)
+                print('\tDone computing saliency.')
+                np.save(os.path.join(nn_attr_dir, 'saliency.npy'), saliency)
+            else:
+                saliency = np.load(os.path.join(nn_attr_dir, 'saliency.npy'))
+            if not os.path.exists(os.path.join(nn_attr_dir, 'occlusion.npy')):
+                occlusion = nn_attributor.compute_occlusion().reshape(-1)
+                print('\tDone computing occlusion.')
+                np.save(os.path.join(nn_attr_dir, 'occlusion.npy'), occlusion)
+            else:
+                occlusion = np.load(os.path.join(nn_attr_dir, 'occlusion.npy'))
+            if not os.path.exists(os.path.join(nn_attr_dir, 'inputxgrad.npy')):
+                inputxgrad = nn_attributor.compute_inputxgrad().reshape(-1)
+                print('\tDone computing inputxgrad.')
+                np.save(os.path.join(nn_attr_dir, 'inputxgrad.npy'), inputxgrad)
+            else:
+                inputxgrad = np.load(os.path.join(nn_attr_dir, 'inputxgrad.npy'))
+            plot_leakage_assessment(gradvis, os.path.join(nn_attr_dir, 'gradvis.png'))
+            plot_leakage_assessment(saliency, os.path.join(nn_attr_dir, 'saliency.png'))
+            plot_leakage_assessment(occlusion, os.path.join(nn_attr_dir, 'occlusion.png'))
+            plot_leakage_assessment(inputxgrad, os.path.join(nn_attr_dir, 'inputxgrad.png'))
         leakage_localization_kwargs = copy(default_kwargs)
         leakage_localization_kwargs.update(trial_config['leakage_localization_kwargs'])
         trainer = LeakageLocalizationTrainer(
             profiling_dataset,
             attack_dataset,
             default_training_module_kwargs=default_kwargs,
-            reference_leakage_assessment={'snr': np.log(snr), 'sosd': np.log(sosd), 'cpa': np.abs(cpa)}
+            reference_leakage_assessment={
+                'snr': np.abs(snr), 'sosd': np.abs(sosd), 'cpa': np.abs(cpa),
+                'gradvis': np.abs(gradvis), 'saliency': np.abs(saliency), 'occlusion': np.abs(occlusion), 'inputxgrad': np.abs(inputxgrad)
+            }
         )
         if trial_config['pretrain_classifiers']:
             classifiers_pretrain_kwargs = copy(default_kwargs)

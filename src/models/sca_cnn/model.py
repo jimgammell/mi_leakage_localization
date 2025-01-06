@@ -24,10 +24,11 @@ class SCA_CNN(Module):
         super().__init__(**{key: val for key, val in locals().items() if key not in ('self', 'key', 'val')})
 
     def construct(self):
-        self.noise_embedding = nn.Sequential(
-                nn.Linear(np.prod(self.input_shape), self.embedded_noise_dim),
-                nn.ELU()
-        )
+        if self.noise_conditional:
+            self.noise_embedding = nn.Sequential(
+                    nn.Linear(np.prod(self.input_shape), self.embedded_noise_dim),
+                    nn.ELU()
+            )
         trunk_modules = []
         in_channels = self.input_shape[0]
         if self.noise_conditional:

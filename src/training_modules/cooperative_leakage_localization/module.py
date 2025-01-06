@@ -232,6 +232,7 @@ class Module(L.LightningModule):
             rv.update({'rms_grad': get_rms_grad(self.cmi_estimator)})
             theta_optimizer.step()
             theta_lr_scheduler.step()
+            self.selection_mechanism.update_accumulated_gamma()
         assert all(torch.all(torch.isfinite(param)) for param in self.cmi_estimator.parameters())
         return rv
     
@@ -285,14 +286,14 @@ class Module(L.LightningModule):
         if self.hparams.train_etat and self.hparams.calibrate_classifiers:
             self.calibrate_classifiers()
         if self.hparams.reference_leakage_assessment is not None:
-            gamma = self.selection_mechanism.get_gamma().detach().cpu().numpy().reshape(-1)
+            gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1) #get_gamma().detach().cpu().numpy().reshape(-1)
             for key, leakage_assessment in self.hparams.reference_leakage_assessment.items():
                 ktcc = kendalltau(gamma, leakage_assessment.reshape(-1)).statistic
                 correlation = pearsonr(gamma, leakage_assessment.reshape(-1)).statistic
                 self.log(f'{key}_ktcc', ktcc)
                 self.log(f'{key}_corr', correlation)
         if self.hparams.compute_gmm_ktcc and self.current_epoch % (self.total_steps//(100*len(self.trainer.datamodule.train_dataloader()))) == 0:
-            gamma = self.selection_mechanism.get_gamma().detach().cpu().numpy().reshape(-1)
+            gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1) #get_gamma().detach().cpu().numpy().reshape(-1)
             profiling_dataset = self.trainer.datamodule.profiling_dataset
             attack_dataset = self.trainer.datamodule.attack_dataset
             poi_count = len(profiling_dataset)//(5*256)

@@ -101,6 +101,7 @@ class Trainer:
             training_curves = get_training_curves(logging_dir)
             save_training_curves(training_curves, logging_dir)
             plot_training_curves(logging_dir, anim_gammas=anim_gammas, reference=reference)
+            plot_leakage_assessment(training_module.selection_mechanism.get_accumulated_gamma().reshape(-1), os.path.join(logging_dir, 'leakage_assessment.png'))
     
     def hparam_tune(self,
         logging_dir: Union[str, os.PathLike],

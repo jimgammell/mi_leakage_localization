@@ -67,6 +67,7 @@ class Module(L.LightningModule):
         batch_size = trace.size(0)
         rv = {}
         logits = self.classifier(trace)
+        logits = logits.reshape(-1, logits.size(-1))
         loss = nn.functional.cross_entropy(logits, label)
         rv.update({'loss': loss.detach(), 'rank': get_rank(logits, label).mean()})
         if train:

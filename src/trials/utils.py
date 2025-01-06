@@ -4,6 +4,8 @@ import numpy as np
 from matplotlib import pyplot as plt
 from tensorboard.backend.event_processing import event_accumulator
 
+from common import *
+
 def extract_trace(trace):
     x = np.array([u.step for u in trace])
     y = np.array([u.value for u in trace])
@@ -69,6 +71,14 @@ def load_training_curves(logging_dir):
     with open(os.path.join(logging_dir, 'training_curves.pickle'), 'rb') as f:
         training_curves = pickle.load(f)
     return training_curves
+
+def plot_leakage_assessment(leakage_assessment, dest):
+    fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
+    ax.plot(leakage_assessment, color='blue', linestyle='-', marker='.', markersize=1, linewidth=0.1, **PLOT_KWARGS)
+    ax.set_xlabel('Timestep $t$')
+    ax.set_ylabel('Estimated leakage of $X_t$')
+    fig.tight_layout()
+    fig.savefig(dest, **SAVEFIG_KWARGS)
 
 def plot_training_curves(training_curves, logging_dir, keys=[]):
     plot_count = len(keys)

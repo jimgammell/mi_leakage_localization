@@ -64,6 +64,18 @@ class SelectionMechanism(nn.Module):
         self.timesteps_per_trace = timesteps_per_trace
         self.register_buffer('C', torch.tensor(C, dtype=torch.float))
         self.etat = nn.Parameter(torch.zeros((1, self.timesteps_per_trace), dtype=torch.float), requires_grad=True)
+        self.register_buffer('accumulated_gamma', torch.zeros((1, self.timesteps_per_trace), dtype=torch.float))
+        self.register_buffer('update_count', torch.tensor(0))
+    
+    @torch.no_grad()
+    def update_accumulated_gamma(self):
+        gamma = self.get_gamma()
+        self.accumulated_gamma = (self.update_count/(self.update_count+1))*self.accumulated_gamma + (1/(self.update_count+1))*gamma
+        self.update_count += 1
+    
+    @torch.no_grad()
+    def get_accumulated_gamma(self):
+        return self.accumulated_gamma.cpu().numpy()
     
     def get_etat(self):
         return self.etat
