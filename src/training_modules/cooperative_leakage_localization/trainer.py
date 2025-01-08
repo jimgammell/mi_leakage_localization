@@ -100,29 +100,32 @@ class Trainer:
             trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             training_curves = get_training_curves(logging_dir)
             save_training_curves(training_curves, logging_dir)
-            plot_training_curves(logging_dir, anim_gammas=anim_gammas, reference=reference)
             plot_leakage_assessment(training_module.selection_mechanism.get_accumulated_gamma().reshape(-1), os.path.join(logging_dir, 'leakage_assessment.png'))
+        training_curves = load_training_curves(logging_dir)
+        plot_training_curves(logging_dir, anim_gammas=anim_gammas, reference=reference)
     
     def hparam_tune(self,
         logging_dir: Union[str, os.PathLike],
         pretrained_classifiers_logging_dir: Optional[Union[str, os.PathLike]] = None,
         max_steps: int = 1000,
-        anim_gammas: bool = True,
+        anim_gammas: bool = False,
         override_kwargs: dict = {}
     ):
-        self.profiling_dataset.return_metadata = True
-        self.profiling_dataset.return_metadata = False
-        for gradient_estimator in ['REINFORCE', 'REBAR']:
-            for budget in [1.0, 10.0, 100.0, 1000.0, 10000.0]:
-                for etat_lr in [1e-6, 1e-5, 1e-4, 1e-3]:
-                    experiment_dir = os.path.join(logging_dir, f'estimator={gradient_estimator}__budget={budget}__etat_lr={etat_lr}')
-                    override_kwargs['etat_lr'] = etat_lr
-                    override_kwargs['budget'] = budget
-                    override_kwargs['gradient_estimator'] = gradient_estimator
-                    self.run(
-                        logging_dir=experiment_dir,
-                        pretrained_classifiers_logging_dir=pretrained_classifiers_logging_dir,
-                        max_steps=max_steps,
-                        anim_gammas=anim_gammas,
-                        override_kwargs=override_kwargs
-                    )
+        while True:
+            budget = 10**np.random.uniform(1, 3)
+            etat_lr = 10**np.random.uniform(-5, -3)
+            theta_lr = 10**np.random.uniform(-5, -3)
+            experiment_dir = os.path.join(logging_dir, f'budget={budget}__etat_lr={etat_lr}__theta_lr={theta_lr}')
+            override_kwargs['budget'] = budget
+            override_kwargs['etat_lr'] = etat_lr
+            override_kwargs['theta_lr'] = theta_lr
+            self.run(
+                logging_dir=experiment_dir,
+                pretrained_classifiers_logging_dir=pretrained_classifiers_logging_dir,
+                max_steps=max_steps,
+                anim_gammas=anim_gammas,
+                override_kwargs=override_kwargs
+            )
+            training_curves = load_training_curves(experiment_dir)
+            best_gmm_corr = np.max(training_curves['gmmperfcorr'][-1])
+            print(f'GMM perf corr: {best_gmm_corr} in directory: {experiment_dir}')

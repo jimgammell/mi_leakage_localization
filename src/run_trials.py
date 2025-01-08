@@ -11,6 +11,7 @@ from training_modules.supervised_deep_sca import SupervisedTrainer
 from training_modules.cooperative_leakage_localization import LeakageLocalizationTrainer
 from utils.baseline_assessments import FirstOrderStatistics, NeuralNetAttribution
 from trials.utils import *
+from utils.gmm_performance_correlation import GMMPerformanceCorrelation
 
 AVAILABLE_DATASETS = [x.split('.')[0] for x in os.listdir(CONFIG_DIR) if x.endswith('.yaml') and not(x in ['default_config.yaml', 'global_variables.yaml'])]
 with open(os.path.join(CONFIG_DIR, 'default_config.yaml'), 'r') as f:
@@ -152,16 +153,21 @@ def main():
             plot_leakage_assessment(saliency, os.path.join(nn_attr_dir, 'saliency.png'))
             plot_leakage_assessment(occlusion, os.path.join(nn_attr_dir, 'occlusion.png'))
             plot_leakage_assessment(inputxgrad, os.path.join(nn_attr_dir, 'inputxgrad.png'))
+        baselines = {
+            'snr': np.abs(snr), 'sosd': np.abs(sosd), 'cpa': np.abs(cpa),
+            'gradvis': np.abs(gradvis), 'saliency': np.abs(saliency), 'occlusion': np.abs(occlusion), 'inputxgrad': np.abs(inputxgrad)
+        }
+        for baseline_name, baseline_val in baselines.items():
+            metric = GMMPerformanceCorrelation(baseline_val.argsort(), device='cuda')
+            metric.profile(profiling_dataset)
+            print(f'{baseline_name} GMM performance correlation: {metric(attack_dataset)}')
         leakage_localization_kwargs = copy(default_kwargs)
         leakage_localization_kwargs.update(trial_config['leakage_localization_kwargs'])
         trainer = LeakageLocalizationTrainer(
             profiling_dataset,
             attack_dataset,
             default_training_module_kwargs=default_kwargs,
-            reference_leakage_assessment={
-                'snr': np.abs(snr), 'sosd': np.abs(sosd), 'cpa': np.abs(cpa),
-                'gradvis': np.abs(gradvis), 'saliency': np.abs(saliency), 'occlusion': np.abs(occlusion), 'inputxgrad': np.abs(inputxgrad)
-            }
+            reference_leakage_assessment=baselines
         )
         if trial_config['pretrain_classifiers']:
             classifiers_pretrain_kwargs = copy(default_kwargs)

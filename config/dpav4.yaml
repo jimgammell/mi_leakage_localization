@@ -10,13 +10,13 @@ default_kwargs:
   classifiers_name: sca-cnn
   calibrate_classifiers: true
 classifiers_pretrain_kwargs:
-  theta_lr: 1.e-4
-  budget: 1000.
+  theta_lr: 1.e-3
+  budget: 50.
 supervised_training_kwargs:
   classifier_name: sca-cnn
   lr: 1.e-3
 leakage_localization_kwargs:
-  theta_lr: 1.e-5
+  theta_lr: 1.e-3
   etat_lr: 1.e-4
   gradient_estimator: REBAR
-  budget: 100.
+  budget: 50.

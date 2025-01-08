@@ -6,7 +6,7 @@ from scipy.stats import kendalltau
 
 from .functional import *
 from common import *
-from utils.template_attack import TemplateAttack
+#from utils.template_attack import TemplateAttack
 
 class MeasurePerformanceCorrelation:
     def __init__(self,

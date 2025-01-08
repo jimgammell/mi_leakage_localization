@@ -87,6 +87,8 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
         for key, val in corr_curves.items():
             axes[7].plot(*val, label=key.replace('_', r'\_'), **PLOT_KWARGS)
         axes[7].legend()
+    if 'gmmperfcorr' in training_curves:
+        axes[8].plot(*training_curves['gmmperfcorr'], color='blue', **PLOT_KWARGS)
     for ax in axes:
         ax.set_xlabel('Training step')
     axes[0].set_ylabel(r'Loss ($\tilde{\eta}$)')
@@ -97,6 +99,7 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     axes[5].set_ylabel(r'Inclusion probability $\gamma_t$')
     axes[6].set_ylabel('KTCC with reference leakage assessment')
     axes[7].set_ylabel('Correlation with reference leakage assessment')
+    axes[8].set_ylabel('GMM performance correlation')
     axes[0].legend()
     axes[1].legend()
     axes[2].legend()

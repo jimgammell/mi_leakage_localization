@@ -9,7 +9,7 @@ from .utils import *
 from ..utils import *
 import utils.lr_schedulers
 from utils.metrics import get_rank
-from utils.cuda_template_attack import TemplateAttack
+from utils.gmm_performance_correlation import GMMPerformanceCorrelation
 
 class Module(L.LightningModule):
     def __init__(self,
@@ -77,9 +77,9 @@ class Module(L.LightningModule):
         return eta, tau
     
     def configure_optimizers(self):
-        self.etat_optimizer = optim.AdamW(
+        self.etat_optimizer = optim.Adam(
             self.selection_mechanism.parameters(), lr=self.hparams.etat_lr, weight_decay=self.hparams.etat_weight_decay,
-            betas=(0.9, 0.999) #(0.9, 0.99999) if self.hparams.gradient_estimator == 'REBAR' else (0.9, 0.999)
+            betas=(0.9, 0.99999) if self.hparams.gradient_estimator == 'REBAR' else (0.9, 0.999)
         )
         theta_yes_weight_decay, theta_no_weight_decay = [], []
         for name, param in self.cmi_estimator.named_parameters():
@@ -283,7 +283,7 @@ class Module(L.LightningModule):
         log_gamma_save_dir = os.path.join(self.logger.log_dir, 'log_gamma_over_time')
         os.makedirs(log_gamma_save_dir, exist_ok=True)
         np.save(os.path.join(log_gamma_save_dir, f'log_gamma__step={self.global_step}.npy'), log_gamma)
-        if self.hparams.train_etat and self.hparams.calibrate_classifiers:
+        if False: #self.hparams.train_etat and self.hparams.calibrate_classifiers:
             self.calibrate_classifiers()
         if self.hparams.reference_leakage_assessment is not None:
             gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1) #get_gamma().detach().cpu().numpy().reshape(-1)
@@ -292,14 +292,11 @@ class Module(L.LightningModule):
                 correlation = pearsonr(gamma, leakage_assessment.reshape(-1)).statistic
                 self.log(f'{key}_ktcc', ktcc)
                 self.log(f'{key}_corr', correlation)
-        if self.hparams.compute_gmm_ktcc and self.current_epoch % (self.total_steps//(100*len(self.trainer.datamodule.train_dataloader()))) == 0:
-            gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1) #get_gamma().detach().cpu().numpy().reshape(-1)
+        if self.current_epoch % (self.total_steps//(100*len(self.trainer.datamodule.train_dataloader()))) == 0:
+            gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1)
             profiling_dataset = self.trainer.datamodule.profiling_dataset
             attack_dataset = self.trainer.datamodule.attack_dataset
-            poi_count = len(profiling_dataset)//(5*256)
-            partitions = gamma.argsort()[-poi_count*(len(gamma)//poi_count):].reshape(-1, poi_count)
-            template_attacker = TemplateAttack(partitions=partitions)
-            template_attacker.profile(profiling_dataset)
-            mean_gmm_ktcc = template_attacker.get_mean_gmm_ktcc(attack_dataset)
-            self.log('mean_gmm_ktcc', mean_gmm_ktcc)
-            print('Current metric:', mean_gmm_ktcc)
+            metric = GMMPerformanceCorrelation(gamma.argsort(), device='cuda')
+            metric.profile(profiling_dataset)
+            rv = metric(attack_dataset)
+            self.log('gmmperfcorr', rv)

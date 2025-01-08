@@ -32,7 +32,7 @@ class CondMutInfEstimator(nn.Module):
     
     def get_logits(self, input: torch.Tensor, condition_mask: torch.Tensor, calibrated: bool = False):
         masked_input = condition_mask*input + (1-condition_mask)*torch.randn_like(input)
-        if calibrated:
+        if False: #calibrated:
             assert self.calibrate_classifiers
             logits = self.classifiers.calibrated_forward(masked_input, condition_mask)
         else:
@@ -70,7 +70,7 @@ class SelectionMechanism(nn.Module):
     @torch.no_grad()
     def update_accumulated_gamma(self):
         gamma = self.get_gamma()
-        self.accumulated_gamma = (self.update_count/(self.update_count+1))*self.accumulated_gamma + (1/(self.update_count+1))*gamma
+        self.accumulated_gamma = gamma #(self.update_count/(self.update_count+1))*self.accumulated_gamma + (1/(self.update_count+1))*gamma
         self.update_count += 1
     
     @torch.no_grad()
