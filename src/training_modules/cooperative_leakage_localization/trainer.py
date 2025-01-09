@@ -112,13 +112,13 @@ class Trainer:
         override_kwargs: dict = {}
     ):
         while True:
-            budget = 10**np.random.uniform(1, 3)
-            etat_lr = 10**np.random.uniform(-5, -3)
-            theta_lr = 10**np.random.uniform(-5, -3)
-            experiment_dir = os.path.join(logging_dir, f'budget={budget}__etat_lr={etat_lr}__theta_lr={theta_lr}')
-            override_kwargs['budget'] = budget
+            etat_lr = 10**np.random.uniform(-6, -2)
+            etat_beta_1 = np.random.choice([0.0, 0.5, 0.9, 0.99, 0.999])
+            etat_beta_2 = np.random.choice([0.99, 0.999, 0.999, 0.9999, 0.99999, 0.999999])
+            experiment_dir = os.path.join(logging_dir, f'etat_lr={etat_lr}__etat_beta_1={etat_beta_1}__etat_beta_2={etat_beta_2}')
             override_kwargs['etat_lr'] = etat_lr
-            override_kwargs['theta_lr'] = theta_lr
+            override_kwargs['etat_beta_1'] = etat_beta_1
+            override_kwargs['etat_beta_2'] = etat_beta_2
             self.run(
                 logging_dir=experiment_dir,
                 pretrained_classifiers_logging_dir=pretrained_classifiers_logging_dir,

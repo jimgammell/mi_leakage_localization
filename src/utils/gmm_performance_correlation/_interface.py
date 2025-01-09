@@ -8,6 +8,18 @@ from torch.utils.data import Dataset
 
 from ._functional import *
 
+class GMMMutInfCorrelation:
+    def __init__(self,
+        leakage_assessment: Sequence[float],
+        device: Optional[str] = 'cpu'
+    ):
+        self.leakage_assessment = leakage_assessment
+        self.device = device if device is not None else 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    def load_dataset(self, dataset: Dataset) -> Tuple[torch.Tensor, torch.Tensor]:
+        traces, labels = extract_dataset(dataset, np.arange(len(self.leakage_assessment)))
+        
+
 class GMMPerformanceCorrelation:
     def __init__(self,
         feature_ranking: Sequence[int],

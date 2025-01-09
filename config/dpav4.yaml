@@ -3,20 +3,21 @@ compute_first_order_stats: true
 train_supervised_model: true
 compute_nn_attributions: true
 pretrain_classifiers: true
-hparam_tune: false
+hparam_tune: true
 max_classifiers_pretrain_steps: 1000
-max_leakage_localization_steps: 1000
+max_leakage_localization_steps: 4000
 default_kwargs:
   classifiers_name: sca-cnn
   calibrate_classifiers: true
 classifiers_pretrain_kwargs:
   theta_lr: 1.e-3
-  budget: 50.
+  budget: 500.
 supervised_training_kwargs:
   classifier_name: sca-cnn
   lr: 1.e-3
 leakage_localization_kwargs:
   theta_lr: 1.e-3
-  etat_lr: 1.e-4
+  etat_lr: 2.e-3
   gradient_estimator: REBAR
   budget: 50.
+  etat_lr_scheduler_name: CosineDecayLRSched

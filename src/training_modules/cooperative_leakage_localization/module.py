@@ -21,6 +21,8 @@ class Module(L.LightningModule):
         etat_lr_scheduler_kwargs: dict = {},
         theta_lr: float = 2e-4,
         etat_lr: float = 1e-3,
+        etat_beta_1: float = 0.99,
+        etat_beta_2: float = 0.99999,
         theta_weight_decay: float = 0.0,
         etat_weight_decay: float = 0.0,
         budget: float = 50.0,
@@ -79,7 +81,7 @@ class Module(L.LightningModule):
     def configure_optimizers(self):
         self.etat_optimizer = optim.Adam(
             self.selection_mechanism.parameters(), lr=self.hparams.etat_lr, weight_decay=self.hparams.etat_weight_decay,
-            betas=(0.9, 0.99999) if self.hparams.gradient_estimator == 'REBAR' else (0.9, 0.999)
+            betas=(self.hparams.etat_beta_1, self.hparams.etat_beta_2)
         )
         theta_yes_weight_decay, theta_no_weight_decay = [], []
         for name, param in self.cmi_estimator.named_parameters():
@@ -283,7 +285,7 @@ class Module(L.LightningModule):
         log_gamma_save_dir = os.path.join(self.logger.log_dir, 'log_gamma_over_time')
         os.makedirs(log_gamma_save_dir, exist_ok=True)
         np.save(os.path.join(log_gamma_save_dir, f'log_gamma__step={self.global_step}.npy'), log_gamma)
-        if False: #self.hparams.train_etat and self.hparams.calibrate_classifiers:
+        if self.hparams.train_etat and self.hparams.calibrate_classifiers:
             self.calibrate_classifiers()
         if self.hparams.reference_leakage_assessment is not None:
             gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1) #get_gamma().detach().cpu().numpy().reshape(-1)
