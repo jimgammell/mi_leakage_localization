@@ -16,7 +16,7 @@ from training_modules import SupervisedTrainer, LeakageLocalizationTrainer
 
 class Trial:
     def __init__(self,
-        dataset_name: Literal['dpav4', 'ascadv1-fixed', 'ascadv1-variable', 'otiait', 'otp'],
+        dataset_name: Literal['dpav4', 'ascadv1_fixed', 'ascadv1_variable', 'otiait', 'otp', 'aes_hd'],
         trial_config: dict,
         seed_count: int = 1,
         logging_dir: Optional[Union[str, os.PathLike]] = None
@@ -41,10 +41,10 @@ class Trial:
         if self.dataset_name == 'dpav4':
             self.profiling_dataset = DPAv4(root=trial_config['data_dir'], train=True)
             self.attack_dataset = DPAv4(root=trial_config['data_dir'], train=False)
-        elif self.dataset_name == 'ascadv1-fixed':
+        elif self.dataset_name == 'ascadv1_fixed':
             self.profiling_dataset = ASCADv1(root=trial_config['data_dir'], variable_keys=False, train=True)
             self.attack_dataset = ASCADv1(root=trial_config['data_dir'], variable_keys=False, train=False)
-        elif self.dataset_name == 'ascadv1-variable':
+        elif self.dataset_name == 'ascadv1_variable':
             self.profiling_dataset = ASCADv1(root=trial_config['data_dir'], variable_keys=True, train=True)
             self.attack_dataset = ASCADv1(root=trial_config['data_dir'], variable_keys=False, train=False)
         elif dataset_name == 'otiait':
@@ -80,59 +80,72 @@ class Trial:
         }
     
     def train_supervised_model(self):
-        if not os.path.exists(os.path.join(self.supervised_model_dir, 'final_checkpoint.ckpt')):
-            print('Training supervised model...')
-            supervised_trainer = SupervisedTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=self.trial_config['supervised_training_kwargs'])
-            supervised_trainer.run(logging_dir=self.supervised_model_dir, max_steps=self.trial_config['max_classifiers_pretrain_steps'])
-            print('\tDone.')
-        else:
-            print('Found pretrained supervised model.')
+        for seed in range(self.seed_count):
+            subdir = os.path.join(self.supervised_model_dir, f'seed={seed}')
+            os.makedirs(subdir, exist_ok=True)
+            if not os.path.exists(os.path.join(subdir, 'final_checkpoint.ckpt')):
+                print('Training supervised model...')
+                supervised_trainer = SupervisedTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=self.trial_config['supervised_training_kwargs'])
+                supervised_trainer.run(logging_dir=subdir, max_steps=self.trial_config['max_classifiers_pretrain_steps'])
+                print('\tDone.')
+            else:
+                print('Found pretrained supervised model.')
     
-    def compute_neural_net_attributions(self):
+    def compute_neural_net_attributions(self, wouters_zaid_model=None):
         profiling_dataloader = DataLoader(self.profiling_dataset, shuffle=False, batch_size=1024)
-        nn_attributor = NeuralNetAttribution(profiling_dataloader, self.supervised_model_dir)
-        if not os.path.exists(os.path.join(self.nn_attr_dir, 'gradvis.npy')):
-            print('Computing GradVis...')
-            gradvis = nn_attributor.compute_gradvis().reshape(-1)
-            np.save(os.path.join(self.nn_attr_dir, 'gradvis.npy'), gradvis)
-            print('\tDone.')
-        else:
-            gradvis = np.load(os.path.join(self.nn_attr_dir, 'gradvis.npy'))
-            print('Found precomputed GradVis.')
-        if not os.path.exists(os.path.join(self.nn_attr_dir, 'saliency.npy')):
-            print('Computing saliency...')
-            saliency = nn_attributor.compute_saliency().reshape(-1)
-            np.save(os.path.join(self.nn_attr_dir, 'saliency.npy'), saliency)
-            print('\tDone.')
-        else:
-            saliency = np.load(os.path.join(self.nn_attr_dir, 'saliency.npy'))
-            print('Found precomputed saliency.')
-        if not os.path.exists(os.path.join(self.nn_attr_dir, 'occlusion.npy')):
-            print('Computing occlusion...')
-            occlusion = nn_attributor.compute_occlusion().reshape(-1)
-            np.save(os.path.join(self.nn_attr_dir, 'occlusion.npy'), occlusion)
-            print('\tDone.')
-        else:
-            occlusion = np.load(os.path.join(self.nn_attr_dir, 'occlusion.npy'))
-            print('Found precomputed occlusion.')
-        if not os.path.exists(os.path.join(self.nn_attr_dir, 'inputxgrad.npy')):
-            print('Computing inputxgrad...')
-            inputxgrad = nn_attributor.compute_inputxgrad().reshape(-1)
-            np.save(os.path.join(self.nn_attr_dir, 'inputxgrad.npy'), inputxgrad)
-            print('\tDone.')
-        else:
-            inputxgrad = np.load(os.path.join(self.nn_attr_dir, 'inputxgrad.npy'))
-            print('Found precomputed inputxgrad.')
-        plot_leakage_assessment(gradvis, os.path.join(self.nn_attr_dir, 'gradvis.png'))
-        plot_leakage_assessment(saliency, os.path.join(self.nn_attr_dir, 'saliency.png'))
-        plot_leakage_assessment(occlusion, os.path.join(self.nn_attr_dir, 'occlusion.png'))
-        plot_leakage_assessment(inputxgrad, os.path.join(self.nn_attr_dir, 'inputxgrad.png'))
-        self.nn_attr_assessments = {
-            'gradvis': gradvis, 'saliency': saliency, 'occlusion': occlusion, 'inputxgrad': inputxgrad
-        }
+        gradviss, saliencies, occlusions, inputxgrads = [], [], [], []
+        for seed in range(self.seed_count):
+            subdir = os.path.join(self.nn_attr_dir, f'seed={seed}')
+            os.makedirs(subdir, exist_ok=True)
+            nn_attributor = NeuralNetAttribution(profiling_dataloader, os.path.join(self.supervised_model_dir, f'seed={seed}') if wouters_zaid_model is None else wouters_zaid_model, seed=seed)
+            to_name = lambda x: x if wouters_zaid_model is None else f'zaid_{x}' if 'Zaid' in wouters_zaid_model else f'wouters_{x}' if 'Wouters' in wouters_zaid_model else None
+            assert to_name('') is not None
+            if not os.path.exists(os.path.join(subdir, to_name('gradvis.npy'))):
+                print('Computing GradVis...')
+                gradvis = nn_attributor.compute_gradvis().reshape(-1)
+                np.save(os.path.join(subdir, to_name('gradvis.npy')), gradvis)
+                print('\tDone.')
+            else:
+                gradvis = np.load(os.path.join(subdir, to_name('gradvis.npy')))
+                print('Found precomputed GradVis.')
+            if not os.path.exists(os.path.join(subdir, to_name('saliency.npy'))):
+                print('Computing saliency...')
+                saliency = nn_attributor.compute_saliency().reshape(-1)
+                np.save(os.path.join(subdir, to_name('saliency.npy')), saliency)
+                print('\tDone.')
+            else:
+                saliency = np.load(os.path.join(subdir, to_name('saliency.npy')))
+                print('Found precomputed saliency.')
+            r"""if not os.path.exists(os.path.join(subdir, to_name('occlusion.npy'))):
+                print('Computing occlusion...')
+                occlusion = nn_attributor.compute_occlusion().reshape(-1)
+                np.save(os.path.join(subdir, to_name('occlusion.npy')), occlusion)
+                print('\tDone.')
+            else:
+                occlusion = np.load(os.path.join(subdir, to_name('occlusion.npy')))
+                print('Found precomputed occlusion.')"""
+            if not os.path.exists(os.path.join(subdir, to_name('inputxgrad.npy'))):
+                print('Computing inputxgrad...')
+                inputxgrad = nn_attributor.compute_inputxgrad().reshape(-1)
+                np.save(os.path.join(subdir, to_name('inputxgrad.npy')), inputxgrad)
+                print('\tDone.')
+            else:
+                inputxgrad = np.load(os.path.join(subdir, to_name('inputxgrad.npy')))
+                print('Found precomputed inputxgrad.')
+            plot_leakage_assessment(gradvis, os.path.join(subdir, to_name('gradvis.png')))
+            plot_leakage_assessment(saliency, os.path.join(subdir, to_name('saliency.png')))
+            #plot_leakage_assessment(occlusion, os.path.join(subdir, to_name('occlusion.png')))
+            plot_leakage_assessment(inputxgrad, os.path.join(subdir, to_name('inputxgrad.png')))
+            gradviss.append(gradvis)
+            saliencies.append(saliency)
+            #occlusions.append(occlusion)
+            inputxgrads.append(inputxgrad)
+        setattr(self, to_name('nn_attr_assessments'), {
+            to_name('gradvis'): np.stack(gradviss), to_name('saliency'): np.stack(saliencies), to_name('inputxgrad'): np.stack(inputxgrads)#, to_name('occlusion'): np.stack(occlusions)
+        })
     
     def pretrain_leakage_localization_classifiers(self):
-        if not os.path.exists(os.path.join(self.pretrain_leakage_localization_classifiers, 'final_checkpoint.ckpt')):
+        if not os.path.exists(os.path.join(self.ll_classifiers_pretrain_dir, 'final_checkpoint.ckpt')):
             print('Pretraining leakage localization classifiers...')
             trainer = LeakageLocalizationTrainer(
                 self.profiling_dataset, self.attack_dataset,
@@ -161,7 +174,7 @@ class Trial:
             leakage_localization_kwargs.update(self.trial_config['leakage_localization_kwargs'])
             leakage_assessment = trainer.run(
                 logging_dir=self.leakage_localization_dir,
-                pretrained_classifiers_logging_dir=self.ll_classifiers_pretrain_dir if hasattr(self.trial_config, 'pretrain_classifiers') and self.trial_config['pretrain_classifiers'] else None,
+                pretrained_classifiers_logging_dir=self.ll_classifiers_pretrain_dir if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers'] else None,
                 max_steps=self.trial_config['max_leakage_localization_steps'],
                 override_kwargs=leakage_localization_kwargs
             )
@@ -178,6 +191,10 @@ class Trial:
             leakage_assessments.update(self.first_order_stats)
         if hasattr(self, 'nn_attr_assessments'):
             leakage_assessments.update(self.nn_attr_assessments)
+        if hasattr(self, 'zaid_nn_attr_assessments'):
+            leakage_assessments.update(self.zaid_nn_attr_assessments)
+        if hasattr(self, 'wouters_nn_attr_assessments'):
+            leakage_assessments.update(self.wouters_nn_attr_assessments)
         if hasattr(self, 'leakage_localization_assessments'):
             leakage_assessments.update(self.leakage_localization_assessments)
         return leakage_assessments
@@ -188,14 +205,26 @@ class Trial:
         col_count = int(np.ceil(len(leakage_assessments)/row_count))
         fig, axes = plt.subplots(row_count, col_count, figsize=(col_count*PLOT_WIDTH, row_count*PLOT_WIDTH))
         for ax, (la_name, la) in zip(axes.flatten(), leakage_assessments.items()):
-            ax.plot(la, color='blue', marker='.', linestyle='-', markersize=1, linewidth=0.1, **PLOT_KWARGS)
+            if la.ndim == 1:
+                ax.plot(la, color='blue', marker='.', linestyle='none', markersize=1, **PLOT_KWARGS)
+            elif la.ndim == 2:
+                median = np.median(la, axis=0)
+                min = np.min(la, axis=0)
+                max = np.max(la, axis=0)
+                #ax.errorbar(range(len(median)), median, yerr=[median-min, max-median], fmt='none', ecolor='red', label='min--max')
+                ax.plot(median, color='blue', marker='.', linestyle='none', markersize=1, label='median', **PLOT_KWARGS)
+                ax.legend()
+            else:
+                assert False
             ax.set_xlabel(r'Timestep $t$')
             ax.set_ylabel(r'Estimated leakage of $X_t$')
+            la_name = la_name.replace('_', r'\_')
             ax.set_title(f'Technique: {la_name}')
         for ax in axes.flatten()[len(leakage_assessments):]:
             ax.set_visible(False)
         fig.tight_layout()
         fig.savefig(os.path.join(self.logging_dir, 'leakage_assessments.pdf'), **SAVEFIG_KWARGS)
+        plt.close(fig)
     
     def __call__(self):
         if ('compute_first_order_stats' in self.trial_config) and self.trial_config['compute_first_order_stats']:
@@ -204,6 +233,12 @@ class Trial:
             self.train_supervised_model()
         if ('compute_nn_attributions' in self.trial_config) and self.trial_config['compute_nn_attributions']:
             self.compute_neural_net_attributions()
+            if self.dataset_name == 'dpav4':
+                self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__DPAv4')
+                self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__DPAv4')
+            elif self.dataset_name == 'ascadv1_fixed':
+                self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__ASCADv1f')
+                self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__ASCADv1f')
         if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:
             self.pretrain_leakage_localization_classifiers()
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:

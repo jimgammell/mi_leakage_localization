@@ -1,2 +1,2 @@
-resource_dirname: /mnt/hdd/jgammell/leakage_localization/downloads
+resource_dirname: ./resources
 output_dirname: ./outputs

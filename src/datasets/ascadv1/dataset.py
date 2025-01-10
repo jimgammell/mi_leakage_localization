@@ -67,9 +67,9 @@ class ASCADv1(Dataset):
                 database_file = _database_file['Attack_traces']
             traces = np.array(database_file['traces'][indices, :], dtype=np.int8)
             if traces.ndim == 1:
-                traces = traces[np.newaxis, :]
+                traces = traces[np.newaxis, :].astype(np.float32)
             else:
-                traces = traces[:, np.newaxis, :]
+                traces = traces[:, np.newaxis, :].astype(np.float32)
             metadata = {
                 'plaintext': np.array(database_file['metadata']['plaintext'][indices, self.target_byte], dtype=np.uint8),
                 'key': np.array(database_file['metadata']['key'][indices, self.target_byte], dtype=np.uint8),

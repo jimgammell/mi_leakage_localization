@@ -8,17 +8,23 @@ hparam_tune: true
 max_classifiers_pretrain_steps: 1000
 max_leakage_localization_steps: 4000
 default_kwargs:
-  classifiers_name: sca-cnn
+  classifiers_name: mlp-1d
   calibrate_classifiers: false
+  theta_weight_decay: 100.0
+  noise_scale: 1.0
 classifiers_pretrain_kwargs:
   theta_lr: 1.e-3
   budget: 500.
 supervised_training_kwargs:
-  classifier_name: sca-cnn
+  classifier_name: mlp-1d
   lr: 1.e-3
+  weight_decay: 1.e-2
 leakage_localization_kwargs:
   theta_lr: 1.e-3
-  etat_lr: 2.e-3
+  etat_lr: 1.e-3
+  etat_beta_1: 0.0
+  etat_beta_2: 0.9999
+  etat_eps: 1.e-8
   gradient_estimator: REBAR
   budget: 50.
   etat_lr_scheduler_name: CosineDecayLRSched

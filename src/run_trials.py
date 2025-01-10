@@ -73,7 +73,7 @@ def main():
         trial = RealBaselineComparisonTrial(
             dataset_name=dataset,
             trial_config=trial_config,
-            seed_count=1, ############## FIXME
+            seed_count=seed_count,
             logging_dir=trial_dir
         )
         trial()

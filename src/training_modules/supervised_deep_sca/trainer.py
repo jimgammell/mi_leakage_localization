@@ -44,16 +44,32 @@ class Trainer:
                 timesteps_per_trace=self.profiling_dataset.timesteps_per_trace,
                 **kwargs
             )
+            checkpoint = ModelCheckpoint(
+                monitor='val_rank',
+                mode='min',
+                save_top_k=1,
+                dirpath=logging_dir,
+                filename='best_checkpoint'
+            )
             trainer = LightningTrainer(
                 max_steps=max_steps,
                 val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
                 devices=1,
-                logger=TensorBoardLogger(logging_dir, name='lightning_output')
+                logger=TensorBoardLogger(logging_dir, name='lightning_output'),
+                callbacks=[checkpoint]
             )
             trainer.fit(training_module, datamodule=self.data_module)
             trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             training_curves = get_training_curves(logging_dir)
             save_training_curves(training_curves, logging_dir)
             plot_training_curves(logging_dir)
+    
+    def hparam_tune(self,
+        logging_dir: Union[str, os.PathLike],
+        trial_count: int = 50,
+        max_steps: int = 1000,
+        override_kwargs: dict = {}
+    ):
+        pass

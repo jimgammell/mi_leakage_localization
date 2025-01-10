@@ -79,6 +79,7 @@ def plot_leakage_assessment(leakage_assessment, dest):
     ax.set_ylabel('Estimated leakage of $X_t$')
     fig.tight_layout()
     fig.savefig(dest, **SAVEFIG_KWARGS)
+    plt.close(fig)
 
 def plot_training_curves(training_curves, logging_dir, keys=[]):
     plot_count = len(keys)

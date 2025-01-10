@@ -8,6 +8,7 @@ from captum.attr import InputXGradient, FeatureAblation, Saliency, LRP
 
 from utils.chunk_iterator import chunk_iterator
 from training_modules.supervised_deep_sca import SupervisedModule
+from models.zaid_wouters_nets import pretrained_models
 
 class ReshapeOutput(nn.Module):
     def __init__(self, model):
@@ -20,13 +21,18 @@ class ReshapeOutput(nn.Module):
         return logits
 
 class NeuralNetAttribution:
-    def __init__(self, dataloader, model: Union[nn.Module, str, os.PathLike], device: Optional[str] = None):
+    def __init__(self, dataloader, model: Union[nn.Module, str, os.PathLike, int], seed: Optional[int] = None, device: Optional[str] = None):
         self.dataloader = dataloader
         if isinstance(model, (str, os.PathLike)):
-            logging_dir = model
-            assert os.path.exists(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
-            training_module = SupervisedModule.load_from_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
-            model = training_module.classifier
+            if model in ['ZaidNet__ASCADv1f', 'ZaidNet__DPAv4', 'WoutersNet__ASCADv1f', 'WoutersNet__DPAv4']:
+                model_class = getattr(pretrained_models, model)
+                assert seed is not None
+                model = model_class(pretrained_seed=seed)
+            else:
+                logging_dir = model
+                assert os.path.exists(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
+                training_module = SupervisedModule.load_from_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
+                model = training_module.classifier
         self.base_model = model
         self.device = device if device is not None else 'cuda' if torch.cuda.is_available() else 'cpu'
         self.base_model.eval()
