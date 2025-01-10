@@ -83,12 +83,12 @@ class FirstOrderStatistics:
                     current_var = self.noise_variance[key]
                     self.noise_variance[key] = (count/(count+1))*current_var + (1/(count+1))*(trace - self.per_target_means[key][target_val])**2
                     self.unnormalized_correlation[key] = (
-                        (current_count/(current_count+1))*self.unnormalized_correlation[key]
-                        + (1/(current_count+1))*(trace - self.mean_trace)*(_get_hamming_weight(target_val)-self.mean_hamming_weights[key])
+                        (count/(count+1))*self.unnormalized_correlation[key]
+                        + (1/(count+1))*(trace - self.mean_trace)*(_get_hamming_weight(target_val)-self.mean_hamming_weights[key])
                     )
                     self.hamming_weight_variance[key] = (
-                        (current_count/(current_count+1))*self.hamming_weight_variance[key]
-                        + (1/(current_count+1))*(_get_hamming_weight(target_val)-self.mean_hamming_weights[key])**2
+                        (count/(count+1))*self.hamming_weight_variance[key]
+                        + (1/(count+1))*(_get_hamming_weight(target_val)-self.mean_hamming_weights[key])**2
                     )
                     self.trace_variance = (count/(count+1))*self.trace_variance + (1/(count+1))*(trace - self.mean_trace)**2
     

@@ -23,6 +23,7 @@ class Module(L.LightningModule):
         etat_lr: float = 1e-3,
         etat_beta_1: float = 0.99,
         etat_beta_2: float = 0.99999,
+        etat_eps: float = 1e-4,
         theta_weight_decay: float = 0.0,
         etat_weight_decay: float = 0.0,
         budget: float = 50.0,
@@ -81,7 +82,7 @@ class Module(L.LightningModule):
     def configure_optimizers(self):
         self.etat_optimizer = optim.Adam(
             self.selection_mechanism.parameters(), lr=self.hparams.etat_lr, weight_decay=self.hparams.etat_weight_decay,
-            betas=(self.hparams.etat_beta_1, self.hparams.etat_beta_2)
+            betas=(self.hparams.etat_beta_1, self.hparams.etat_beta_2), eps=self.hparams.etat_eps
         )
         theta_yes_weight_decay, theta_no_weight_decay = [], []
         for name, param in self.cmi_estimator.named_parameters():
@@ -167,9 +168,9 @@ class Module(L.LightningModule):
             rb = nn.functional.sigmoid(z/tau)
             rb_tilde = nn.functional.sigmoid(z_tilde/tau)
             with torch.no_grad():
-                mutinf_b = self.cmi_estimator.get_mutinf_estimate(trace, b)
-            mutinf_rb = self.cmi_estimator.get_mutinf_estimate(trace, rb)
-            mutinf_rb_tilde = self.cmi_estimator.get_mutinf_estimate(trace, rb_tilde)
+                mutinf_b = self.cmi_estimator.get_mutinf_estimate(trace, b, labels=label)
+            mutinf_rb = self.cmi_estimator.get_mutinf_estimate(trace, rb, labels=label)
+            mutinf_rb_tilde = self.cmi_estimator.get_mutinf_estimate(trace, rb_tilde, labels=label)
             log_p_b = self.selection_mechanism.log_pmf(b)
             display_loss = -mutinf_b.detach().mean()
             if not hasattr(self, 'mutinf_ema'):
@@ -226,6 +227,8 @@ class Module(L.LightningModule):
             alpha = torch.cat([b, rb], dim=0)
         else:
             alpha = self.selection_mechanism.sample(batch_size)
+        if train and self.hparams.noise_scale is not None:
+            trace = trace + self.hparams.noise_scale*torch.randn_like(trace)
         logits = self.cmi_estimator.get_logits(trace, alpha)
         loss = nn.functional.cross_entropy(logits, label)
         rv.update({'loss': loss.detach(), 'rank': get_rank(logits, label).mean()})

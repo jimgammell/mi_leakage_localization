@@ -100,9 +100,11 @@ class Trainer:
             trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             training_curves = get_training_curves(logging_dir)
             save_training_curves(training_curves, logging_dir)
-            plot_leakage_assessment(training_module.selection_mechanism.get_accumulated_gamma().reshape(-1), os.path.join(logging_dir, 'leakage_assessment.png'))
+            leakage_assessment = training_module.selection_mechanism.get_accumulated_gamma().reshape(-1)
+            plot_leakage_assessment(leakage_assessment, os.path.join(logging_dir, 'leakage_assessment.png'))
         training_curves = load_training_curves(logging_dir)
         plot_training_curves(logging_dir, anim_gammas=anim_gammas, reference=reference)
+        return leakage_assessment
     
     def hparam_tune(self,
         logging_dir: Union[str, os.PathLike],
@@ -115,10 +117,18 @@ class Trainer:
             etat_lr = 10**np.random.uniform(-6, -2)
             etat_beta_1 = np.random.choice([0.0, 0.5, 0.9, 0.99, 0.999])
             etat_beta_2 = np.random.choice([0.99, 0.999, 0.999, 0.9999, 0.99999, 0.999999])
-            experiment_dir = os.path.join(logging_dir, f'etat_lr={etat_lr}__etat_beta_1={etat_beta_1}__etat_beta_2={etat_beta_2}')
+            etat_eps = 10**np.random.uniform(-8, 0)
+            theta_weight_decay = 10**np.random.uniform(-6, 0)
+            noise_scale = np.random.choice([0.0, 0.1, 1.0])
+            etat_lr_scheduler_name = np.random.choice([None, 'CosineDecayLRSched'])
+            experiment_dir = os.path.join(logging_dir, f'etat_lr={etat_lr}__etat_beta_1={etat_beta_1}__etat_beta_2={etat_beta_2}__etat_eps={etat_eps}__theta_weight_decay={theta_weight_decay}__lr_scheduler={etat_lr_scheduler_name}__noise_scale={noise_scale}')
             override_kwargs['etat_lr'] = etat_lr
             override_kwargs['etat_beta_1'] = etat_beta_1
             override_kwargs['etat_beta_2'] = etat_beta_2
+            override_kwargs['etat_eps'] = etat_eps
+            override_kwargs['theta_weight_decay'] = theta_weight_decay
+            override_kwargs['noise_scale'] = noise_scale
+            override_kwargs['etat_lr_scheduler_name'] = etat_lr_scheduler_name
             self.run(
                 logging_dir=experiment_dir,
                 pretrained_classifiers_logging_dir=pretrained_classifiers_logging_dir,

@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import numpy as np
 import torch
 from torch import nn, optim
@@ -11,10 +12,15 @@ class CalibratedModel(nn.Module):
         self.noise_conditional = self.classifier.noise_conditional
 
         if self.noise_conditional:
-            self.to_unsquashed_temperature = nn.Linear(np.prod(self.input_shape), 1)
+            self.to_unsquashed_temperature = nn.Sequential(OrderedDict([
+                ('dense_1', nn.Linear(np.prod(self.input_shape), 512)),
+                ('relu', nn.ReLU()),
+                ('dense_2', nn.Linear(512, 1))
+            ]))
+            #self.to_unsquashed_temperature = nn.Linear(np.prod(self.input_shape), 1)
             self.to_unsquashed_temperature.requires_grad_(False)
-            nn.init.constant_(self.to_unsquashed_temperature.weight, 0)
-            nn.init.constant_(self.to_unsquashed_temperature.bias, np.log(np.exp(1)-1))
+            nn.init.constant_(self.to_unsquashed_temperature.dense_2.weight, 0)
+            nn.init.constant_(self.to_unsquashed_temperature.dense_2.bias, np.log(np.exp(1)-1))
         else:
             self.unsquashed_temperature = nn.Parameter(
                 torch.tensor(np.log(np.exp(1)-1), dtype=torch.float), requires_grad=False

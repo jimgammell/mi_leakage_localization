@@ -30,7 +30,7 @@ class MultiTemplateAttack(nn.Module):
             self.register_buffer('means', torch.tensor(means, dtype=torch.float))
         else:
             self.means = nn.Parameter(torch.zeros(self.window_count, self.class_count, self.window_size, dtype=torch.float))
-        self._cholesky_diag = nn.Parameter(torch.ones(self.window_count, self.class_count, self.window_size, dtype=torch.float))
+        self._cholesky_diag = nn.Parameter(-torch.ones(self.window_count, self.class_count, self.window_size, dtype=torch.float))
         if self.window_size > 1:
             self.cholesky_ltri = nn.Parameter(torch.zeros(self.window_count, self.class_count, (self.window_size**2 - self.window_size)//2, dtype=torch.float))
         
@@ -72,7 +72,7 @@ class MultiTemplateAttack(nn.Module):
             precisions = self.get_precision_matrices().unsqueeze(0)
             prec_logdets = self.get_precision_logdet().unsqueeze(0)
             log_p_x_mid_y = (
-                -0.5*torch.einsum('bwcij,bwcjk,bwcik->bwci', mean_diff.unsqueeze(-2), precisions, mean_diff.unsqueeze(-1)).squeeze(-1)
+                -0.5*torch.einsum('bwcij,bwcjk,bwcik->bwc', mean_diff.unsqueeze(-2), precisions, mean_diff.unsqueeze(-1)).squeeze(-1)
                 - 0.5*self.window_size*np.log(2*np.pi) + 0.5*prec_logdets
             )
         else:
@@ -112,4 +112,4 @@ class MultiTemplateAttack(nn.Module):
         return ptw_mutinf
     
     def forward(self, x):
-        return self.get_log_p_x_y(x)
+        return self.get_log_p_y_mid_x(x)
