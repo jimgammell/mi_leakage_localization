@@ -27,7 +27,11 @@ def plot_hparam_sweep(logging_dir):
             ax.plot(xx, result_vals, color='blue', marker='.', linestyle='none', markersize=1, **PLOT_KWARGS)
             ax.plot([label_to_num[x] for x in distinct_hparam_vals], mean_vals, color='red', marker='.', linestyle='none', markersize=5, **PLOT_KWARGS)
             ax.set_xticks(list(label_to_num.values()))
-            ax.set_xticklabels([str(x) for x in label_to_num.keys()])
+            if hparam_name in ['lr', 'eps', 'weight_decay']:
+                ticklabels = [f'{x:.1e}' for x in label_to_num.keys()]
+            else:
+                ticklabels = [str(x) for x in label_to_num.keys()]
+            ax.set_xticklabels(ticklabels, rotation=45 if hparam_name == 'lr' else 0, ha='right')
             ax.set_xlabel(hparam_name.replace('_', '\_'))
             ax.set_ylabel(result_name.replace('_', '\_'))
             if 'loss' in result_name:

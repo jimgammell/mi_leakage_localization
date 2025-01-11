@@ -75,7 +75,7 @@ class Trainer:
         max_steps: int = 1000,
         override_kwargs: dict = {}
     ):
-        lr_vals = [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3]
+        lr_vals = [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3]
         beta1_vals = [0.0, 0.5, 0.9]
         beta2_vals = [0.9, 0.99, 0.990, 0.9999, 0.99999]
         eps_vals = [1e-8, 1e-4, 1e0]
