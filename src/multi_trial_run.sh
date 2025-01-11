@@ -1,9 +1,9 @@
 #!/bin/bash
 
 cd ~/Desktop/mi_leakage_localization/src
-python run_trials.py --dataset synthetic --leakage-type=1o &
-python run_trials.py --dataset synthetic --leakage-type=2o &
-python run_trials.py --dataset synthetic --leakage-type=12o &
-python run_trials.py --dataset synthetic --leakage-type=shuffling &
-python run_trials.py --dataset synthetic --leakage-type=no_ops &
-python run_trials.py --dataset synthetic --leakage-type=multi_1o &
+python run_trials.py --dataset=aes_hd --seed-count=5 &
+python run_trials.py --dataset=ascadv1_fixed --seed-count=5 &
+python run_trials.py --dataset=ascadv1_variable --seed-count=5 &
+python run_trials.py --dataset=dpav4 --seed-count=5 &
+python run_trials.py --dataset=otiait --seed-count=5 &
+python run_trials.py --dataset=otp --seed-count=5 &

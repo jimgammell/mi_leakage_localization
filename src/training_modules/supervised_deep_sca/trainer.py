@@ -75,9 +75,9 @@ class Trainer:
         max_steps: int = 1000,
         override_kwargs: dict = {}
     ):
-        lr_vals = [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3]
+        lr_vals = [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2]
         beta1_vals = [0.0, 0.5, 0.9]
-        beta2_vals = [0.9, 0.99, 0.990, 0.9999, 0.99999]
+        beta2_vals = [0.9, 0.99, 0.999, 0.9999, 0.99999]
         eps_vals = [1e-8, 1e-4, 1e0]
         weight_decay_vals = [0.0, 1e-4, 1e-2]
         lr_schedulers = [None, 'CosineDecayLRSched']
@@ -104,9 +104,10 @@ class Trainer:
             training_curves = get_training_curves(experiment_dir)
             for key, val in hparams.items():
                 results[key].append(val)
-            results['min_rank'].append(np.min(training_curves['val_rank'][-1]))
+            optimal_idx = np.argmin(training_curves['val_rank'][-1][-1])
+            results['min_rank'].append(training_curves['val_rank'][-1][optimal_idx])
             results['final_rank'].append(training_curves['val_rank'][-1][-1])
-            results['min_loss'].append(np.min(training_curves['val_loss'][-1]))
+            results['min_loss'].append(training_curves['val_loss'][-1][optimal_idx])
             results['final_loss'].append(training_curves['val_loss'][-1][-1])
         with open(os.path.join(logging_dir, 'results.pickle'), 'wb') as f:
             pickle.dump(results, f)

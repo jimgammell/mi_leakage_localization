@@ -1,5 +1,6 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/ascadv1
 compute_first_order_stats: true
+run_supervised_hparam_sweep: true
 train_supervised_model: true
 compute_nn_attributions: true
 pretrain_classifiers: false

@@ -1,11 +1,12 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/dpav4
 compute_first_order_stats: true
+run_supervised_hparam_sweep: true
 train_supervised_model: true
 compute_nn_attributions: true
 pretrain_classifiers: false
 run_leakage_localization: false
-hparam_tune: true
-max_classifiers_pretrain_steps: 1000
+hparam_tune: false
+max_classifiers_pretrain_steps: 10000
 max_leakage_localization_steps: 4000
 default_kwargs:
   classifiers_name: mlp-1d

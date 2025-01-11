@@ -2,6 +2,7 @@ from typing import *
 from copy import copy
 import numpy as np
 from matplotlib import pyplot as plt
+from matplotlib.lines import Line2D
 import torch
 from torch.utils.data import DataLoader
 
@@ -95,6 +96,7 @@ class Trial:
         else:
             print('Found existing supervised hparam sweep.')
         self.optimal_hparams = plot_hparam_sweep(self.supervised_hparam_sweep_dir)
+        print(f'Optimal hyperparameters on {self.dataset_name}: {self.optimal_hparams}')
     
     def train_supervised_model(self):
         for seed in range(self.seed_count):
@@ -109,6 +111,45 @@ class Trial:
                 print('\tDone.')
             else:
                 print('Found pretrained supervised model.')
+    
+    def plot_supervised_training_curves(self):
+        fig, axes = plt.subplots(1, 2, figsize=(2*PLOT_WIDTH, 1*PLOT_WIDTH))
+        colormap = plt.cm.get_cmap('tab10', self.seed_count)
+        min_ranks, min_losses = [], []
+        for seed in range(self.seed_count):
+            color = colormap(seed)
+            subdir = os.path.join(self.supervised_model_dir, f'seed={seed}')
+            assert os.path.exists(os.path.join(subdir, 'final_checkpoint.ckpt'))
+            training_curves = load_training_curves(subdir)
+            axes[0].plot(*training_curves['train_rank'], linestyle='--', color=color, **PLOT_KWARGS)
+            axes[0].plot(*training_curves['val_rank'], linestyle='-', color=color, **PLOT_KWARGS)
+            axes[1].plot(*training_curves['train_loss'], linestyle='--', color=color)
+            axes[1].plot(*training_curves['val_loss'], linestyle='-', color=color)
+            optimal_idx = np.argmin(training_curves['val_rank'][-1])
+            min_ranks.append(training_curves['val_rank'][-1][optimal_idx])
+            min_losses.append(training_curves['val_loss'][-1][optimal_idx])
+        axes[0].set_xlabel('Training step')
+        axes[1].set_xlabel('Training step')
+        axes[0].set_ylabel('Rank')
+        axes[1].set_ylabel('Loss')
+        class_count = self.profiling_dataset.class_count
+        axes[0].axhline((class_count+1)/2, color='black', linestyle=':')
+        axes[1].axhline(np.log(class_count), color='black', linestyle=':')
+        legend_elems = [
+            Line2D([0], [0], color='black', linestyle='--', label='train'),
+            Line2D([0], [0], color='black', linestyle='-', label='val'),
+            Line2D([0], [0], color='black', linestyle=':', label='random guessing')
+        ]
+        axes[0].legend(handles=legend_elems, loc='lower left')
+        axes[1].legend(handles=legend_elems, loc='lower left')
+        axes[1].set_yscale('symlog')
+        dset_name = self.dataset_name.replace(r'_', r'\_')
+        fig.suptitle(f'Dataset: {dset_name}')
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.supervised_model_dir, 'training_curves.pdf'), **SAVEFIG_KWARGS)
+        plt.close(fig)
+        print(f'Supervised ranks: {np.mean(min_ranks)} +/- {np.std(min_ranks)}')
+        print(f'Supervised losses: {np.mean(min_losses)} +/- {np.std(min_losses)}')
     
     def compute_neural_net_attributions(self, wouters_zaid_model=None):
         profiling_dataloader = DataLoader(self.profiling_dataset, shuffle=False, batch_size=1024)
@@ -264,6 +305,7 @@ class Trial:
             self.run_supervised_hparam_sweep()
         if ('train_supervised_model' in self.trial_config) and self.trial_config['train_supervised_model']:
             self.train_supervised_model()
+        self.plot_supervised_training_curves()
         if ('compute_nn_attributions' in self.trial_config) and self.trial_config['compute_nn_attributions']:
             self.compute_neural_net_attributions()
             if self.dataset_name == 'dpav4':

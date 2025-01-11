@@ -26,7 +26,7 @@ class DataModule(L.LightningDataModule):
         profiling_dataset,
         attack_dataset,
         val_prop: float = 0.2,
-        train_batch_size: int = 2048,
+        train_batch_size: int = 256,
         aug_train_batch_size: int = 256,
         eval_batch_size: int = 2048,
         adversarial_mode: bool = False,
