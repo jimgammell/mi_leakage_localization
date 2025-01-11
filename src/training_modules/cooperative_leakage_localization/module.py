@@ -28,6 +28,7 @@ class Module(L.LightningModule):
         etat_weight_decay: float = 0.0,
         budget: float = 50.0,
         timesteps_per_trace: Optional[int] = None,
+        class_count: int = 256,
         gradient_estimator: Literal['REINFORCE', 'REBAR'] = 'REBAR',
         noise_scale: Optional[float] = None,
         eps: float = 1e-6,

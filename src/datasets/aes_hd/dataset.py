@@ -80,6 +80,7 @@ class AES_HD(Dataset):
         assert self.dataset_length == len(self.targets) == len(self.ciphertexts)
         self.data_shape = self.traces[0].shape
         self.timesteps_per_trace = self.data_shape[-1]
+        self.class_count = 256
     
     def __getitem__(self, indices):
         trace = self.traces[indices, np.newaxis, :]

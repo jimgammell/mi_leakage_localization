@@ -10,7 +10,8 @@ class OneTruthPrevails(Dataset):
         train=True,
         transform=None,
         target_transform=None,
-        profiling_dataset_size=100000
+        profiling_dataset_size=100000, # there are like 64 million datapoints, but I (and they in their paper) can easily get near 100% accuracy with 0.1% of them.
+        overwrite_small_p=False
     ):
         super().__init__()
         self.root = root
@@ -19,17 +20,23 @@ class OneTruthPrevails(Dataset):
         self.target_transform = target_transform
         self.return_metadata = False
         self.profiling_dataset_size = profiling_dataset_size
+        self.overwrite_small_p = overwrite_small_p
         
         if self.train:
-            traces = np.load(os.path.join(self.root, '1024', 'p.npy'), mmap_mode='r')
-            labels = np.loadtxt(os.path.join(self.root, '1024', 'p_labels.txt'), dtype=np.uint8)
-            pos_indices = np.where(labels == 1)[0]
-            neg_indices = np.where(labels == 0)[0]
-            assert self.profiling_dataset_size <= min(len(pos_indices), len(neg_indices))
-            indices = np.concatenate([np.random.choice(pos_indices, self.profiling_dataset_size//2, replace=False), np.random.choice(neg_indices, self.profiling_dataset_size//2, replace=False)])
-            np.random.shuffle(indices)
-            self.traces = np.array(traces[indices, ...], dtype=np.float32)
-            self.labels = np.array(labels[indices], dtype=np.int64)
+            if self.overwrite_small_p or not os.path.exists(os.path.join(self.root, '1024', 'small_p.npy')): # this may take ~10 mins for profiling_dataset_size=100k
+                traces = np.load(os.path.join(self.root, '1024', 'p.npy'), mmap_mode='r')
+                labels = np.loadtxt(os.path.join(self.root, '1024', 'p_labels.txt'), dtype=np.uint8)
+                pos_indices = np.where(labels == 1)[0]
+                neg_indices = np.where(labels == 0)[0]
+                assert self.profiling_dataset_size <= min(len(pos_indices), len(neg_indices))
+                indices = np.concatenate([np.random.choice(pos_indices, self.profiling_dataset_size//2, replace=False), np.random.choice(neg_indices, self.profiling_dataset_size//2, replace=False)])
+                np.random.shuffle(indices)
+                traces = np.array(traces[indices, ...], dtype=np.float32)
+                labels = np.array(labels[indices], dtype=np.int64)
+                np.save(os.path.join(self.root, '1024', 'small_p.npy'), traces)
+                np.save(os.path.join(self.root, '1024', 'small_p_labels.npy'), labels)
+            self.traces = np.load(os.path.join(self.root, '1024', 'small_p.npy'))
+            self.labels = np.load(os.path.join(self.root, '1024', 'small_p_labels.npy'))
         else:
             self.traces = np.load(os.path.join(self.root, '1024', 'a.npy')).astype(np.float32)
             self.labels = np.load(os.path.join(self.root, '1024', 'a_labels.npy')).astype(np.int64)

@@ -1,1 +1,25 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/one_trace_is_all_it_takes
+compute_first_order_stats: true
+train_supervised_model: true
+compute_nn_attributions: true
+pretrain_classifiers: false
+run_leakage_localization: false
+max_classifiers_pretrain_steps: 100
+max_leakage_localization_steps: 4000
+default_kwargs:
+  classifiers_name: mlp-1d
+  calibrate_classifiers: false
+classifiers_pretrain_kwargs:
+  theta_lr: 1.e-3
+  budget: 1000.
+  lr_scheduler_name: CosineDecayLRSched
+supervised_training_kwargs:
+  classifier_name: mlp-1d
+  lr: 1.e-5
+  weight_decay: 1.e-2
+leakage_localization_kwargs:
+  theta_lr: 1.e-5
+  etat_lr: 1.e-3
+  etat_lr_scheduler_name: CosineDecayLRSched
+  gradient_estimator: REBAR
+  budget: 100.

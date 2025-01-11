@@ -81,6 +81,7 @@ class Trainer:
             kwargs.update(override_kwargs)
             training_module = Module(
                 timesteps_per_trace=self.profiling_dataset.timesteps_per_trace,
+                output_classes=self.profiling_dataset.output_classes,
                 reference_leakage_assessment=self.reference_leakage_assessment,
                 **kwargs
             )

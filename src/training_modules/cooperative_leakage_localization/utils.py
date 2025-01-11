@@ -10,6 +10,7 @@ class CondMutInfEstimator(nn.Module):
     def __init__(self,
         classifiers_name: str,
         input_shape: Sequence[int],
+        output_classes: int,
         mutinf_estimate_with_labels: bool = True,
         classifiers_kwargs: dict = {},
         calibrate_classifiers: bool = False
@@ -17,6 +18,7 @@ class CondMutInfEstimator(nn.Module):
         super().__init__()
         self.classifiers_name = classifiers_name
         self.input_shape = input_shape
+        self.output_classes = output_classes
         self.mutinf_estimate_with_labels = mutinf_estimate_with_labels
         self.classifiers_kwargs = classifiers_kwargs
         self.calibrate_classifiers = calibrate_classifiers
@@ -24,6 +26,7 @@ class CondMutInfEstimator(nn.Module):
         self.classifiers = models.load(
             self.classifiers_name,
             input_shape=self.input_shape,
+            output_classes=self.output_classes,
             noise_conditional=True,
             **self.classifiers_kwargs
         )

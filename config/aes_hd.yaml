@@ -1,6 +1,26 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/aes_hd
-all_kwargs:
-  theta_pretrain_epochs: 500
-  adversarial_train_epochs: 100
-classifier_epoch_count: 100
-template_attack_poi_count: 10
+compute_first_order_stats: true
+train_supervised_model: true
+compute_nn_attributions: true
+pretrain_classifiers: false
+run_leakage_localization: false
+max_classifiers_pretrain_steps: 20000
+max_leakage_localization_steps: 4000
+default_kwargs:
+  classifiers_name: mlp-1d
+  calibrate_classifiers: false
+classifiers_pretrain_kwargs:
+  theta_lr: 1.e-3
+  budget: 1000.
+  lr_scheduler_name: CosineDecayLRSched
+supervised_training_kwargs:
+  classifier_name: mlp-1d
+  lr: 1.e-4
+  lr_scheduler_name: CosineDecayLRSched
+  weight_decay: 1.e-2
+leakage_localization_kwargs:
+  theta_lr: 1.e-5
+  etat_lr: 1.e-3
+  etat_lr_scheduler_name: CosineDecayLRSched
+  gradient_estimator: REBAR
+  budget: 100.

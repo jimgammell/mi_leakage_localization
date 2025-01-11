@@ -67,6 +67,8 @@ class ZaidNet__DPAv4(GenericZaidNet):
 class ZaidNet__AES_HD(GenericZaidNet):
     def __init__(self, pretrained_seed: Optional[int] = None):
         super().__init__(
+            input_shape=(1, 1250),
+            output_classes=256,
             block_settings=[{'channels': 2, 'conv_kernel_size': 1, 'pool_size': 2}],
             dense_widths=[2]
         )
@@ -128,6 +130,8 @@ class WoutersNet__DPAv4(GenericWoutersNet):
 class WoutersNet__AES_HD(GenericWoutersNet):
     def __init__(self, pretrained_seed: Optional[int] = None):
         super().__init__(
+            input_shape=(1, 1250),
+            output_classes=256,
             input_pool_size=2,
             dense_widths=[2]
         )

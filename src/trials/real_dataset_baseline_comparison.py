@@ -9,10 +9,12 @@ from common import *
 from .utils import *
 from datasets.dpav4 import DPAv4
 from datasets.ascadv1 import ASCADv1
+from datasets.aes_hd import AES_HD
 from datasets.ed25519_wolfssl import ED25519
 from datasets.one_truth_prevails import OneTruthPrevails
 from utils.baseline_assessments import FirstOrderStatistics, NeuralNetAttribution
 from training_modules import SupervisedTrainer, LeakageLocalizationTrainer
+from training_modules.supervised_deep_sca.plot_things import plot_hparam_sweep
 
 class Trial:
     def __init__(self,
@@ -36,6 +38,8 @@ class Trial:
         os.makedirs(self.ll_classifiers_pretrain_dir, exist_ok=True)
         self.leakage_localization_dir = os.path.join(self.logging_dir, 'leakage_localization')
         os.makedirs(self.leakage_localization_dir, exist_ok=True)
+        self.supervised_hparam_sweep_dir = os.path.join(self.logging_dir, 'supervised_hparam_sweep')
+        os.makedirs(self.supervised_hparam_sweep_dir, exist_ok=True)
         
         print('Constructing datasets...')
         if self.dataset_name == 'dpav4':
@@ -47,6 +51,9 @@ class Trial:
         elif self.dataset_name == 'ascadv1_variable':
             self.profiling_dataset = ASCADv1(root=trial_config['data_dir'], variable_keys=True, train=True)
             self.attack_dataset = ASCADv1(root=trial_config['data_dir'], variable_keys=False, train=False)
+        elif self.dataset_name == 'aes_hd':
+            self.profiling_dataset = AES_HD(root=trial_config['data_dir'], train=True)
+            self.attack_dataset = AES_HD(root=trial_config['data_dir'], train=False)
         elif dataset_name == 'otiait':
             self.profiling_dataset = ED25519(root=trial_config['data_dir'], train=True)
             self.attack_dataset = ED25519(root=trial_config['data_dir'], train=False)
@@ -79,13 +86,25 @@ class Trial:
             'snr': snr, 'sosd': sosd, 'cpa': cpa
         }
     
+    def run_supervised_hparam_sweep(self):
+        if not os.path.exists(os.path.join(self.supervised_hparam_sweep_dir, 'results.pickle')):
+            print('Running supervised hparam sweep...')
+            supervised_trainer = SupervisedTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=self.trial_config['supervised_training_kwargs'])
+            supervised_trainer.hparam_tune(logging_dir=self.supervised_hparam_sweep_dir, max_steps=self.trial_config['max_classifiers_pretrain_steps'])
+            print('\tDone.')
+        else:
+            print('Found existing supervised hparam sweep.')
+        self.optimal_hparams = plot_hparam_sweep(self.supervised_hparam_sweep_dir)
+    
     def train_supervised_model(self):
         for seed in range(self.seed_count):
             subdir = os.path.join(self.supervised_model_dir, f'seed={seed}')
             os.makedirs(subdir, exist_ok=True)
             if not os.path.exists(os.path.join(subdir, 'final_checkpoint.ckpt')):
                 print('Training supervised model...')
-                supervised_trainer = SupervisedTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=self.trial_config['supervised_training_kwargs'])
+                training_module_kwargs = copy(self.trial_config['supervised_training_kwargs'])
+                training_module_kwargs.update(self.optimal_hparams)
+                supervised_trainer = SupervisedTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=training_module_kwargs)
                 supervised_trainer.run(logging_dir=subdir, max_steps=self.trial_config['max_classifiers_pretrain_steps'])
                 print('\tDone.')
             else:
@@ -93,13 +112,21 @@ class Trial:
     
     def compute_neural_net_attributions(self, wouters_zaid_model=None):
         profiling_dataloader = DataLoader(self.profiling_dataset, shuffle=False, batch_size=1024)
-        gradviss, saliencies, occlusions, inputxgrads = [], [], [], []
+        gradviss, saliencies, occlusions, inputxgrads, lrps = [], [], [], [], []
         for seed in range(self.seed_count):
             subdir = os.path.join(self.nn_attr_dir, f'seed={seed}')
             os.makedirs(subdir, exist_ok=True)
             nn_attributor = NeuralNetAttribution(profiling_dataloader, os.path.join(self.supervised_model_dir, f'seed={seed}') if wouters_zaid_model is None else wouters_zaid_model, seed=seed)
             to_name = lambda x: x if wouters_zaid_model is None else f'zaid_{x}' if 'Zaid' in wouters_zaid_model else f'wouters_{x}' if 'Wouters' in wouters_zaid_model else None
             assert to_name('') is not None
+            if wouters_zaid_model is None and not os.path.exists(os.path.join(subdir, to_name('lrp.npy'))):
+                print('Computing LRP...')
+                lrp = nn_attributor.compute_lrp().reshape(-1)
+                np.save(os.path.join(subdir, to_name('lrp.npy')), lrp)
+                print('\tDone.')
+            elif wouters_zaid_model is None:
+                lrp = np.load(os.path.join(subdir, to_name('lrp.npy')))
+                print('Found precomputed LRP.')
             if not os.path.exists(os.path.join(subdir, to_name('gradvis.npy'))):
                 print('Computing GradVis...')
                 gradvis = nn_attributor.compute_gradvis().reshape(-1)
@@ -136,12 +163,16 @@ class Trial:
             plot_leakage_assessment(saliency, os.path.join(subdir, to_name('saliency.png')))
             #plot_leakage_assessment(occlusion, os.path.join(subdir, to_name('occlusion.png')))
             plot_leakage_assessment(inputxgrad, os.path.join(subdir, to_name('inputxgrad.png')))
+            if wouters_zaid_model is None:
+                plot_leakage_assessment(lrp, os.path.join(subdir, to_name('lrp.png')))
+                lrps.append(lrp)
             gradviss.append(gradvis)
             saliencies.append(saliency)
             #occlusions.append(occlusion)
             inputxgrads.append(inputxgrad)
         setattr(self, to_name('nn_attr_assessments'), {
-            to_name('gradvis'): np.stack(gradviss), to_name('saliency'): np.stack(saliencies), to_name('inputxgrad'): np.stack(inputxgrads)#, to_name('occlusion'): np.stack(occlusions)
+            to_name('gradvis'): np.stack(gradviss), to_name('saliency'): np.stack(saliencies), to_name('inputxgrad'): np.stack(inputxgrads),# to_name('occlusion'): np.stack(occlusions)
+            **({to_name('lrp'): np.stack(lrps)} if wouters_zaid_model is None else {})
         })
     
     def pretrain_leakage_localization_classifiers(self):
@@ -229,6 +260,8 @@ class Trial:
     def __call__(self):
         if ('compute_first_order_stats' in self.trial_config) and self.trial_config['compute_first_order_stats']:
             self.compute_first_order_stats()
+        if ('run_supervised_hparam_sweep' in self.trial_config) and self.trial_config['run_supervised_hparam_sweep']:
+            self.run_supervised_hparam_sweep()
         if ('train_supervised_model' in self.trial_config) and self.trial_config['train_supervised_model']:
             self.train_supervised_model()
         if ('compute_nn_attributions' in self.trial_config) and self.trial_config['compute_nn_attributions']:
@@ -239,6 +272,9 @@ class Trial:
             elif self.dataset_name == 'ascadv1_fixed':
                 self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__ASCADv1f')
                 self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__ASCADv1f')
+            elif self.dataset_name == 'aes_hd':
+                self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__AES_HD')
+                self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__AES_HD')
         if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:
             self.pretrain_leakage_localization_classifiers()
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:

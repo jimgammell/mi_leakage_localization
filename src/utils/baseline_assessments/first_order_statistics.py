@@ -22,7 +22,7 @@ def _get_key(target: Union[str, int], byte: Optional[int]):
         return (target, byte)
 
 def _get_hamming_weight(x):
-    return np.unpackbits(x).astype(np.float64).sum()
+    return np.unpackbits(x.astype(np.uint8)).astype(np.float64).sum()
 
 class FirstOrderStatistics:
     def __init__(self, dataset, targets: Union[str, Sequence[str]] = 'label', bytes: Optional[int] = None, chunk_size: int = 1024):

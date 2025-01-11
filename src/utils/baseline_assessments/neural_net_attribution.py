@@ -24,14 +24,14 @@ class NeuralNetAttribution:
     def __init__(self, dataloader, model: Union[nn.Module, str, os.PathLike, int], seed: Optional[int] = None, device: Optional[str] = None):
         self.dataloader = dataloader
         if isinstance(model, (str, os.PathLike)):
-            if model in ['ZaidNet__ASCADv1f', 'ZaidNet__DPAv4', 'WoutersNet__ASCADv1f', 'WoutersNet__DPAv4']:
+            if 'ZaidNet' in model or 'Wouters' in model:
                 model_class = getattr(pretrained_models, model)
                 assert seed is not None
                 model = model_class(pretrained_seed=seed)
             else:
                 logging_dir = model
-                assert os.path.exists(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
-                training_module = SupervisedModule.load_from_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
+                assert os.path.exists(os.path.join(logging_dir, 'best_checkpoint.ckpt'))
+                training_module = SupervisedModule.load_from_checkpoint(os.path.join(logging_dir, 'best_checkpoint.ckpt'))
                 model = training_module.classifier
         self.base_model = model
         self.device = device if device is not None else 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -70,11 +70,11 @@ class NeuralNetAttribution:
             return saliency.attribute(trace, target=target.to(torch.long)).detach().abs().mean(axis=0).cpu()
         return self.accumulate_attributions(attr_fn)
     
-    @torch.no_grad()
     def compute_lrp(self):
         lrp = LRP(self.model)
         def attr_fn(trace, target):
-            return lrp.attribute(trace, target=target.to(torch.long)).abs().mean(axis=0).cpu()
+            trace.requires_grad = True
+            return lrp.attribute(trace, target=target.to(torch.long)).detach().abs().mean(axis=0).cpu()
         return self.accumulate_attributions(attr_fn)
     
     @torch.no_grad()

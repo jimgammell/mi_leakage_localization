@@ -1,4 +1,6 @@
 from copy import copy
+import pickle
+from collections import defaultdict
 from torch.utils.data import Dataset
 from lightning import Trainer as LightningTrainer
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
@@ -42,6 +44,7 @@ class Trainer:
             kwargs.update(override_kwargs)
             training_module = Module(
                 timesteps_per_trace=self.profiling_dataset.timesteps_per_trace,
+                class_count=self.profiling_dataset.class_count,
                 **kwargs
             )
             checkpoint = ModelCheckpoint(
@@ -72,4 +75,38 @@ class Trainer:
         max_steps: int = 1000,
         override_kwargs: dict = {}
     ):
-        pass
+        lr_vals = [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3]
+        beta1_vals = [0.0, 0.5, 0.9]
+        beta2_vals = [0.9, 0.99, 0.990, 0.9999, 0.99999]
+        eps_vals = [1e-8, 1e-4, 1e0]
+        weight_decay_vals = [0.0, 1e-4, 1e-2]
+        lr_schedulers = [None, 'CosineDecayLRSched']
+        results = defaultdict(list)
+        for trial_idx in range(trial_count):
+            experiment_dir = os.path.join(logging_dir, f'trial_{trial_idx}')
+            os.makedirs(experiment_dir, exist_ok=True)
+            hparams = {
+                'lr': np.random.choice(lr_vals),
+                'beta_1': np.random.choice(beta1_vals),
+                'beta_2': np.random.choice(beta2_vals),
+                'eps': np.random.choice(eps_vals),
+                'weight_decay': np.random.choice(weight_decay_vals),
+                'lr_scheduler_name': np.random.choice(lr_schedulers)
+            }
+            override_kwargs.update(hparams)
+            self.run(
+                logging_dir=experiment_dir,
+                max_steps=max_steps,
+                override_kwargs=override_kwargs
+            )
+            with open(os.path.join(experiment_dir, 'hparams.pickle'), 'wb') as f:
+                pickle.dump(hparams, f)
+            training_curves = get_training_curves(experiment_dir)
+            for key, val in hparams.items():
+                results[key].append(val)
+            results['min_rank'].append(np.min(training_curves['val_rank'][-1]))
+            results['final_rank'].append(training_curves['val_rank'][-1][-1])
+            results['min_loss'].append(np.min(training_curves['val_loss'][-1]))
+            results['final_loss'].append(training_curves['val_loss'][-1][-1])
+        with open(os.path.join(logging_dir, 'results.pickle'), 'wb') as f:
+            pickle.dump(results, f)
