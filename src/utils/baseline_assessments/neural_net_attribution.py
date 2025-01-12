@@ -21,7 +21,7 @@ class ReshapeOutput(nn.Module):
         return logits
 
 class NeuralNetAttribution:
-    def __init__(self, dataloader, model: Union[nn.Module, str, os.PathLike, int], seed: Optional[int] = None, device: Optional[str] = None):
+    def __init__(self, dataloader, model: Union[nn.Module, str, os.PathLike], seed: Optional[int] = None, device: Optional[str] = None):
         self.dataloader = dataloader
         if isinstance(model, (str, os.PathLike)):
             if 'ZaidNet' in model or 'Wouters' in model:

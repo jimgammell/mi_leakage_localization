@@ -27,7 +27,6 @@ class Trainer:
         self.data_module = DataModule(
             self.profiling_dataset,
             self.attack_dataset,
-            train_batch_size=512,
             **self.default_data_module_kwargs
         )
     
@@ -76,7 +75,7 @@ class Trainer:
         override_kwargs: dict = {}
     ):
         lr_vals = [1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2]
-        beta1_vals = [0.0, 0.5, 0.9]
+        beta1_vals = [0.0, 0.5, 0.9, 0.99]
         beta2_vals = [0.9, 0.99, 0.999, 0.9999, 0.99999]
         eps_vals = [1e-8, 1e-4, 1e0]
         weight_decay_vals = [0.0, 1e-4, 1e-2]

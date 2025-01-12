@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 
 from common import *
 from .utils import *
+from datasets.data_module import DataModule
 from datasets.dpav4 import DPAv4
 from datasets.ascadv1 import ASCADv1
 from datasets.aes_hd import AES_HD
@@ -16,6 +17,7 @@ from datasets.one_truth_prevails import OneTruthPrevails
 from utils.baseline_assessments import FirstOrderStatistics, NeuralNetAttribution
 from training_modules import SupervisedTrainer, LeakageLocalizationTrainer
 from training_modules.supervised_deep_sca.plot_things import plot_hparam_sweep
+from utils.aes_multi_trace_eval import AESMultiTraceEvaluator
 
 class Trial:
     def __init__(self,
@@ -51,7 +53,7 @@ class Trial:
             self.attack_dataset = ASCADv1(root=trial_config['data_dir'], variable_keys=False, train=False)
         elif self.dataset_name == 'ascadv1_variable':
             self.profiling_dataset = ASCADv1(root=trial_config['data_dir'], variable_keys=True, train=True)
-            self.attack_dataset = ASCADv1(root=trial_config['data_dir'], variable_keys=False, train=False)
+            self.attack_dataset = ASCADv1(root=trial_config['data_dir'], variable_keys=True, train=False)
         elif self.dataset_name == 'aes_hd':
             self.profiling_dataset = AES_HD(root=trial_config['data_dir'], train=True)
             self.attack_dataset = AES_HD(root=trial_config['data_dir'], train=False)
@@ -151,8 +153,37 @@ class Trial:
         print(f'Supervised ranks: {np.mean(min_ranks)} +/- {np.std(min_ranks)}')
         print(f'Supervised losses: {np.mean(min_losses)} +/- {np.std(min_losses)}')
     
+    def compute_supervised_ranks_over_time(self, wouters_zaid_model=None):
+        data_module = DataModule(self.profiling_dataset, self.attack_dataset)
+        attack_dataloader = data_module.test_dataloader()
+        fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
+        colormap = plt.cm.get_cmap('tab10', self.seed_count)
+        for seed in range(self.seed_count):
+            subdir = os.path.join(self.supervised_model_dir, f'seed={seed}')
+            to_name = lambda x: x if wouters_zaid_model is None else f'zaid_{x}' if 'Zaid' in wouters_zaid_model else f'wouters_{x}' if 'Wouters' in wouters_zaid_model else None
+            assert to_name('') is not None
+            assert os.path.exists(subdir)
+            if True: #not os.path.exists(os.path.join(subdir, to_name('rank_over_time.npy'))):
+                evaluator = AESMultiTraceEvaluator(attack_dataloader, subdir if wouters_zaid_model is None else wouters_zaid_model, seed=seed, dataset_name=self.dataset_name)
+                rank_over_time = evaluator()
+                np.save(os.path.join(subdir, to_name('rank_over_time.npy')), rank_over_time)
+            else:
+                rank_over_time = np.load(os.path.join(subdir, to_name('rank_over_time.npy')))
+            color = colormap(seed)
+            ax.plot(np.arange(1, len(rank_over_time)+1), rank_over_time, color=color)
+        ax.axhline(0.5*(self.profiling_dataset.class_count+1), linestyle=':', color='black', label='random guessing')
+        ax.legend(loc='upper right')
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xlabel('Traces seen')
+        ax.set_ylabel('Rank')
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.supervised_model_dir, to_name('rank_over_time.pdf')), **SAVEFIG_KWARGS)
+        plt.close(fig)
+        
     def compute_neural_net_attributions(self, wouters_zaid_model=None):
-        profiling_dataloader = DataLoader(self.profiling_dataset, shuffle=False, batch_size=1024)
+        data_module = DataModule(self.profiling_dataset, self.attack_dataset, val_prop=0.0)
+        profiling_dataloader = data_module.train_dataloader()
         gradviss, saliencies, occlusions, inputxgrads, lrps = [], [], [], [], []
         for seed in range(self.seed_count):
             subdir = os.path.join(self.nn_attr_dir, f'seed={seed}')
@@ -311,12 +342,23 @@ class Trial:
             if self.dataset_name == 'dpav4':
                 self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__DPAv4')
                 self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__DPAv4')
+                self.compute_supervised_ranks_over_time()
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__DPAv4')
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__DPAv4')
             elif self.dataset_name == 'ascadv1_fixed':
                 self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__ASCADv1f')
                 self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__ASCADv1f')
+                self.compute_supervised_ranks_over_time()
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__ASCADv1f')
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__ASCADv1f')
+            elif self.dataset_name == 'ascadv1_variable':
+                self.compute_supervised_ranks_over_time()
             elif self.dataset_name == 'aes_hd':
                 self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__AES_HD')
                 self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__AES_HD')
+                self.compute_supervised_ranks_over_time()
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__AES_HD')
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
         if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:
             self.pretrain_leakage_localization_classifiers()
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:

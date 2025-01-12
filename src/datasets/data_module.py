@@ -85,8 +85,7 @@ class DataModule(L.LightningDataModule):
             'num_workers': max(os.cpu_count()//2, 1),
             'pin_memory': True,
             'persistent_workers': True,
-            'prefetch_factor': 4,
-            'drop_last': True
+            'prefetch_factor': 4
         }
         dataloader_kwargs.update(self.dataloader_kwargs)
         self.dataloader_kwargs = dataloader_kwargs
@@ -96,7 +95,7 @@ class DataModule(L.LightningDataModule):
         aug_batch_size = min(self.aug_train_batch_size if override_aug_batch_size is None else override_aug_batch_size, len(self.train_dataset))
         train_dataloader = DataLoader(self.train_dataset, batch_size=train_batch_size, shuffle=True, **self.dataloader_kwargs)
         if self.adversarial_mode:
-            aug_dataloader = DataLoader(self.aug_train_dataset, batch_size=aug_batch_size, shuffle=True, **self.dataloader_kwargs)
+            aug_dataloader = DataLoader(self.aug_train_dataset, batch_size=aug_batch_size, shuffle=True, drop_last=True, **self.dataloader_kwargs)
             return [aug_dataloader, train_dataloader]
         else:
             return train_dataloader
