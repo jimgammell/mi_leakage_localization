@@ -11,6 +11,7 @@ import utils.lr_schedulers
 from utils.metrics import get_rank
 from utils.gmm_performance_correlation import GMMPerformanceCorrelation
 
+##### TODO: implement online estimate of classifier output temperature scaling
 class Module(L.LightningModule):
     def __init__(self,
         classifiers_name: str,
@@ -192,13 +193,6 @@ class Module(L.LightningModule):
             mutinf_rb_tilde = mutinf[len(b)+len(rb):len(b)+len(rb)+len(rb_tilde)]
             mutinf_rb_tilde_detached = mutinf[-len(rb_tilde_detached):]
             log_p_b = self.selection_mechanism.log_pmf(b)
-            if not hasattr(self, 'mutinf_ema'):
-                self.mutinf_ema = mutinf_b.mean()
-            else:
-                self.mutinf_ema = 0.999*self.mutinf_ema + 0.001*mutinf_b.detach().mean()
-            mutinf_b = mutinf_b - self.mutinf_ema
-            mutinf_rb = mutinf_rb - self.mutinf_ema
-            mutinf_rb_tilde = mutinf_rb_tilde - self.mutinf_ema
             loss = -((mutinf_b - eta*mutinf_rb_tilde_detached)*log_p_b + eta*mutinf_rb - eta*mutinf_rb_tilde).mean()
         else:
             assert False
@@ -239,15 +233,15 @@ class Module(L.LightningModule):
         if self.hparams.gradient_estimator == 'REBAR': # we need to train it on the interpolated masks, not just hard masks
             _, tau = self.get_eta_and_tau()
             with torch.no_grad():
-                b, rb, _, _ = self.get_b_values(trace, tau)
+                b, rb, _, _ = self.get_b_values(trace.repeat(2, 1, 1), tau)
             alpha = torch.cat([b, rb], dim=0)
         else:
             alpha = self.selection_mechanism.sample(batch_size)
         if train and self.hparams.noise_scale is not None:
             trace = trace + self.hparams.noise_scale*torch.randn_like(trace)
-        logits = self.cmi_estimator.get_logits(trace.repeat(2, 1, 1), alpha)
-        loss = nn.functional.cross_entropy(logits, label.repeat(2))
-        rv.update({'loss': loss.detach(), 'rank': get_rank(logits, label.repeat(2)).mean()})
+        logits = self.cmi_estimator.get_logits(trace.repeat(4, 1, 1), alpha)
+        loss = nn.functional.cross_entropy(logits, label.repeat(4))
+        rv.update({'loss': loss.detach(), 'rank': get_rank(logits, label.repeat(4)).mean()})
         if train:
             self.manual_backward(loss)
             rv.update({'rms_grad': get_rms_grad(self.cmi_estimator)})
