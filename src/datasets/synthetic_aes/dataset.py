@@ -19,8 +19,10 @@ class SyntheticAES(Dataset):
         timesteps_per_trace: int = 1000, # number of power measurements per trace
         bit_count: int = 8, # number of bits
         operation_count: int = 32, # number of operations
-        leaking_timestep_count_1o: int = 1, # number of timesteps with 1st-order leakage
-        leaking_timestep_count_2o: int = 0, # number of pairs of timesteps with 2nd-order leakage
+        leaking_timestep_count_1o: Optional[int] = 1, # number of timesteps with 1st-order leakage
+        leaking_timestep_count_2o: Optional[int] = 0, # number of pairs of timesteps with 2nd-order leakage
+        leaky_1o_pts: Optional[Sequence[int]] = None, # specify the timesteps at which we should have first-order leakage
+        leaky_2o_pts: Optional[Tuple[Sequence[int], Sequence[int]]] = None, # specify the timesteps at which we should have first-order leakage of the (mask, masked_subbytes)
         data_var: float = 1.0, # variance due to data-dependent power consumption
         operation_var: float = 1.0, # variance of the Gaussian distribution from which per-operation biases are drawn
         residual_var: float = 1.0, # variance due to things other than data and operations
@@ -56,6 +58,13 @@ class SyntheticAES(Dataset):
         self.leaking_subbytes_cycles = leaking_cycles[:self.shuffle_locs*self.leaking_timestep_count_1o]
         self.leaking_mask_cycles = leaking_cycles[self.shuffle_locs*self.leaking_timestep_count_1o:-self.shuffle_locs*self.leaking_timestep_count_2o]
         self.leaking_masked_subbytes_cycles = leaking_cycles[-self.shuffle_locs*self.leaking_timestep_count_2o:]
+        if self.leaky_1o_pts is not None:
+            self.leaking_subbytes_cycles = np.concatenate([self.leaking_subbytes_cycles, self.leaky_1o_pts])
+            self.leaking_timestep_count_1o = len(self.leaking_subbytes_cycles)
+        if self.leaky_2o_pts is not None:
+            self.leaking_mask_cycles = np.concatenate([self.leaking_mask_cycles, self.leaky_2o_pts[0, :]])
+            self.leaking_masked_subbytes_cycles = np.concatenate([self.leaking_masked_subbytes_cycles, self.leaky_2o_pts[1, :]])
+            self.leaking_timestep_count_2o = (len(self.leaking_mask_cycles) + len(self.leaking_masked_subbytes_cycles))//2
         self.per_operation_power_consumption = np.sqrt(self.operation_var)*NUMPY_RNG.standard_normal(size=self.operation_count, dtype=np.float32)
         self.operations = NUMPY_RNG.choice(self.operation_count, self.timesteps_per_trace+LPF_BURN_IN_CYCLES, replace=True)
         self.fixed_noise_profile = self.per_operation_power_consumption[self.operations]
@@ -116,7 +125,7 @@ class SyntheticAES(Dataset):
     
     def __getitem__(self, idx):
         if self.infinite_dataset:
-            trace, metadata = self.generate_datapoints(1 if isinstance(idx, int) else len(idx))
+            trace, metadata = self.generate_datapoints(1 if not hasattr(idx, '__len__') else len(idx))
             if isinstance(idx, int):
                 trace = trace[0, ...]
                 metadata = {key: val[0] for key, val in metadata.items()}
@@ -130,6 +139,7 @@ class SyntheticAES(Dataset):
         if self.target_transform is not None:
             target = self.target_transform(target)
         if self.return_metadata:
+            metadata.update({'label': target})
             return trace, target, metadata
         else:
             return trace, target

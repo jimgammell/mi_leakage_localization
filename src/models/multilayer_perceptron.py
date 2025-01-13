@@ -13,7 +13,7 @@ class MultilayerPerceptron(Module):
         output_classes: int = 256,
         hidden_dims: int = 512,
         hidden_layers: int = 3,
-        hidden_activation: Union[str, nn.Module] = nn.SELU,
+        hidden_activation: Union[str, nn.Module] = nn.ReLU,
         xor_output: bool = False,
         noise_conditional: bool = False
     ):

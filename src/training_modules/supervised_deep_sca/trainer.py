@@ -103,7 +103,7 @@ class Trainer:
             training_curves = get_training_curves(experiment_dir)
             for key, val in hparams.items():
                 results[key].append(val)
-            optimal_idx = np.argmin(training_curves['val_rank'][-1][-1])
+            optimal_idx = np.argmin(training_curves['val_rank'][-1])
             results['min_rank'].append(training_curves['val_rank'][-1][optimal_idx])
             results['final_rank'].append(training_curves['val_rank'][-1][-1])
             results['min_loss'].append(training_curves['val_loss'][-1][optimal_idx])

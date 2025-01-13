@@ -19,7 +19,7 @@ class Module(L.LightningModule):
         theta_lr_scheduler_kwargs: dict = {},
         etat_lr_scheduler_name: str = None,
         etat_lr_scheduler_kwargs: dict = {},
-        theta_lr: float = 2e-4,
+        theta_lr: float = 1e-3,
         etat_lr: float = 1e-3,
         etat_beta_1: float = 0.99,
         etat_beta_2: float = 0.99999,
@@ -51,6 +51,7 @@ class Module(L.LightningModule):
         self.cmi_estimator = CondMutInfEstimator(
             self.hparams.classifiers_name,
             input_shape=(1, self.hparams.timesteps_per_trace),
+            output_classes=self.hparams.class_count,
             classifiers_kwargs=self.hparams.classifiers_kwargs,
             calibrate_classifiers=self.hparams.calibrate_classifiers
         )
@@ -114,7 +115,8 @@ class Module(L.LightningModule):
         ]
         if self.hparams.gradient_estimator == 'REBAR':
             self.rebar_params_optimizer = optim.Adam([self.etat, self.taut], lr=10*self.hparams.etat_lr, betas=(0.9, 0.99999))
-            rv.append({'optimizer': self.rebar_params_optimizer})
+            self.rebar_params_lr_scheduler = etat_lr_scheduler_constructor(self.rebar_params_optimizer, total_steps=self.total_steps, **self.hparams.etat_lr_scheduler_kwargs)
+            rv.append({'optimizer': self.rebar_params_optimizer, 'lr_scheduler': {'scheduler': self.rebar_params_lr_scheduler, 'interval': 'step'}})
         return rv
 
     def unpack_batch(self, batch):
@@ -131,7 +133,7 @@ class Module(L.LightningModule):
                 rebar_params_optimizer.zero_grad()
             else:
                 _, etat_optimizer = self.optimizers()
-            _, etat_lr_scheduler = self.lr_schedulers()
+            _, etat_lr_scheduler, rebar_params_lr_scheduler = self.lr_schedulers()
             etat_optimizer.zero_grad()
         trace, label = self.unpack_batch(batch)
         batch_size = trace.size(0)
@@ -199,6 +201,8 @@ class Module(L.LightningModule):
                 etat_optimizer.step()
                 etat_lr_scheduler.step()
                 rebar_params_optimizer.step()
+                rebar_params_lr_scheduler.step()
+                self.selection_mechanism.update_accumulated_gamma()
             else:
                 self.manual_backward(loss)
                 rv.update({'rms_grad': get_rms_grad(self.selection_mechanism)})
@@ -210,7 +214,7 @@ class Module(L.LightningModule):
     def step_theta(self, batch, train: bool = False):
         if train:
             theta_optimizer, *_ = self.optimizers()
-            theta_lr_scheduler, _ = self.lr_schedulers()
+            theta_lr_scheduler, *_ = self.lr_schedulers()
             theta_optimizer.zero_grad()
         trace, label = self.unpack_batch(batch)
         batch_size = trace.size(0)
@@ -238,7 +242,6 @@ class Module(L.LightningModule):
             rv.update({'rms_grad': get_rms_grad(self.cmi_estimator)})
             theta_optimizer.step()
             theta_lr_scheduler.step()
-            self.selection_mechanism.update_accumulated_gamma()
         assert all(torch.all(torch.isfinite(param)) for param in self.cmi_estimator.parameters())
         return rv
     
@@ -298,7 +301,7 @@ class Module(L.LightningModule):
                 correlation = pearsonr(gamma, leakage_assessment.reshape(-1)).statistic
                 self.log(f'{key}_ktcc', ktcc)
                 self.log(f'{key}_corr', correlation)
-        if self.current_epoch % (self.total_steps//(100*len(self.trainer.datamodule.train_dataloader()))) == 0:
+        if False: #self.current_epoch % (self.total_steps//(100*len(self.trainer.datamodule.train_dataloader()))) == 0:
             gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1)
             profiling_dataset = self.trainer.datamodule.profiling_dataset
             attack_dataset = self.trainer.datamodule.attack_dataset

@@ -8,8 +8,10 @@ from ..common import *
 
 @jit(nopython=True)
 def apply_ema(trace, ema_coeff):
-    for time_idx in range(1, trace.shape[-1]):
-        trace[time_idx] = ema_coeff*trace[time_idx-1] + (1-ema_coeff)*trace[time_idx]
+    avg = np.mean(trace)
+    for time_idx in range(trace.shape[-1]):
+        trace[time_idx] = ema_coeff*avg + (1-ema_coeff)*trace[time_idx]
+        avg = trace[time_idx]
     return trace
 
 @jit('float32(uint32)', nopython=True)

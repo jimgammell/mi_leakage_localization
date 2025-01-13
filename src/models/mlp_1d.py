@@ -16,7 +16,7 @@ class MultilayerPerceptron_1d(nn.Module):
         self.noise_conditional = noise_conditional
         
         self.model = nn.Sequential(OrderedDict([
-            ('dropout_in', nn.Dropout(0.1)),
+            *([('dropout_in', nn.Dropout(0.1))] if self.noise_conditional else []),
             ('dense_in', nn.Linear(2*np.prod(self.input_shape) if self.noise_conditional else np.prod(self.input_shape), 500)),
             ('act_in', nn.ReLU()),
             ('dropout_h1', nn.Dropout(0.2)),
