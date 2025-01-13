@@ -39,17 +39,10 @@ def main():
     assert seed_count > 0
     
     if dataset == 'synthetic':
-        budgets = np.logspace(1, 4, 100)
-        np.random.shuffle(budgets)
-        for budget in budgets:
-            logging_dir = os.path.join(trial_dir, f'budget={budget}')
-            os.makedirs(logging_dir, exist_ok=True)
-            trial = SyntheticTrial(
-                logging_dir=logging_dir,
-                override_leakage_localization_kwargs={'budget': budget},
-                trial_count=4
-            )
-            trial()
+        trial = SyntheticTrial(
+            logging_dir=trial_dir
+        )
+        trial()
     else:
         with open(os.path.join(CONFIG_DIR, f'{dataset}.yaml'), 'r') as f:
             trial_config = yaml.load(f, Loader=yaml.FullLoader)

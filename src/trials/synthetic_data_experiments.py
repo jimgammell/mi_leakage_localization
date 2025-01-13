@@ -1,5 +1,6 @@
 from typing import *
 import os
+from numbers import Number
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D
@@ -10,31 +11,33 @@ from utils.baseline_assessments import FirstOrderStatistics
 from datasets.synthetic_aes import SyntheticAES, SyntheticAESLike
 from training_modules.cooperative_leakage_localization import LeakageLocalizationTrainer
 
-def plot_leakage_assessments(dest, leakage_assessments, leaking_instruction_timesteps=None, title=None, to_label=None):
-    fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
-    colors = plt.cm.get_cmap('tab10', len(leakage_assessments))
+def _plot_leakage_assessments(dest, leakage_assessments, leaking_instruction_timesteps=None, title=None, to_label=None):
+    keys = list(leakage_assessments.keys())
+    if isinstance(keys[0], Number):
+        assert all(isinstance(key, Number) for key in keys)
+        keys.sort()
+        leakage_assessments = {key: leakage_assessments[key] for key in keys}
+    fig, axes = plt.subplots(1, len(leakage_assessments), figsize=(PLOT_WIDTH*len(leakage_assessments), PLOT_WIDTH))
     if isinstance(leaking_instruction_timesteps, int):
-        ax.axvline(leaking_instruction_timesteps, linestyle=':', color='black', label='leaking instruction')
-    else:
-        for idx, x in enumerate(leaking_instruction_timesteps):
-            color = colors(idx)
-            if (x is None) or isinstance(x, np.ndarray) and (x.dtype == np.array(None).dtype):
+        for ax in axes:
+            ax.axvline(leaking_instruction_timesteps, linestyle=':', color='black', label='leaking instruction')
+    elif hasattr(leaking_instruction_timesteps, '__iter__'):
+        for x, ax in zip(leaking_instruction_timesteps, axes):
+            if isinstance(x, np.ndarray) and (x.dtype == np.array(None).dtype):
                 pass
             else:
-                linewidths = np.linspace(2., 0.5, len(leaking_instruction_timesteps))
-                linestyles = [':', '--', '-.']
                 for xx in x:
-                    ax.axvline(xx, linewidth=linewidths[idx], linestyle=linestyles[idx%3], color=color)
-        line = Line2D([0], [0], color='black', linestyle=':', label='leaking instruction')
+                    ax.axvline(xx, color='black', linestyle='--', linewidth=0.5)
     for idx, (setting, leakage_assessment) in enumerate(leakage_assessments.items()):
-        color = colors(idx)
-        ax.plot(leakage_assessment, color=color, marker='.', markersize=3, linestyle='none', label='' if to_label is None else to_label(setting))
-    ax.set_xlabel(r'Timestep $t$')
-    ax.set_ylabel(r'Estimated leakage of $X_t$')
+        ax = axes[idx]
+        ax.plot(leakage_assessment, color='blue', marker='.', markersize=3, linestyle='-', linewidth=0.5)
+        ax.set_xlabel(r'Timestep $t$')
+        ax.set_ylabel(r'Estimated leakage of $X_t$')
+        ax.set_ylim(0, 1)
+        if to_label is not None:
+            ax.set_title(to_label(setting))
     if title is not None:
-        ax.set_title(title)
-    if to_label is not None:
-        ax.legend(fontsize=6)
+        fig.suptitle(title)
     fig.tight_layout()
     fig.savefig(dest, **SAVEFIG_KWARGS)
     plt.close(fig)
@@ -45,17 +48,19 @@ class Trial:
         override_run_kwargs: dict = {},
         override_leakage_localization_kwargs: dict = {},
         batch_size: int = 1000,
-        timestep_count: int = 1001,
-        trial_count: int = 8
+        timestep_count: int = 101,
+        trial_count: int = 8,
+        pretrain_classifiers_only: bool = False
     ):
         self.logging_dir = logging_dir
         self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
-        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'budget': 100, 'theta_lr': 1e-3, 'etat_lr': 1e-2, 'etat_lr_scheduler_name': 'CosineDecayLRSched'}
+        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'budget': 10, 'theta_lr': 1e-3, 'etat_lr': 1e-3}
         self.run_kwargs.update(override_run_kwargs)
         self.leakage_localization_kwargs.update(override_leakage_localization_kwargs)
         self.batch_size = batch_size
         self.timestep_count = timestep_count
         self.trial_count = trial_count
+        self.pretrain_classifiers_only = pretrain_classifiers_only
     
     def construct_datasets(self,
         leaky_1o_count: int = 1,
@@ -68,10 +73,12 @@ class Trial:
         leaky_count = shuffle_locs*(leaky_1o_count + 2*leaky_2o_count)
         if leaky_count > 0:
             leaky_pts = np.linspace(0, self.timestep_count-1, shuffle_locs*leaky_count+2)[1:-1].astype(int)
-        leaky_1o_pts = leaky_pts[:shuffle_locs*leaky_1o_count] if leaky_1o_count > 0 else None
-        leaky_2o_pts = leaky_pts[shuffle_locs*leaky_1o_count:].reshape(2, -1) if leaky_2o_count > 0 else None
+            leaky_1o_pts = leaky_pts[:shuffle_locs*leaky_1o_count] if leaky_1o_count > 0 else None
+            leaky_2o_pts = leaky_pts[shuffle_locs*leaky_1o_count:].reshape(2, -1) if leaky_2o_count > 0 else None
+        else:
+            leaky_pts = leaky_1o_pts = leaky_2o_pts = None
         profiling_dataset = SyntheticAES(
-            infinite_dataset=True,
+            infinite_dataset=False,
             timesteps_per_trace=self.timestep_count,
             leaking_timestep_count_1o=0,
             leaking_timestep_count_2o=0,
@@ -103,32 +110,47 @@ class Trial:
         else:
             profiling_dataset, attack_dataset, locs_1o, locs_2o = self.construct_datasets(**kwargs)
             trainer = self.construct_trainer(profiling_dataset, attack_dataset)
-            trainer.pretrain_classifiers(os.path.join(logging_dir, 'classifiers_pretrain'), max_steps=self.run_kwargs['max_steps'])
-            leakage_assessment = trainer.run(os.path.join(logging_dir, 'leakage_localization'), pretrained_classifiers_logging_dir=os.path.join(logging_dir, 'classifiers_pretrain'), **self.run_kwargs)
+            trainer.pretrain_classifiers(
+                os.path.join(logging_dir, 'classifiers_pretrain'),
+                max_steps=self.run_kwargs['max_steps']
+            )
+            if not self.pretrain_classifiers_only:
+                leakage_assessment = trainer.run(
+                    os.path.join(logging_dir, 'leakage_localization'),
+                    pretrained_classifiers_logging_dir=os.path.join(logging_dir, 'classifiers_pretrain'),
+                    **self.run_kwargs
+                )
+            else:
+                os.makedirs(os.path.join(logging_dir, 'leakage_localization'), exist_ok=True)
+                leakage_assessment = None
             np.savez(os.path.join(logging_dir, 'leakage_localization', 'leakage_assessment.npz'), leakage_assessment=leakage_assessment, locs_1o=locs_1o, locs_2o=locs_2o)
         return leakage_assessment, locs_1o, locs_2o
+    
+    def plot_leakage_assessments(self, *args, **kwargs):
+        if not self.pretrain_classifiers_only:
+            _plot_leakage_assessments(*args, **kwargs)
     
     def run_1o_beta_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_beta_sweep')
         leakage_assessments = {}
-        for beta in [1 - 0.5**n for n in range(self.trial_count)][::-1]:
+        for beta in [1 - 0.5**n for n in range(self.trial_count)]:
             subdir = os.path.join(exp_dir, f'beta={beta}')
-            leakage_assessments[beta], *_ = self.run_experiment(subdir, {'lpf_beta': beta})
-        plot_leakage_assessments(
+            leakage_assessments[1-beta], *_ = self.run_experiment(subdir, {'lpf_beta': beta})
+        self.plot_leakage_assessments(
             os.path.join(exp_dir, 'sweep.pdf'),
             leakage_assessments,
             self.timestep_count//2,
             title=r'Sweep of low-pass filter coefficient: $\beta_{\mathrm{LPF}}$',
-            to_label=lambda x: r'$\beta_{\mathrm{LPF}}='+f'{x}'+r'$'
+            to_label=lambda x: r'$\beta_{\mathrm{LPF}}='+f'{1-x}'+r'$'
         )
     
     def run_1o_data_var_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_data_var_sweep')
         leakage_assessments = {}
-        for var in [0.0] + [10**(-n) for n in range(1, (self.trial_count-2)//2 + 1)] + [1.0] + [10**(n) for n in range(1, (self.trial_count-2)//2 + 1)]:
+        for var in [1.0] + [0.5**(-n) for n in range(1, self.trial_count//2-1)] + [0.5**n for n in range(1, self.trial_count//2)] + [0.0]:
             subdir = os.path.join(exp_dir, f'var={var}')
             leakage_assessments[var], *_ = self.run_experiment(subdir, {'data_var': var})
-        plot_leakage_assessments(
+        self.plot_leakage_assessments(
             os.path.join(exp_dir, 'sweep.pdf'),
             leakage_assessments,
             self.timestep_count//2,
@@ -140,11 +162,11 @@ class Trial:
         exp_dir = os.path.join(self.logging_dir, '1o_leaky_pt_sweep')
         leakage_assessments = {}
         locss = []
-        for count in [0, 1] + [1 + 2**n for n in range(1, self.trial_count-1)]:
+        for count in [0] + [2**x for x in range(self.trial_count-1)]:
             subdir = os.path.join(exp_dir, f'count={count}')
             leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'leaky_1o_count': count})
             locss.append(locs)
-        plot_leakage_assessments(
+        self.plot_leakage_assessments(
             os.path.join(exp_dir, 'sweep.pdf'),
             leakage_assessments,
             locss,
@@ -156,11 +178,11 @@ class Trial:
         exp_dir = os.path.join(self.logging_dir, '1o_no_op_sweep')
         leakage_assessments = {}
         locss = []
-        for count in [0] + [2**n for n in range(self.trial_count-1)]:
+        for count in [0] + [2**x for x in range(self.trial_count-1)]:
             subdir = os.path.join(exp_dir, f'count={count}')
             leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'max_no_ops': count})
             locss.append(locs)
-        plot_leakage_assessments(
+        self.plot_leakage_assessments(
             os.path.join(exp_dir, 'sweep.pdf'),
             leakage_assessments,
             self.timestep_count//2,
@@ -172,11 +194,11 @@ class Trial:
         exp_dir = os.path.join(self.logging_dir, '1o_shuffle_sweep')
         leakage_assessments = {}
         locss = []
-        for count in [1] + [1 + 2**n for n in range(1, self.trial_count)]:
+        for count in range(self.trial_count):
             subdir = os.path.join(exp_dir, f'count={count}')
             leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'shuffle_locs': count})
             locss.append(locs)
-        plot_leakage_assessments(
+        self.plot_leakage_assessments(
             os.path.join(exp_dir, 'sweep.pdf'),
             leakage_assessments,
             locss,
@@ -187,7 +209,7 @@ class Trial:
     def run_2o_trial(self):
         exp_dir = os.path.join(self.logging_dir, '2o_trial')
         leakage_assessment, _, locs = self.run_experiment(exp_dir, {'leaky_1o_count': 0, 'leaky_2o_count': 1})
-        plot_leakage_assessments(
+        self.plot_leakage_assessments(
             os.path.join(exp_dir, 'sweep.pdf'),
             {None: leakage_assessment},
             locs,

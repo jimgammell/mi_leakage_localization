@@ -30,6 +30,7 @@ class Module(L.LightningModule):
         timesteps_per_trace: Optional[int] = None,
         class_count: int = 256,
         gradient_estimator: Literal['REINFORCE', 'REBAR'] = 'REBAR',
+        rebar_relaxation: Literal['CONCRETE', 'MuProp'] = 'MuProp',
         noise_scale: Optional[float] = None,
         eps: float = 1e-6,
         train_theta: bool = True,
@@ -60,8 +61,8 @@ class Module(L.LightningModule):
             C=self.hparams.budget
         )
         if self.hparams.gradient_estimator == 'REBAR':
-            self.etat = nn.Parameter(torch.tensor(0.0, dtype=torch.float32), requires_grad=True)
-            self.taut = nn.Parameter(torch.tensor(0.0, dtype=torch.float32), requires_grad=True)
+            self.etat = nn.Parameter(torch.tensor(0., dtype=torch.float32), requires_grad=True)
+            self.taut = nn.Parameter(torch.tensor(np.log(0.5), dtype=torch.float32), requires_grad=True)
         if not isinstance(self.hparams.reference_leakage_assessment, dict):
             if isinstance(self.hparams.reference_leakage_assessment, np.ndarray):
                 self.hparams.reference_leakage_assessment = {'ref_0': self.hparams.reference_leakage_assessment}
@@ -77,7 +78,7 @@ class Module(L.LightningModule):
         
     def get_eta_and_tau(self): # FIXME: modify this so that we can optimize the eta and tau parameters
         assert self.hparams.gradient_estimator == 'REBAR'
-        eta = self.hparams.eps + (1 - 2*self.hparams.eps)*nn.functional.sigmoid(self.etat)
+        eta = self.hparams.eps + 2*nn.functional.sigmoid(self.etat)
         tau = self.hparams.eps + nn.functional.softplus(self.taut)
         return eta, tau
     
@@ -126,8 +127,39 @@ class Module(L.LightningModule):
             trace += self.hparams.noise_scale*torch.randn_like(trace)
         return trace, label
 
+    def get_b_values(self, trace: torch.Tensor, temperature: torch.Tensor):
+        assert self.hparams.gradient_estimator == 'REBAR'
+        if self.hparams.train_etat:
+            log_gamma = self.selection_mechanism.get_log_gamma().unsqueeze(0)
+            log_1mgamma = self.selection_mechanism.get_log_1mgamma().unsqueeze(0)
+        else: # In the classifier pretraining stage it's convenient to clamp these to a specific value to make pretraining independent of our budget
+            log_gamma = np.log(0.5)*torch.ones((1, *trace.shape[1:]), dtype=trace.dtype, device=trace.device)
+            log_1mgamma = np.log(0.5)*torch.ones((1, *trace.shape[1:]), dtype=trace.dtype, device=trace.device)
+        log_alpha = log_gamma - log_1mgamma
+        assert torch.all(torch.isfinite(log_gamma))
+        assert torch.all(torch.isfinite(log_1mgamma))
+        u = self.rand_like(trace)
+        b = torch.where(log_alpha + u.log() - (1-u).log() >= 0, torch.ones_like(u), torch.zeros_like(u))
+        uprime = 1 - log_gamma.exp()
+        v = self.rand_like(u)
+        v = torch.where(b == 1, uprime + v*(1-uprime), v*uprime).clip_(self.hparams.eps, 1-self.hparams.eps)
+        if self.hparams.rebar_relaxation == 'CONCRETE':
+            to_z = lambda log_alpha, u: (log_alpha + u.log() - (1-u).log())
+            rb = nn.functional.sigmoid(to_z(log_alpha, u)/temperature)
+            rb_tilde = nn.functional.sigmoid(to_z(log_alpha, v)/temperature)
+            rb_tilde_detached = nn.functional.sigmoid(to_z(log_alpha.detach(), v.detach())/temperature)
+        elif self.hparams.rebar_relaxation == 'MuProp':
+            to_z = lambda log_alpha, u: ((temperature**2 + temperature + 1)/(temperature + 1))*log_alpha + u.log() - (1-u).log()
+            rb = nn.functional.sigmoid(to_z(log_alpha, u)/temperature)
+            rb_tilde = nn.functional.sigmoid(to_z(log_alpha, v)/temperature)
+            rb_tilde_detached = nn.functional.sigmoid(to_z(log_alpha.detach(), v.detach())/temperature) # We only want to 'detach' with respect to log_gamma, not the temperature.
+        else:
+            raise NotImplementedError
+        return b, rb, rb_tilde, rb_tilde_detached
+    
     def step_etat(self, batch, train: bool = False):
         if train:
+            self.cmi_estimator.classifiers.requires_grad_(False)
             if self.hparams.gradient_estimator == 'REBAR':
                 _, etat_optimizer, rebar_params_optimizer = self.optimizers()
                 rebar_params_optimizer.zero_grad()
@@ -149,44 +181,28 @@ class Module(L.LightningModule):
             if not hasattr(self, 'mutinf_ema'): # control variate to reduce variance of the gradient estimator
                 self.mutinf_ema = mutinf.detach().mean()
             else:
-                self.mutinf_ema = 0.9*self.mutinf_ema + 0.1*mutinf.detach().mean()
+                self.mutinf_ema = 0.99*self.mutinf_ema + 0.01*mutinf.detach().mean()
             loss = -((mutinf - self.mutinf_ema)*log_prob_mass).mean()
-            display_loss = -mutinf.detach().mean()
         elif self.hparams.gradient_estimator == 'REBAR':
             eta, tau = self.get_eta_and_tau()
-            log_gamma = self.selection_mechanism.get_log_gamma().unsqueeze(0)
-            log_1mgamma = self.selection_mechanism.get_log_1mgamma().unsqueeze(0)
-            assert torch.all(torch.isfinite(log_gamma))
-            assert torch.all(torch.isfinite(log_1mgamma))
-            u = self.rand_like(trace)
-            z = log_gamma - log_1mgamma + u.log() - (1-u).log()
-            assert torch.all(torch.isfinite(z))
-            b = torch.where(z >= 0, torch.ones_like(z), torch.zeros_like(z))
-            uprime = 1 - log_gamma.exp()
-            v = self.rand_like(trace)
-            v = torch.where(b == 1, uprime + v*(1 - uprime), v*uprime)
-            v = v.clamp_(self.hparams.eps, 1-self.hparams.eps)
-            z_tilde = torch.where(b == 1, (v.log() - (1-v).log() - log_1mgamma).exp().log1p(), -(v.log() - (1-v).log() - log_gamma).exp().log1p())
-            assert torch.all(torch.isfinite(z_tilde))
-            rb = nn.functional.sigmoid(z/tau)
-            rb_tilde = nn.functional.sigmoid(z_tilde/tau)
-            with torch.no_grad():
-                mutinf_b = self.cmi_estimator.get_mutinf_estimate(trace, b, labels=label)
-            mutinf_rb = self.cmi_estimator.get_mutinf_estimate(trace, rb, labels=label)
-            mutinf_rb_tilde = self.cmi_estimator.get_mutinf_estimate(trace, rb_tilde, labels=label)
+            b, rb, rb_tilde, rb_tilde_detached = self.get_b_values(trace, tau)
+            mutinf = self.cmi_estimator.get_mutinf_estimate(trace.repeat(4, 1, 1), torch.cat([b, rb, rb_tilde, rb_tilde_detached], dim=0), labels=label.repeat(4))
+            mutinf_b = mutinf[:len(b)].detach()
+            mutinf_rb = mutinf[len(b):len(b)+len(rb)]
+            mutinf_rb_tilde = mutinf[len(b)+len(rb):len(b)+len(rb)+len(rb_tilde)]
+            mutinf_rb_tilde_detached = mutinf[-len(rb_tilde_detached):]
             log_p_b = self.selection_mechanism.log_pmf(b)
-            display_loss = -mutinf_b.detach().mean()
             if not hasattr(self, 'mutinf_ema'):
-                self.mutinf_ema = mutinf_b.detach().mean()
+                self.mutinf_ema = mutinf_b.mean()
             else:
-                self.mutinf_ema = 0.9*self.mutinf_ema + 0.1*mutinf_b.detach().mean()
+                self.mutinf_ema = 0.999*self.mutinf_ema + 0.001*mutinf_b.detach().mean()
             mutinf_b = mutinf_b - self.mutinf_ema
             mutinf_rb = mutinf_rb - self.mutinf_ema
             mutinf_rb_tilde = mutinf_rb_tilde - self.mutinf_ema
-            loss = -((mutinf_b - eta*mutinf_rb_tilde).detach()*log_p_b + eta*mutinf_rb - eta*mutinf_rb_tilde).mean()
+            loss = -((mutinf_b - eta*mutinf_rb_tilde_detached)*log_p_b + eta*mutinf_rb - eta*mutinf_rb_tilde).mean()
         else:
             assert False
-        rv.update({'loss': display_loss.detach()})
+        rv.update({'loss': loss.detach().mean()})
         if train:
             if self.hparams.gradient_estimator == 'REBAR':
                 (etat_grad,) = torch.autograd.grad(loss, self.selection_mechanism.etat, create_graph=True)
@@ -195,7 +211,7 @@ class Module(L.LightningModule):
                 if not hasattr(self, 'etat_grad_ema'):
                     self.etat_grad_ema = etat_grad.detach()
                 else:
-                    self.etat_grad_ema = 0.95*self.etat_grad_ema + 0.05*etat_grad.detach()
+                    self.etat_grad_ema = 0.999*self.etat_grad_ema + 0.001*etat_grad.detach()
                 rebar_params_loss = ((etat_grad - self.etat_grad_ema)**2).mean()
                 (self.etat.grad, self.taut.grad) = torch.autograd.grad(rebar_params_loss, [self.etat, self.taut])
                 etat_optimizer.step()
@@ -208,6 +224,7 @@ class Module(L.LightningModule):
                 rv.update({'rms_grad': get_rms_grad(self.selection_mechanism)})
                 etat_optimizer.step()
                 etat_lr_scheduler.step()
+            self.cmi_estimator.classifiers.requires_grad_(True)
         assert all(torch.all(torch.isfinite(param)) for param in self.selection_mechanism.parameters())
         return rv
     
@@ -221,22 +238,16 @@ class Module(L.LightningModule):
         rv = {}
         if self.hparams.gradient_estimator == 'REBAR': # we need to train it on the interpolated masks, not just hard masks
             _, tau = self.get_eta_and_tau()
-            log_gamma = self.selection_mechanism.get_log_gamma().unsqueeze(0)
-            log_1mgamma = self.selection_mechanism.get_log_1mgamma().unsqueeze(0)
-            u = self.rand_like(trace)
-            z = log_gamma - log_1mgamma + u.log() - (1-u).log()
-            z_b = z[:batch_size//2]
-            z_rb = z[batch_size//2:]
-            b = torch.where(z_b >= 0, torch.ones_like(z_b), torch.zeros_like(z_b))
-            rb = nn.functional.sigmoid(z_rb/tau)
+            with torch.no_grad():
+                b, rb, _, _ = self.get_b_values(trace, tau)
             alpha = torch.cat([b, rb], dim=0)
         else:
             alpha = self.selection_mechanism.sample(batch_size)
         if train and self.hparams.noise_scale is not None:
             trace = trace + self.hparams.noise_scale*torch.randn_like(trace)
-        logits = self.cmi_estimator.get_logits(trace, alpha)
-        loss = nn.functional.cross_entropy(logits, label)
-        rv.update({'loss': loss.detach(), 'rank': get_rank(logits, label).mean()})
+        logits = self.cmi_estimator.get_logits(trace.repeat(2, 1, 1), alpha)
+        loss = nn.functional.cross_entropy(logits, label.repeat(2))
+        rv.update({'loss': loss.detach(), 'rank': get_rank(logits, label.repeat(2)).mean()})
         if train:
             self.manual_backward(loss)
             rv.update({'rms_grad': get_rms_grad(self.cmi_estimator)})
