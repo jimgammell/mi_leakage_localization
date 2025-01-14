@@ -57,6 +57,8 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     if all(x in training_curves for x in ['train_etat_loss', 'val_etat_loss']):
         axes[0].plot(*training_curves['train_etat_loss'], color='blue', linestyle='--', label='train', **PLOT_KWARGS)
         axes[0].plot(*training_curves['val_etat_loss'], color='blue', linestyle='-', label='val', **PLOT_KWARGS)
+        axes[0].plot(*training_curves['train_hard_eta_loss'], color='red', linestyle='--', **PLOT_KWARGS)
+        axes[0].plot(*training_curves['val_hard_eta_loss'], color='red', linestyle='-', **PLOT_KWARGS)
     if all(x in training_curves for x in ['train_theta_loss', 'val_theta_loss']):
         axes[1].plot(*training_curves['train_theta_loss'], color='red', linestyle='--', label='train', **PLOT_KWARGS)
         axes[1].plot(*training_curves['val_theta_loss'], color='red', linestyle='-', label='val', **PLOT_KWARGS)
@@ -96,6 +98,8 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
         axes[9].plot(*training_curves['train_rebar_eta'], color='blue', **PLOT_KWARGS)
     if 'train_rebar_tau' in training_curves:
         axes[10].plot(*training_curves['train_rebar_tau'], color='blue', **PLOT_KWARGS)
+    if 'train_temperature' in training_curves:
+        axes[11].plot(*training_curves['train_temperature'], color='blue', **PLOT_KWARGS)
     for ax in axes:
         ax.set_xlabel('Training step')
     axes[0].set_ylabel(r'Loss ($\tilde{\eta}$)')
@@ -107,6 +111,9 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     axes[6].set_ylabel('KTCC with reference leakage assessment')
     axes[7].set_ylabel('Correlation with reference leakage assessment')
     axes[8].set_ylabel('GMM performance correlation')
+    axes[9].set_ylabel(r'REBAR $\eta$')
+    axes[10].set_ylabel(r'REBAR $\tau$')
+    axes[11].set_ylabel('Calibration temperature')
     axes[0].legend()
     axes[1].legend()
     axes[2].legend()

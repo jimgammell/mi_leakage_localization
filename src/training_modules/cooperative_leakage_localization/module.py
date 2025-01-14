@@ -12,6 +12,19 @@ import utils.lr_schedulers
 from utils.metrics import get_rank
 from utils.gmm_performance_correlation import GMMPerformanceCorrelation
 
+class TemperaturePredictor(nn.Module):
+    def __init__(self, input_len: int):
+        super().__init__()
+        self.input_len = input_len
+        self.predictor = nn.Sequential(OrderedDict([
+            ('dense_1', nn.Linear(self.input_len, 512)),
+            ('act_1', nn.ReLU()),
+            ('dense_2', nn.Linear(512, 1))
+        ]))
+    
+    def forward(self, x):
+        return 1 + nn.functional.softplus(self.predictor(x))
+
 class Module(L.LightningModule):
     def __init__(self,
         classifiers_name: str,
@@ -61,13 +74,7 @@ class Module(L.LightningModule):
             C=self.hparams.budget
         )
         if self.hparams.calibrate_classifiers:
-            self.to_temperature = nn.Sequential(OrderedDict([
-                ('dense_1', nn.Linear(self.hparams.timesteps_per_trace, 512)),
-                ('act_1', nn.ReLU()),
-                ('dense_2', nn.Linear(512, 1)),
-                ('act_out', nn.Softplus())
-            ]))
-            nn.init.constant_(self.to_temperature.dense_2.bias, np.log(np.exp(1.0)-1))
+            self.to_temperature = TemperaturePredictor(self.hparams.timesteps_per_trace)
         if self.hparams.gradient_estimator == 'REBAR':
             self.rebar_etat = nn.Parameter(torch.tensor(np.log(np.exp(1.0)-1), dtype=torch.float32), requires_grad=True)
             self.rebar_taut = nn.Parameter(torch.tensor(np.log(np.exp(0.5)-1), dtype=torch.float32), requires_grad=True)
@@ -82,7 +89,7 @@ class Module(L.LightningModule):
                 assert False
     
     def to_global_steps(self, steps): # Lightning considers it a 'step' any time any optimizer is stepped. This converts training steps to Lightning steps (e.g. to pass to Trainer).
-        out = steps
+        out = 0
         if self.hparams.train_theta:
             out += steps
             if self.hparams.calibrate_classifiers:
@@ -135,7 +142,7 @@ class Module(L.LightningModule):
             {'optimizer': self.etat_optimizer, 'lr_scheduler': {'scheduler': self.etat_lr_scheduler, 'interval': 'step'}}
         ]
         if self.hparams.calibrate_classifiers:
-            self.to_temperature_optimizer = optim.Adam(self.to_temperature.parameters(), lr=10*self.hparams.theta_lr)
+            self.to_temperature_optimizer = optim.Adam(self.to_temperature.parameters(), lr=2*self.hparams.theta_lr)
             self.to_temperature_lr_scheduler = utils.lr_schedulers.NoOpLRSched(self.to_temperature_optimizer)
             rv.append({'optimizer': self.to_temperature_optimizer, 'lr_scheduler': {'scheduler': self.to_temperature_lr_scheduler, 'interval': 'step'}})
         if self.hparams.gradient_estimator == 'REBAR':
@@ -191,12 +198,12 @@ class Module(L.LightningModule):
             theta_lr_scheduler = lr_schedulers[0]
             etat_optimizer = optimizers[1]
             etat_lr_scheduler = lr_schedulers[1]
-            if self.hparams.gradient_estimator == 'REBAR':
-                rebar_params_optimizer = optimizers[2]
-                rebar_params_lr_scheduler = lr_schedulers[2]
             if self.hparams.calibrate_classifiers:
-                to_temperature_optimizer = optimizers[-1]
-                to_temperature_lr_scheduler = lr_schedulers[-1]
+                to_temperature_optimizer = optimizers[2]
+                to_temperature_lr_scheduler = lr_schedulers[2]
+            if self.hparams.gradient_estimator == 'REBAR':
+                rebar_params_optimizer = optimizers[-1]
+                rebar_params_lr_scheduler = lr_schedulers[-1]
         if not train_theta:
             self.cmi_estimator.requires_grad_(False)
         if not train_etat:
@@ -221,12 +228,14 @@ class Module(L.LightningModule):
                 logits = logits/temperature
                 theta_loss_calibrated = nn.functional.cross_entropy(logits, label.repeat(4))
                 rv.update({'theta_loss_calibrated': theta_loss_calibrated.detach()})
+                rv.update({'temperature': temperature.detach().cpu().numpy().mean()})
             mutinf = self.cmi_estimator.get_mutinf_estimate_from_logits(logits, label.repeat(4))
             mutinf_b, mutinf_rb, mutinf_rb_tilde, mutinf_rb_tilde_detached = map(lambda idx: mutinf[idx*batch_size:(idx+1)*batch_size], range(4))
             mutinf_b = mutinf_b.detach()
             log_p_b = self.selection_mechanism.log_pmf(b)
             etat_loss = -((mutinf_b - rebar_eta*mutinf_rb_tilde_detached)*log_p_b + rebar_eta*mutinf_rb - rebar_eta*mutinf_rb_tilde).mean()
             rv.update({'etat_loss': etat_loss.detach()})
+            rv.update({'hard_eta_loss': -mutinf_b.detach().cpu().numpy().mean()})
         else:
             assert False
         if train_theta:
@@ -244,7 +253,7 @@ class Module(L.LightningModule):
             (self.rebar_etat.grad, self.rebar_taut.grad) = torch.autograd.grad(rebar_params_loss, [self.rebar_etat, self.rebar_taut])
         if train_theta:
             theta_optimizer.step()
-            theta_optimizer.step()
+            theta_lr_scheduler.step()
         if train_etat:
             etat_optimizer.step()
             etat_lr_scheduler.step()
