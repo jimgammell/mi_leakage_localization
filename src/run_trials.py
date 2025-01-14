@@ -14,10 +14,11 @@ from trials.utils import *
 from utils.gmm_performance_correlation import GMMPerformanceCorrelation
 from trials.real_dataset_baseline_comparison import Trial as RealBaselineComparisonTrial
 from trials.synthetic_data_experiments import Trial as SyntheticTrial
+from trials.portability_experiments import Trial as PortabilityTrial
 
 AVAILABLE_DATASETS = (
     [x.split('.')[0] for x in os.listdir(CONFIG_DIR) if x.endswith('.yaml') and not(x in ['default_config.yaml', 'global_variables.yaml'])]
-     + ['synthetic']
+     + ['synthetic', 'portability']
 )
 with open(os.path.join(CONFIG_DIR, 'default_config.yaml'), 'r') as f:
     DEFAULT_CONFIG = yaml.load(f, Loader=yaml.FullLoader)
@@ -41,6 +42,14 @@ def main():
     if dataset == 'synthetic':
         trial = SyntheticTrial(
             logging_dir=trial_dir
+        )
+        trial()
+    elif dataset == 'portability':
+        with open(os.path.join(CONFIG_DIR, 'portability.yaml'), 'r') as f:
+            trial_config = yaml.load(f, Loader=yaml.FullLoader)
+        trial = PortabilityTrial(
+            logging_dir=trial_dir,
+            trial_config=trial_config
         )
         trial()
     else:

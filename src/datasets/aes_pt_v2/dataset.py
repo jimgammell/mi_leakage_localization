@@ -18,8 +18,8 @@ class AES_PTv2(Dataset):
     def __init__(self,
         root: str,
         train: bool = True,
-        devices = 'D1',
-        countermeasure = 'Unprotected',
+        devices: Union[str, Sequence[str]] = 'D1',
+        countermeasure: str = 'Unprotected',
         target_byte: int = 0,
         transform: Optional[Callable] = None,
         target_transform: Optional[Callable] = None
@@ -56,6 +56,7 @@ class AES_PTv2(Dataset):
         assert all(self.length == val.shape[0] for val in self.metadata.values())
         self.return_metadata = False
         self.timesteps_per_trace = self.traces.shape[-1]
+        self.class_count = 256
 
     def compute_target(self, metadata):
         key = metadata['key']
