@@ -23,8 +23,8 @@ def _plot_leakage_assessments(dest, leakage_assessments, leaking_instruction_tim
             ax.axvline(leaking_instruction_timesteps, linestyle=':', color='black', label='leaking instruction')
     elif hasattr(leaking_instruction_timesteps, '__iter__'):
         for x, ax in zip(leaking_instruction_timesteps, axes):
-            if isinstance(x, np.ndarray) and (x.dtype == np.array(None).dtype):
-                pass
+            if (x is None) or (x.dtype == type(None)):
+                continue
             else:
                 for xx in x:
                     ax.axvline(xx, color='black', linestyle='--', linewidth=0.5)
@@ -147,7 +147,7 @@ class Trial:
     def run_1o_data_var_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_data_var_sweep')
         leakage_assessments = {}
-        for var in [1.0] + [0.5**(-n) for n in range(1, self.trial_count//2-1)] + [0.5**n for n in range(1, self.trial_count//2)] + [0.0]:
+        for var in [1.0] + [0.5**(-n) for n in range(1, self.trial_count//2)] + [0.5**n for n in range(1, self.trial_count//2)] + [0.0]:
             subdir = os.path.join(exp_dir, f'var={var}')
             leakage_assessments[var], *_ = self.run_experiment(subdir, {'data_var': var})
         self.plot_leakage_assessments(

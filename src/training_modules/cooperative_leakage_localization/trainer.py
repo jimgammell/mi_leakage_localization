@@ -57,7 +57,7 @@ class Trainer:
                 filename='best_checkpoint'
             )
             trainer = LightningTrainer(
-                max_steps=max_steps,
+                max_steps=training_module.to_global_steps(max_steps),
                 val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
@@ -66,8 +66,6 @@ class Trainer:
                 callbacks=[checkpoint]
             )
             trainer.fit(training_module, datamodule=self.data_module)
-            if training_module.hparams.calibrate_classifiers:
-                training_module.calibrate_classifiers()
             trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             training_curves = get_training_curves(logging_dir)
             save_training_curves(training_curves, logging_dir)
@@ -138,10 +136,10 @@ class Trainer:
             )
             if pretrained_classifiers_logging_dir is not None:
                 assert os.path.exists(pretrained_classifiers_logging_dir)
-                pretrained_module = Module.load_from_checkpoint(os.path.join(pretrained_classifiers_logging_dir, 'final_checkpoint.ckpt'))
+                pretrained_module = Module.load_from_checkpoint(os.path.join(pretrained_classifiers_logging_dir, 'best_checkpoint.ckpt'))
                 training_module.cmi_estimator.classifiers.load_state_dict(pretrained_module.cmi_estimator.classifiers.state_dict())
             trainer = LightningTrainer(
-                max_steps=3*max_steps, # Lightning increments its 'global step counter' every time any optimizer is stepped. We have 3 optimizers.
+                max_steps=training_module.to_global_steps(max_steps),
                 val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',

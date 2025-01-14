@@ -11,9 +11,8 @@ class CondMutInfEstimator(nn.Module):
         classifiers_name: str,
         input_shape: Sequence[int],
         output_classes: int,
-        mutinf_estimate_with_labels: bool = True,
-        classifiers_kwargs: dict = {},
-        calibrate_classifiers: bool = False
+        mutinf_estimate_with_labels: bool = False,
+        classifiers_kwargs: dict = {}
     ):
         super().__init__()
         self.classifiers_name = classifiers_name
@@ -21,7 +20,6 @@ class CondMutInfEstimator(nn.Module):
         self.output_classes = output_classes
         self.mutinf_estimate_with_labels = mutinf_estimate_with_labels
         self.classifiers_kwargs = classifiers_kwargs
-        self.calibrate_classifiers = calibrate_classifiers
         
         self.classifiers = models.load(
             self.classifiers_name,
@@ -30,16 +28,10 @@ class CondMutInfEstimator(nn.Module):
             noise_conditional=True,
             **self.classifiers_kwargs
         )
-        if self.calibrate_classifiers:
-            self.classifiers = CalibratedModel(self.classifiers)
     
-    def get_logits(self, input: torch.Tensor, condition_mask: torch.Tensor, calibrated: bool = False):
+    def get_logits(self, input: torch.Tensor, condition_mask: torch.Tensor):
         masked_input = condition_mask*input + (1-condition_mask)*torch.randn_like(input)
-        if calibrated:
-            assert self.calibrate_classifiers
-            logits = self.classifiers.calibrated_forward(masked_input, condition_mask)
-        else:
-            logits = self.classifiers(masked_input, condition_mask)
+        logits = self.classifiers(masked_input, condition_mask)
         logits = logits.reshape(-1, logits.size(-1))
         return logits
     

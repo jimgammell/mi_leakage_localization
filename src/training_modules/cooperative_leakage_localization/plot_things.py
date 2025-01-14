@@ -52,7 +52,7 @@ def plot_vs_reference(logging_dir, inclusion_probs, reference):
 
 def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     training_curves = get_training_curves(logging_dir)
-    fig, axes = plt.subplots(3, 3, figsize=(3*PLOT_WIDTH, 2*PLOT_WIDTH))
+    fig, axes = plt.subplots(4, 3, figsize=(3*PLOT_WIDTH, 2*PLOT_WIDTH))
     axes = axes.flatten()
     if all(x in training_curves for x in ['train_etat_loss', 'val_etat_loss']):
         axes[0].plot(*training_curves['train_etat_loss'], color='blue', linestyle='--', label='train', **PLOT_KWARGS)
@@ -60,6 +60,9 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     if all(x in training_curves for x in ['train_theta_loss', 'val_theta_loss']):
         axes[1].plot(*training_curves['train_theta_loss'], color='red', linestyle='--', label='train', **PLOT_KWARGS)
         axes[1].plot(*training_curves['val_theta_loss'], color='red', linestyle='-', label='val', **PLOT_KWARGS)
+        if ('train_theta_loss_calibrated' in training_curves) and ('val_theta_loss_calibrated' in training_curves):
+            axes[1].plot(*training_curves['train_theta_loss_calibrated'], color='blue', linestyle='--', **PLOT_KWARGS)
+            axes[1].plot(*training_curves['val_theta_loss_calibrated'], color='blue', linestyle='-', **PLOT_KWARGS)
     if all(x in training_curves for x in ['train_theta_rank', 'val_theta_rank']):
         axes[2].plot(*training_curves['train_theta_rank'], color='red', linestyle='--', label='train', **PLOT_KWARGS)
         axes[2].plot(*training_curves['val_theta_rank'], color='red', linestyle='-', label='val', **PLOT_KWARGS)
@@ -89,6 +92,10 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
         axes[7].legend()
     if 'gmmperfcorr' in training_curves:
         axes[8].plot(*training_curves['gmmperfcorr'], color='blue', **PLOT_KWARGS)
+    if 'train_rebar_eta' in training_curves:
+        axes[9].plot(*training_curves['train_rebar_eta'], color='blue', **PLOT_KWARGS)
+    if 'train_rebar_tau' in training_curves:
+        axes[10].plot(*training_curves['train_rebar_tau'], color='blue', **PLOT_KWARGS)
     for ax in axes:
         ax.set_xlabel('Training step')
     axes[0].set_ylabel(r'Loss ($\tilde{\eta}$)')
