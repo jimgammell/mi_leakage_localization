@@ -122,6 +122,7 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     axes[3].set_yscale('log')
     axes[4].set_yscale('log')
     axes[5].set_yscale('log')
+    axes[11].set_yscale('log')
     fig.suptitle('Cooperative fixed-budget leakage localization training curves')
     fig.tight_layout()
     fig.savefig(os.path.join(logging_dir, 'training_curves.png'), **SAVEFIG_KWARGS)

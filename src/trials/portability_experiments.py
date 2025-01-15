@@ -13,6 +13,7 @@ class Trial:
         trial_config: dict = {},
         seed_count: int = 1,
         batch_size: int = 1000,
+        budgets: Union[float, Sequence[float]] = np.logspace(0, 4, 9),
         override_run_kwargs: dict = {},
         override_leakage_localization_kwargs: dict = {},
         pretrain_classifiers_only: bool = False
@@ -24,8 +25,9 @@ class Trial:
         if self.seed_count != 1:
             raise NotImplementedError
         self.batch_size = batch_size
-        self.run_kwargs = {'max_steps': 100000, 'anim_gammas': False}
-        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'budget': 100, 'theta_lr': 1e-3, 'etat_lr': 1e-3}
+        self.budgets = budgets if hasattr(budgets, '__len__') else [budgets]
+        self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
+        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'etat_lr': 1e-2, 'etat_lr_scheduler_name': 'CosineDecayLRSched'}
         self.run_kwargs.update(override_run_kwargs)
         self.leakage_localization_kwargs.update(override_leakage_localization_kwargs)
         self.pretrain_classifiers_only = pretrain_classifiers_only
@@ -70,34 +72,33 @@ class Trial:
             'all': self.get_leave_0_out_dataset()
         }
         
-    def get_trainer(self, profiling_dataset, attack_dataset):
+    def get_trainer(self, profiling_dataset, attack_dataset, budget):
         trainer = LeakageLocalizationTrainer(
             profiling_dataset, attack_dataset,
             default_data_module_kwargs={'train_batch_size': self.batch_size},
-            default_training_module_kwargs=self.leakage_localization_kwargs
+            default_training_module_kwargs={'budget': budget, **self.leakage_localization_kwargs}
         )
         return trainer
     
     def run_leakage_assessments(self):
-        leakage_assessments = {}
         for dataset_name, (profiling_dataset, attack_dataset) in self.get_datasets().items():
             logging_dir = os.path.join(self.logging_dir, f'dataset_name={dataset_name}')
             os.makedirs(logging_dir, exist_ok=True)
-            trainer = self.get_trainer(profiling_dataset, attack_dataset)
+            trainer = self.get_trainer(profiling_dataset, attack_dataset, budget=1.0)
             trainer.pretrain_classifiers(
                 os.path.join(logging_dir, 'classifiers_pretrain'),
-                max_steps=self.run_kwargs['max_steps']//10
+                max_steps=self.run_kwargs['max_steps']
             )
-            if not self.pretrain_classifiers_only:
+            for budget in self.budgets:
+                subdir = os.path.join(logging_dir, f'budget={budget}')
+                os.makedirs(subdir, exist_ok=True)
+                trainer = self.get_trainer(profiling_dataset, attack_dataset, budget=budget)
                 leakage_assessment = trainer.run(
-                    os.path.join(logging_dir, 'leakage_localization'),
+                    subdir,
                     pretrained_classifiers_logging_dir=os.path.join(logging_dir, 'classifiers_pretrain'),
                     **self.run_kwargs
                 )
-            else:
-                os.makedirs(os.path.join(logging_dir, 'leakage_localization'), exist_ok=True)
-                leakage_assessment = None
-            np.savez(os.path.join(logging_dir, 'leakage_localization', 'leakage_assessment.npy'), leakage_assessment=leakage_assessment)
+                np.savez(os.path.join(subdir, 'leakage_assessment.npz'), leakage_assessment=leakage_assessment)
     
     def __call__(self):
         self.run_leakage_assessments()

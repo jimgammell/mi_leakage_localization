@@ -23,7 +23,7 @@ class TemperaturePredictor(nn.Module):
         ]))
     
     def forward(self, x):
-        return 1 + nn.functional.softplus(self.predictor(x))
+        return 1 + self.predictor(x).exp()
 
 class Module(L.LightningModule):
     def __init__(self,
@@ -35,9 +35,9 @@ class Module(L.LightningModule):
         etat_lr_scheduler_kwargs: dict = {},
         theta_lr: float = 1e-3,
         etat_lr: float = 1e-3,
-        etat_beta_1: float = 0.99,
-        etat_beta_2: float = 0.99999,
-        etat_eps: float = 1e-4,
+        etat_beta_1: float = 0.9,
+        etat_beta_2: float = 0.999,
+        etat_eps: float = 1e-8,
         theta_weight_decay: float = 0.0,
         etat_weight_decay: float = 0.0,
         budget: float = 50.0,
@@ -105,8 +105,8 @@ class Module(L.LightningModule):
         
     def get_rebar_eta_and_tau(self):
         assert self.hparams.gradient_estimator == 'REBAR'
-        rebar_eta = self.hparams.eps + nn.functional.softplus(self.rebar_etat)
-        rebar_tau = self.hparams.eps + nn.functional.softplus(self.rebar_taut)
+        rebar_eta = self.hparams.eps + self.rebar_etat.exp()
+        rebar_tau = self.hparams.eps + self.rebar_taut.exp()
         return rebar_eta, rebar_tau
     
     def configure_optimizers(self):
@@ -142,11 +142,11 @@ class Module(L.LightningModule):
             {'optimizer': self.etat_optimizer, 'lr_scheduler': {'scheduler': self.etat_lr_scheduler, 'interval': 'step'}}
         ]
         if self.hparams.calibrate_classifiers:
-            self.to_temperature_optimizer = optim.Adam(self.to_temperature.parameters(), lr=2*self.hparams.theta_lr)
+            self.to_temperature_optimizer = optim.Adam(self.to_temperature.parameters(), lr=self.hparams.theta_lr, betas=(0.9, 0.99999))
             self.to_temperature_lr_scheduler = utils.lr_schedulers.NoOpLRSched(self.to_temperature_optimizer)
             rv.append({'optimizer': self.to_temperature_optimizer, 'lr_scheduler': {'scheduler': self.to_temperature_lr_scheduler, 'interval': 'step'}})
         if self.hparams.gradient_estimator == 'REBAR':
-            self.rebar_params_optimizer = optim.Adam([self.rebar_etat, self.rebar_taut], lr=10*self.hparams.etat_lr, betas=(0.9, 0.99999))
+            self.rebar_params_optimizer = optim.Adam([self.rebar_etat, self.rebar_taut], lr=self.hparams.etat_lr, betas=(0.9, 0.99999))
             self.rebar_params_lr_scheduler = etat_lr_scheduler_constructor(self.rebar_params_optimizer, total_steps=self.total_steps, **self.hparams.etat_lr_scheduler_kwargs)
             rv.append({'optimizer': self.rebar_params_optimizer, 'lr_scheduler': {'scheduler': self.rebar_params_lr_scheduler, 'interval': 'step'}})
         return rv
@@ -270,7 +270,7 @@ class Module(L.LightningModule):
             with torch.no_grad():
                 val_logits = self.cmi_estimator.get_logits(self.cal_trace[:batch_size, :, :].repeat(4, 1, 1), bb)
             temperature = self.to_temperature(bb.flatten(start_dim=1))
-            val_loss = nn.functional.cross_entropy(val_logits/temperature, self.cal_labels[:batch_size].repeat(4))
+            val_loss = nn.functional.cross_entropy(val_logits/temperature, self.cal_labels[:batch_size].repeat(4)) + 1e-4*temperature.mean()**2
             val_loss.backward(inputs=list(self.to_temperature.parameters()))
             to_temperature_optimizer.step()
             to_temperature_lr_scheduler.step()
