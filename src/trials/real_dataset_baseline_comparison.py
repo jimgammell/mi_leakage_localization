@@ -19,6 +19,7 @@ from training_modules import SupervisedTrainer, LeakageLocalizationTrainer
 from training_modules.supervised_deep_sca.plot_things import plot_hparam_sweep
 from utils.aes_multi_trace_eval import AESMultiTraceEvaluator
 from utils.multi_attack_baseline import MultiAttackTrainer
+from utils.template_attack import TemplateAttack
 
 class Trial:
     def __init__(self,
@@ -106,6 +107,21 @@ class Trial:
                     fig.tight_layout()
                     fig.savefig(os.path.join(self.ground_truth_dir, f'{name}.png'))
                     plt.close(fig)
+    
+    def run_template_attacks(self):
+        leakage_assessments = self.get_leakage_assessments()
+        for name, assessments in leakage_assessments.items():
+            if assessments.ndim == 1:
+                assessments = assessments.reshape(1, -1)
+            for seed, assessment in assessments:
+                for poi_count in [1, 5, 9, 13]:
+                    points_of_interest = assessments.argsort()[-poi_count:]
+                    template_attacker = TemplateAttack(points_of_interest, target_key='label')
+                    template_attacker.profile(self.profiling_dataset)
+                    template_attacker.attack(self.attack_dataset)
+                    
+    def compute_random_assessment(self):
+        self.random_assessment = {'random': np.random.randn(self.seed_count, self.profiling_dataset.timesteps_per_trace)}
         
     def compute_first_order_stats(self):
         if not os.path.exists(os.path.join(self.stats_dir, 'stats.npy')):
@@ -216,7 +232,7 @@ class Trial:
             to_name = lambda x: x if wouters_zaid_model is None else f'zaid_{x}' if 'Zaid' in wouters_zaid_model else f'wouters_{x}' if 'Wouters' in wouters_zaid_model else None
             assert to_name('') is not None
             assert os.path.exists(subdir)
-            if True: #not os.path.exists(os.path.join(subdir, to_name('rank_over_time.npy'))):
+            if not os.path.exists(os.path.join(subdir, to_name('rank_over_time.npy'))):
                 evaluator = AESMultiTraceEvaluator(attack_dataloader, subdir if wouters_zaid_model is None else wouters_zaid_model, seed=seed, dataset_name=self.dataset_name)
                 rank_over_time = evaluator()
                 np.save(os.path.join(subdir, to_name('rank_over_time.npy')), rank_over_time)

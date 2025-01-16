@@ -73,7 +73,7 @@ class Trainer:
     
     def htune_pretrain_classifiers(self,
         logging_dir: Union[str, os.PathLike],
-        trial_count: int = 50,
+        trial_count: int = 25,
         max_steps: int = 1000,
         override_kwargs: dict = {}
     ):
