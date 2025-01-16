@@ -137,7 +137,7 @@ class Trial:
     def run_1o_beta_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_beta_sweep')
         leakage_assessments = {}
-        for beta in [1 - 0.25**n for n in range(self.trial_count)]:
+        for beta in [1 - 0.25**n for n in range(self.trial_count//2)] + [1 - 0.5**n for n in range(self.trial_count//2, self.trial_count)]:
             subdir = os.path.join(exp_dir, f'beta={beta}')
             leakage_assessments[1-beta], *_ = self.run_experiment(subdir, {'lpf_beta': beta})
         self.plot_leakage_assessments(

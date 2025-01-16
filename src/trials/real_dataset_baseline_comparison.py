@@ -18,7 +18,7 @@ from utils.baseline_assessments import FirstOrderStatistics, NeuralNetAttributio
 from training_modules import SupervisedTrainer, LeakageLocalizationTrainer
 from training_modules.supervised_deep_sca.plot_things import plot_hparam_sweep
 from utils.aes_multi_trace_eval import AESMultiTraceEvaluator
-from utils.multi_template_attack import TemplateAttackTrainer
+from utils.multi_attack_baseline import MultiAttackTrainer
 
 class Trial:
     def __init__(self,
@@ -73,36 +73,39 @@ class Trial:
         print('\tDone.')
         
     def compute_ground_truth_assessments(self):
-        gmm_assessments = {}
-        for window_size in [1, 3, 5]:
-            gmm_assessments[window_size] = {}
-            if 'ascadv1' in self.dataset_name:
-                targets = ['subbytes', 'r_out', 'subbytes__r_out']
-            else:
-                targets = ['subbytes']
-            fig, axes = plt.subplots(len(targets), 3, figsize=(PLOT_WIDTH*3, PLOT_WIDTH*len(targets)))
-            if len(targets) == 1:
-                axes = axes.reshape(1, 3)
-            if not os.path.exists(os.path.join(self.ground_truth_dir, f'gmm_assessments__window={window_size}.npz')):
-                for target_idx, target in enumerate(targets):
-                    self.profiling_dataset.target_values = [target]
-                    self.attack_dataset.target_values = [target]
-                    trainer = TemplateAttackTrainer(self.profiling_dataset, self.attack_dataset, window_size=window_size, max_parallel_timesteps=100)
-                    info = trainer.get_info()
-                    gmm_assessments[window_size][target] = info
-                np.savez(os.path.join(self.ground_truth_dir, f'gmm_assessments__window={window_size}.npz'), assessments=gmm_assessments[window_size])
-            else:
-                gmm_assessments[window_size] = np.load(os.path.join(self.ground_truth_dir, f'gmm_assessments__window={window_size}.npz'), allow_pickle=True)['assessments'].item()
-            for target_idx, target in enumerate(targets):
-                for key_idx, key in enumerate(['log_p_y_mid_x', 'rank', 'mutinf']):
-                    assessment = gmm_assessments[window_size][target][key]
-                    axes[target_idx, key_idx].plot(assessment, linestyle='none', marker='.', markersize=1, color='blue')
-                    axes[target_idx, key_idx].set_xlabel(r'Timesteps $t$')
-                    axes[target_idx, key_idx].set_ylabel(r'Estimated leakage of $X_t$')
-                    axes[target_idx, key_idx].set_title('Method: ' + key.replace('_', r'\_'))
-            fig.tight_layout()
-            fig.savefig(os.path.join(self.ground_truth_dir, f'gmm_assessments__window={window_size}.png'))
-            plt.close(fig)
+        for seed in range(self.seed_count):
+            for attack_type in ['mlp', 'template']:
+                assessments = {}
+                for window_size in [1, 3, 5]:
+                    name = f'{attack_type}__seed={seed}__window_size={window_size}'
+                    assessments[window_size] = {}
+                    if 'ascadv1' in self.dataset_name:
+                        targets = ['subbytes', 'r_out', 'subbytes__r_out']
+                    else:
+                        targets = ['subbytes']
+                    fig, axes = plt.subplots(len(targets), 3, figsize=(PLOT_WIDTH*3, PLOT_WIDTH*len(targets)))
+                    if len(targets) == 1:
+                        axes = axes.reshape(1, 3)
+                    if not os.path.exists(os.path.join(self.ground_truth_dir, f'{name}.npz')):
+                        for target_idx, target in enumerate(targets):
+                            self.profiling_dataset.target_values = [target]
+                            self.attack_dataset.target_values = [target]
+                            trainer = MultiAttackTrainer(self.profiling_dataset, self.attack_dataset, attack_type=attack_type, window_size=window_size, max_parallel_timesteps=500)
+                            info = trainer.get_info()
+                            assessments[window_size][target] = info
+                        np.savez(os.path.join(self.ground_truth_dir, f'{name}.npz'), assessments=assessments[window_size])
+                    else:
+                        assessments[window_size] = np.load(os.path.join(self.ground_truth_dir, f'{name}.npz'), allow_pickle=True)['assessments'].item()
+                    for target_idx, target in enumerate(targets):
+                        for key_idx, key in enumerate(['log_p_y_mid_x', 'rank', 'mutinf']):
+                            assessment = assessments[window_size][target][key]
+                            axes[target_idx, key_idx].plot(assessment, linestyle='none', marker='.', markersize=1, color='blue')
+                            axes[target_idx, key_idx].set_xlabel(r'Timesteps $t$')
+                            axes[target_idx, key_idx].set_ylabel(r'Estimated leakage of $X_t$')
+                            axes[target_idx, key_idx].set_title('Method: ' + key.replace('_', r'\_'))
+                    fig.tight_layout()
+                    fig.savefig(os.path.join(self.ground_truth_dir, f'{name}.png'))
+                    plt.close(fig)
         
     def compute_first_order_stats(self):
         if not os.path.exists(os.path.join(self.stats_dir, 'stats.npy')):

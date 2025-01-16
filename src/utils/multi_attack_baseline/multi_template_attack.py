@@ -1,10 +1,49 @@
 from typing import *
 import numpy as np
 import torch
-from torch import nn
+from torch import nn, optim
+from lightning import LightningModule
 
-# It is typical to solve for the mean and covariance matrices in closed form. However, this is expensive and we want to do it a ton of times.
-#   Thus, we just use LBFGS (quasi-newton optimizer) to tune these parameters to maximize the likelihood of our data.
+class MultiTemplateAttackModule(LightningModule):
+    def __init__(self,
+        timesteps_per_trace: int,
+        class_count: int,
+        window_size: int = 5,
+        p_y: Optional[Sequence[float]] = None,
+        means: Optional[Sequence[float]] = None
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        self.automatic_optimization = False
+        self.template_attacker = MultiTemplateAttack(
+            self.hparams.timesteps_per_trace,
+            self.hparams.class_count,
+            window_size=self.hparams.window_size,
+            p_y=self.hparams.p_y,
+            means=self.hparams.means
+        )
+    
+    def configure_optimizers(self):
+        self.optimizer = optim.AdamW(self.template_attacker.parameters(), weight_decay=1e-2 if self.hparams.window_size > 1 else 0.0)
+        return {'optimizer': self.optimizer}
+    
+    def training_step(self, batch):
+        trace, labels = batch
+        optimizer = self.optimizers()
+        loss = None
+        def closure():
+            nonlocal loss
+            optimizer.zero_grad()
+            logits = self.template_attacker(trace)
+            batch_size, window_count, class_count = logits.shape
+            _labels = labels.unsqueeze(1).repeat(1, window_count)
+            loss = nn.functional.nll_loss(logits.reshape(-1, self.hparams.class_count), _labels.reshape(-1), reduction='none')
+            loss = loss.reshape(batch_size, window_count).sum(dim=-1).mean()
+            self.manual_backward(loss)
+            return loss
+        optimizer.step(closure)
+        return loss
+
 class MultiTemplateAttack(nn.Module):
     def __init__(self,
         timesteps_per_trace: int,
