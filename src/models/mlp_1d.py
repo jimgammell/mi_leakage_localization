@@ -8,27 +8,33 @@ class MultilayerPerceptron_1d(nn.Module):
     def __init__(self,
         input_shape: Sequence[int],
         output_classes: int = 256,
-        noise_conditional: bool = False
+        layer_count: int = 3,
+        hidden_dim: int = 500,
+        noise_conditional: bool = False,
+        use_dropout: bool = False
     ):
         super().__init__()
         self.input_shape = input_shape
         self.output_classes = output_classes
+        self.layer_count = layer_count
+        self.hidden_dim = hidden_dim
         self.noise_conditional = noise_conditional
+        self.use_dropout = use_dropout
         
-        to_dropout = lambda name, p: [(name, nn.Dropout(p))] if not(self.noise_conditional) else []        
-        self.model = nn.Sequential(OrderedDict([
-            *to_dropout('dropout_in', 0.1),
-            ('dense_in', nn.Linear(2*np.prod(self.input_shape) if self.noise_conditional else np.prod(self.input_shape), 500)),
-            ('act_in', nn.ReLU()),
-            *to_dropout('dropout_h1', 0.2),
-            ('dense_h1', nn.Linear(500, 500)),
-            ('act_h1', nn.ReLU()),
-            *to_dropout('dropout_h2', 0.2),
-            ('dense_h2', nn.Linear(500, 500)),
-            ('act_h2', nn.ReLU()),
-            *to_dropout('dropout_out', 0.3),
-            ('dense_out', nn.Linear(500, self.output_classes))
-        ]))
+        modules = []
+        if self.use_dropout and not(self.noise_conditional):
+            modules.append(('dropout_in', nn.Dropout(0.1)))
+        modules.append(('dense_in', nn.Linear(2*np.prod(self.input_shape) if self.noise_conditional else np.prod(self.input_shape), self.hidden_dim)))
+        modules.append(('act_in', nn.ReLU()))
+        for layer_num in range(1, self.layer_count+1):
+            if self.use_dropout:
+                modules.append((f'dropout_h{layer_num}', nn.Dropout(0.2)))
+                modules.append((f'dense_h{layer_num}', nn.Linear(self.hidden_dim, self.hidden_dim)))
+                modules.append((f'act_h{layer_num}', nn.ReLU()))
+        if self.use_dropout:
+            modules.append(('dropout_out', nn.Dropout(0.3)))
+        modules.append(('dense_out', nn.Linear(self.hidden_dim, self.output_classes)))
+        self.model = nn.Sequential(OrderedDict(modules))
         for mod in self.modules():
             if isinstance(mod, nn.Linear):
                 nn.init.xavier_uniform_(mod.weight)

@@ -1,116 +1,85 @@
 from typing import *
+from collections import defaultdict
 import numpy as np
-import numba
-import torch
 from torch.utils.data import Dataset
-
-@numba.jit(nopython=True)
-def _get_label_bits(count, bit_count):
-    return np.random.choice(2, (count, bit_count), replace=True).astype(np.uint8)
-
-@numba.jit(nopython=True)
-def _get_labels(label_bits, bit_count):
-    basis = np.array([2**x for x in range(bit_count)], dtype=np.uint32).reshape(1, -1)
-    return (label_bits.astype(np.uint32)*basis).sum(axis=-1)
-
-@numba.jit(nopython=True)
-def _get_noise_component(count, dim, sigma):
-    return sigma*np.random.randn(count, dim).astype(np.float32)
-
-@numba.jit(nopython=True)
-def _get_data_dependent_component(labels, bit_count):
-    return (12.*(labels.astype(np.float32) - 0.5*(2**bit_count-1))/((2**bit_count-1)**2)).reshape(-1, 1)
-
-@numba.jit(nopython=True)
-def _get_nth_order_leaky_point(label_bits, leakage_dim, point_count, bit_count, sigma):
-    assert leakage_dim >= 0
-    assert point_count > 0
-    label_bits = label_bits.copy()
-    labels = _get_labels(label_bits, bit_count)
-    if leakage_dim >= 1:
-        masks = [_get_label_bits(len(label_bits), bit_count) for _ in range(leakage_dim-1)]
-        for mask in masks:
-            label_bits = label_bits ^ mask
-        data = np.full((len(label_bits), leakage_dim*point_count), np.nan, dtype=np.float32)
-        data[:, 0] = _get_labels(label_bits, bit_count)
-        for idx, mask in enumerate(masks):
-            data[:, idx+1] = _get_labels(mask, bit_count)
-    else:
-        pass
-    point = _get_noise_component(len(labels), max(1, leakage_dim)*point_count, sigma)
-    for idx in range(leakage_dim):
-        point[:, idx*point_count:(idx+1)*point_count] += _get_data_dependent_component(data[:, idx], bit_count)
-    return point
-
-#@numba.jit(nopython=True)
-def _generate_data(count, point_counts, bit_count, sigma):
-    label_bits = _get_label_bits(count, bit_count)
-    labels = _get_labels(label_bits, bit_count)
-    data = []
-    for leakage_dim, point_count in enumerate(point_counts):
-        if point_count > 0:
-            data.append(_get_nth_order_leaky_point(label_bits, leakage_dim, point_count, bit_count, sigma))
-    data = np.concatenate(data, axis=-1)
-    return data, labels
 
 class SimpleGaussianDataset(Dataset):
     def __init__(self,
-        bit_count: int = 1,
-        point_counts: Sequence[int] = None, # Number of leaky points with each 'order' of leakage. Index 0 denotes non-leaky points, index 1 denotes first-order leakage, index 2 denotes 2nd-order, etc.
-        dataset_size: int = 10000,
-        infinite_dataset: bool = False, # If true, the dataset will 'look' like it has the size given above, but all outputs will be randomly generated.
+        buffer_size: int = 10000,
+        random_feature_count: int = 1,
+        easy_feature_count: int = 1,
+        easy_feature_snrs: Union[float, Sequence[float]] = 1.0,
+        no_hard_feature: bool = False,
         transform: Optional[Callable] = None,
-        target_transform: Optional[Callable] = None,
-        train: bool = True,
-        sigma: float = 1.0
+        target_transform: Optional[Callable] = None
     ):
         super().__init__()
-        train = None # since every dataset is randomly-generated, there is no need to specify train vs. test
-        self.point_counts = [1, 1] if point_counts is None else point_counts
-        self.bit_count = bit_count
-        self.point_counts = point_counts
-        self.dataset_size = dataset_size
-        self.infinite_dataset = infinite_dataset
+        self.buffer_size = buffer_size
+        self.random_feature_count = random_feature_count
+        self.easy_feature_count = easy_feature_count
+        self.easy_feature_snrs = easy_feature_snrs if hasattr(easy_feature_snrs, '__len__') else self.easy_feature_count*[easy_feature_snrs]
+        assert self.easy_feature_count == len(self.easy_feature_snrs)
+        self.easy_feature_snrs = np.array(self.easy_feature_snrs)
+        self.no_hard_feature = no_hard_feature
         self.transform = transform
         self.target_transform = target_transform
-        self.sigma = sigma
-        self.timesteps_per_trace = sum(point_count*max(1, leakage_dim) for leakage_dim, point_count in enumerate(point_counts))
-        assert self.timesteps_per_trace > 0
-        if self.infinite_dataset:
-            self.used_points = 0
-        self.traces, self.labels = self.generate_data(self.dataset_size)
+        self.timesteps_per_trace = self.random_feature_count + self.easy_feature_count + (0 if self.no_hard_feature else 2)
+        self.class_count = 2
         self.return_metadata = False
-        
-    def get_label_bits(self, count):
-        return _get_label_bits(count, self.bit_count)
-    def get_labels(self, label_bits):
-        return _get_labels(label_bits, self.bit_count)
-    def get_noise_component(self, count, dim=1):
-        return _get_noise_component(count, dim, self.sigma)
-    def get_data_dependent_component(self, labels):
-        return _get_data_dependent_component(labels, self.bit_count)
-    def get_nth_order_leaky_point(self, label_bits, n=1):
-        return _get_nth_order_leaky_point(label_bits, n, self.bit_count, self.sigma)
-    def generate_data(self, count):
-        traces, labels = _generate_data(count, self.point_counts, self.bit_count, self.sigma)
-        traces = traces[:, np.newaxis, :]
-        return traces, labels
+        self.item_iterator = self.get_item_iterator()
+    
+    def generate_data(self):
+        labels = np.random.randint(2, size=(self.buffer_size,))
+        random_features = np.random.randn(self.buffer_size, 1, self.random_feature_count)
+        easy_feature_noise_std = np.sqrt(1/(1+self.easy_feature_snrs))
+        easy_feature_signal_std = np.sqrt(self.easy_feature_snrs/(1+self.easy_feature_snrs))
+        easy_features = (
+            easy_feature_noise_std.reshape(1, 1, -1)*np.random.randn(self.buffer_size, 1, self.easy_feature_count)
+            + 2*easy_feature_signal_std.reshape(1, 1, -1)*labels.reshape(-1, 1, 1).astype(float)
+        )
+        if not self.no_hard_feature:
+            masks = np.random.randint(2, size=(self.buffer_size,))
+            masked_labels = masks ^ labels
+            masks_feature = (
+                np.sqrt(0.5)*np.random.randn(self.buffer_size, 1, 1)
+                + 2*np.sqrt(0.5)*masks.reshape(-1, 1, 1).astype(float)
+            )
+            masked_labels_feature = (
+                np.sqrt(0.5)*np.random.randn(self.buffer_size, 1, 1)
+                + 2*np.sqrt(0.5)*masked_labels.reshape(-1, 1, 1).astype(float)
+            )
+            datapoints = np.concatenate([random_features, easy_features, masks_feature, masked_labels_feature], axis=-1)
+        else:
+            datapoints = np.concatenate([random_features, easy_features], axis=-1)
+        return datapoints, labels
+    
+    def get_item_iterator(self):
+        while True:
+            datapoints, labels = self.generate_data()
+            for datapoint, label in zip(datapoints, labels):
+                if self.transform is not None:
+                    datapoint = self.transform(datapoint)
+                if self.target_transform is not None:
+                    label = self.target_transform(label)
+                yield datapoint, label
     
     def __getitem__(self, idx):
-        if self.infinite_dataset:
-            if self.used_points >= self.dataset_size:
-                self.traces, self.labels = self.generate_data(self.dataset_size)
-                self.used_points = 0
-            self.used_points += 1
-        trace, label = self.traces[idx], self.labels[idx]
-        if self.transform is not None:
-            trace = self.transform(trace)
-        if self.target_transform is not None:
-            label = self.target_transform(label)
-        if self.return_metadata:
-            return trace, label, {'label': label}
+        if hasattr(idx, '__len__'):
+            datapoints, labels = [], []
+            for _ in range(len(idx)):
+                datapoint, label = next(self.item_iterator)
+                datapoints.append(datapoint)
+                labels.append(label)
+            datapoints = np.stack(datapoints)
+            labels = np.stack(labels)
         else:
-            return trace, label
+            datapoints, labels = next(self.item_iterator)
+        datapoints = datapoints.astype(np.float32)
+        labels = labels.astype(np.int64)
+        if self.return_metadata:
+            return datapoints, labels, {'label': labels}
+        else:
+            return datapoints, labels
     
     def __len__(self):
-        return self.dataset_size
+        return self.buffer_size

@@ -34,13 +34,16 @@ class Module(L.LightningModule):
         etat_lr_scheduler_name: str = None,
         etat_lr_scheduler_kwargs: dict = {},
         theta_lr: float = 1e-3,
+        theta_beta_1: float = 0.9,
         etat_lr: float = 1e-3,
         etat_beta_1: float = 0.9,
         etat_beta_2: float = 0.999,
         etat_eps: float = 1e-8,
         theta_weight_decay: float = 0.0,
         etat_weight_decay: float = 0.0,
+        ent_penalty: float = 0.0,
         budget: float = 50.0,
+        adversarial_mode: bool = False,
         timesteps_per_trace: Optional[int] = None,
         class_count: int = 256,
         gradient_estimator: Literal['REINFORCE', 'REBAR'] = 'REBAR',
@@ -49,7 +52,7 @@ class Module(L.LightningModule):
         eps: float = 1e-6, # Constant that is added/subtracted from various things for numerical stability
         train_theta: bool = True,
         train_etat: bool = True,
-        calibrate_classifiers: bool = True, # Should we do an online temperature calibration for the classifiers? Prevents overconfidence and makes val loss more-correlated w/ performance
+        calibrate_classifiers: bool = False, # Should we do an online temperature calibration for the classifiers? Prevents overconfidence and makes val loss more-correlated w/ performance
         compute_gmm_ktcc: bool = False,
         reference_leakage_assessment: Optional[np.ndarray] = None
     ):
@@ -71,7 +74,8 @@ class Module(L.LightningModule):
         )
         self.selection_mechanism = SelectionMechanism(
             self.hparams.timesteps_per_trace,
-            C=self.hparams.budget
+            C=self.hparams.budget,
+            adversarial_mode=self.hparams.adversarial_mode
         )
         if self.hparams.calibrate_classifiers:
             self.to_temperature = TemperaturePredictor(self.hparams.timesteps_per_trace)
@@ -121,7 +125,7 @@ class Module(L.LightningModule):
             else:
                 theta_no_weight_decay.append(param)
         theta_param_groups = [{'params': theta_yes_weight_decay, 'weight_decay': self.hparams.theta_weight_decay}, {'params': theta_no_weight_decay, 'weight_decay': 0.0}]
-        self.theta_optimizer = optim.AdamW(theta_param_groups, lr=self.hparams.theta_lr)
+        self.theta_optimizer = optim.AdamW(theta_param_groups, lr=self.hparams.theta_lr, betas=(self.hparams.theta_beta_1, 0.999))
         theta_lr_scheduler_constructor, etat_lr_scheduler_constructor = map(
             lambda x: (
                 x if isinstance(x, (optim.lr_scheduler.LRScheduler))
@@ -234,6 +238,10 @@ class Module(L.LightningModule):
             mutinf_b = mutinf_b.detach()
             log_p_b = self.selection_mechanism.log_pmf(b)
             etat_loss = -((mutinf_b - rebar_eta*mutinf_rb_tilde_detached)*log_p_b + rebar_eta*mutinf_rb - rebar_eta*mutinf_rb_tilde).mean()
+            if self.hparams.adversarial_mode:
+                etat_loss = -1*etat_loss
+            if self.hparams.ent_penalty > 0:
+                etat_loss = etat_loss + self.hparams.ent_penalty*(1 + log_p_b.detach().mean())*log_p_b.mean()
             rv.update({'etat_loss': etat_loss.detach()})
             rv.update({'hard_eta_loss': -mutinf_b.detach().cpu().numpy().mean()})
         else:

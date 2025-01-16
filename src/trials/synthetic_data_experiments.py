@@ -53,12 +53,12 @@ class Trial:
         batch_size: int = 1000,
         timestep_count: int = 101,
         trial_count: int = 8,
-        budgets: Union[float, Sequence[float]] = np.logspace(-1, 3, 9),
+        budgets: Union[float, Sequence[float]] = np.logspace(-1, 3, 5),
         pretrain_classifiers_only: bool = False
     ):
         self.logging_dir = logging_dir
         self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
-        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'etat_lr': 1e-3}
+        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'etat_lr': 1e-3, 'calibrate_classifiers': False, 'ent_penalty': 1e-2}
         self.run_kwargs.update(override_run_kwargs)
         self.leakage_localization_kwargs.update(override_leakage_localization_kwargs)
         self.batch_size = batch_size
@@ -75,17 +75,17 @@ class Trial:
         data_var: float = 1.0,
         shuffle_locs: int = 1,
         max_no_ops: int = 0,
-        lpf_beta: float = 0.0    
+        lpf_beta: float = 0.9   
     ):
         leaky_count = shuffle_locs*(leaky_1o_count + 2*leaky_2o_count)
         if leaky_count > 0:
-            leaky_pts = np.linspace(0, self.timestep_count-1, shuffle_locs*leaky_count+2)[1:-1].astype(int)
+            leaky_pts = np.linspace(0, self.timestep_count-1, leaky_count+2)[1:-1].astype(int)
             leaky_1o_pts = leaky_pts[:shuffle_locs*leaky_1o_count] if leaky_1o_count > 0 else None
             leaky_2o_pts = leaky_pts[shuffle_locs*leaky_1o_count:].reshape(2, -1) if leaky_2o_count > 0 else None
         else:
             leaky_pts = leaky_1o_pts = leaky_2o_pts = None
         profiling_dataset = SyntheticAES(
-            infinite_dataset=False,
+            infinite_dataset=True,
             timesteps_per_trace=self.timestep_count,
             leaking_timestep_count_1o=0,
             leaking_timestep_count_2o=0,
@@ -137,7 +137,7 @@ class Trial:
     def run_1o_beta_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_beta_sweep')
         leakage_assessments = {}
-        for beta in [1 - 0.5**n for n in range(self.trial_count)]:
+        for beta in [1 - 0.25**n for n in range(self.trial_count)]:
             subdir = os.path.join(exp_dir, f'beta={beta}')
             leakage_assessments[1-beta], *_ = self.run_experiment(subdir, {'lpf_beta': beta})
         self.plot_leakage_assessments(

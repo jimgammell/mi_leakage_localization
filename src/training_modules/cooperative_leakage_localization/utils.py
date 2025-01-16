@@ -53,11 +53,12 @@ class CondMutInfEstimator(nn.Module):
         assert False
 
 class SelectionMechanism(nn.Module):
-    def __init__(self, timesteps_per_trace: int, C: float = 1.0, average_gamma: bool = False):
+    def __init__(self, timesteps_per_trace: int, C: float = 1.0, average_gamma: bool = False, adversarial_mode: bool = False):
         super().__init__()
         self.timesteps_per_trace = timesteps_per_trace
         self.register_buffer('C', torch.tensor(C, dtype=torch.float))
         self.average_gamma = average_gamma
+        self.adversarial_mode = adversarial_mode
         self.etat = nn.Parameter(torch.zeros((1, self.timesteps_per_trace), dtype=torch.float), requires_grad=True)
         self.register_buffer('accumulated_gamma', torch.zeros((1, self.timesteps_per_trace), dtype=torch.float))
         self.register_buffer('update_count', torch.tensor(0))

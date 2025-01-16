@@ -110,8 +110,8 @@ class SyntheticAES(Dataset):
                     loc = locs[noop_idx]
                     no_ops = numpy_rng.integers(self.max_no_ops+1)
                     if no_ops > 0:
-                        fixed_noise_profile[loc+no_ops:] = fixed_noise_profile[loc:-no_ops]
-                        fixed_noise_profile[loc:loc+no_ops] = self.per_operation_power_consumption[NO_OP_INSTRUCTION]
+                        #fixed_noise_profile[loc+no_ops:] = fixed_noise_profile[loc:-no_ops]
+                        #fixed_noise_profile[loc:loc+no_ops] = self.per_operation_power_consumption[NO_OP_INSTRUCTION]
                         locs[noop_idx] += no_ops
             data[locs] = vals
             random_noise = np.sqrt(self.residual_var)*numpy_rng.standard_normal(size=self.timesteps_per_trace+LPF_BURN_IN_CYCLES, dtype=np.float32)
@@ -126,7 +126,7 @@ class SyntheticAES(Dataset):
     def __getitem__(self, idx):
         if self.infinite_dataset:
             trace, metadata = self.generate_datapoints(1 if not hasattr(idx, '__len__') else len(idx))
-            if isinstance(idx, int):
+            if not hasattr(idx, '__len__'):
                 trace = trace[0, ...]
                 metadata = {key: val[0] for key, val in metadata.items()}
             target = np.stack([metadata[key] for key in self.target_values]).squeeze()

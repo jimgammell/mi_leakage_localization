@@ -15,10 +15,11 @@ from utils.gmm_performance_correlation import GMMPerformanceCorrelation
 from trials.real_dataset_baseline_comparison import Trial as RealBaselineComparisonTrial
 from trials.synthetic_data_experiments import Trial as SyntheticTrial
 from trials.portability_experiments import Trial as PortabilityTrial
+from trials.toy_gaussian_experiments import Trial as ToyGaussianTrial
 
 AVAILABLE_DATASETS = (
     [x.split('.')[0] for x in os.listdir(CONFIG_DIR) if x.endswith('.yaml') and not(x in ['default_config.yaml', 'global_variables.yaml'])]
-     + ['synthetic', 'portability']
+     + ['synthetic', 'portability', 'toy_gaussian']
 )
 with open(os.path.join(CONFIG_DIR, 'default_config.yaml'), 'r') as f:
     DEFAULT_CONFIG = yaml.load(f, Loader=yaml.FullLoader)
@@ -41,6 +42,11 @@ def main():
     
     if dataset == 'synthetic':
         trial = SyntheticTrial(
+            logging_dir=trial_dir
+        )
+        trial()
+    elif dataset == 'toy_gaussian':
+        trial = ToyGaussianTrial(
             logging_dir=trial_dir
         )
         trial()

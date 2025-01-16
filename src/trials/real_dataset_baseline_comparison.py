@@ -18,6 +18,7 @@ from utils.baseline_assessments import FirstOrderStatistics, NeuralNetAttributio
 from training_modules import SupervisedTrainer, LeakageLocalizationTrainer
 from training_modules.supervised_deep_sca.plot_things import plot_hparam_sweep
 from utils.aes_multi_trace_eval import AESMultiTraceEvaluator
+from utils.multi_template_attack import TemplateAttackTrainer
 
 class Trial:
     def __init__(self,
@@ -43,6 +44,10 @@ class Trial:
         os.makedirs(self.leakage_localization_dir, exist_ok=True)
         self.supervised_hparam_sweep_dir = os.path.join(self.logging_dir, 'supervised_hparam_sweep')
         os.makedirs(self.supervised_hparam_sweep_dir, exist_ok=True)
+        self.ll_classifiers_hparam_sweep_dir = os.path.join(self.logging_dir, 'll_classifiers_hparam_sweep')
+        os.makedirs(self.ll_classifiers_hparam_sweep_dir, exist_ok=True)
+        self.ground_truth_dir = os.path.join(self.logging_dir, 'ground_truth_assessments')
+        os.makedirs(self.ground_truth_dir, exist_ok=True)
         
         print('Constructing datasets...')
         if self.dataset_name == 'dpav4':
@@ -66,6 +71,38 @@ class Trial:
         else:
             assert False
         print('\tDone.')
+        
+    def compute_ground_truth_assessments(self):
+        gmm_assessments = {}
+        for window_size in [1, 3, 5]:
+            gmm_assessments[window_size] = {}
+            if 'ascadv1' in self.dataset_name:
+                targets = ['subbytes', 'r_out', 'subbytes__r_out']
+            else:
+                targets = ['subbytes']
+            fig, axes = plt.subplots(len(targets), 3, figsize=(PLOT_WIDTH*3, PLOT_WIDTH*len(targets)))
+            if len(targets) == 1:
+                axes = axes.reshape(1, 3)
+            if not os.path.exists(os.path.join(self.ground_truth_dir, f'gmm_assessments__window={window_size}.npz')):
+                for target_idx, target in enumerate(targets):
+                    self.profiling_dataset.target_values = [target]
+                    self.attack_dataset.target_values = [target]
+                    trainer = TemplateAttackTrainer(self.profiling_dataset, self.attack_dataset, window_size=window_size, max_parallel_timesteps=100)
+                    info = trainer.get_info()
+                    gmm_assessments[window_size][target] = info
+                np.savez(os.path.join(self.ground_truth_dir, f'gmm_assessments__window={window_size}.npz'), assessments=gmm_assessments[window_size])
+            else:
+                gmm_assessments[window_size] = np.load(os.path.join(self.ground_truth_dir, f'gmm_assessments__window={window_size}.npz'), allow_pickle=True)['assessments'].item()
+            for target_idx, target in enumerate(targets):
+                for key_idx, key in enumerate(['log_p_y_mid_x', 'rank', 'mutinf']):
+                    assessment = gmm_assessments[window_size][target][key]
+                    axes[target_idx, key_idx].plot(assessment, linestyle='none', marker='.', markersize=1, color='blue')
+                    axes[target_idx, key_idx].set_xlabel(r'Timesteps $t$')
+                    axes[target_idx, key_idx].set_ylabel(r'Estimated leakage of $X_t$')
+                    axes[target_idx, key_idx].set_title('Method: ' + key.replace('_', r'\_'))
+            fig.tight_layout()
+            fig.savefig(os.path.join(self.ground_truth_dir, f'gmm_assessments__window={window_size}.png'))
+            plt.close(fig)
         
     def compute_first_order_stats(self):
         if not os.path.exists(os.path.join(self.stats_dir, 'stats.npy')):
@@ -98,6 +135,19 @@ class Trial:
         else:
             print('Found existing supervised hparam sweep.')
         self.optimal_hparams = plot_hparam_sweep(self.supervised_hparam_sweep_dir)
+        print(f'Optimal hyperparameters on {self.dataset_name}: {self.optimal_hparams}')
+    
+    def run_ll_classifiers_hparam_sweep(self):
+        if not os.path.exists(os.path.join(self.ll_classifiers_hparam_sweep_dir, 'results.pickle')):
+            print('Running LL classifiers hparam sweep...')
+            kwargs = copy(self.trial_config['default_kwargs'])
+            kwargs.update(self.trial_config['classifiers_pretrain_kwargs'])
+            ll_trainer = LeakageLocalizationTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=kwargs)
+            ll_trainer.htune_pretrain_classifiers(logging_dir=self.ll_classifiers_hparam_sweep_dir, max_steps=self.trial_config['max_classifiers_pretrain_steps'])
+            print('\tDone.')
+        else:
+            print('Found existing LL classifier pretraining sweep.')
+        self.optimal_hparams = plot_hparam_sweep(self.ll_classifiers_hparam_sweep_dir)
         print(f'Optimal hyperparameters on {self.dataset_name}: {self.optimal_hparams}')
     
     def train_supervised_model(self):
@@ -330,13 +380,15 @@ class Trial:
         plt.close(fig)
     
     def __call__(self):
+        if ('compute_ground_truth_assessments' in self.trial_config) and self.trial_config['compute_ground_truth_assessments']:
+            self.compute_ground_truth_assessments()
         if ('compute_first_order_stats' in self.trial_config) and self.trial_config['compute_first_order_stats']:
             self.compute_first_order_stats()
         if ('run_supervised_hparam_sweep' in self.trial_config) and self.trial_config['run_supervised_hparam_sweep']:
             self.run_supervised_hparam_sweep()
         if ('train_supervised_model' in self.trial_config) and self.trial_config['train_supervised_model']:
             self.train_supervised_model()
-        self.plot_supervised_training_curves()
+            self.plot_supervised_training_curves()
         if ('compute_nn_attributions' in self.trial_config) and self.trial_config['compute_nn_attributions']:
             self.compute_neural_net_attributions()
             if self.dataset_name == 'dpav4':
@@ -359,6 +411,8 @@ class Trial:
                 self.compute_supervised_ranks_over_time()
                 self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__AES_HD')
                 self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
+        if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
+            self.run_ll_classifiers_hparam_sweep()
         if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:
             self.pretrain_leakage_localization_classifiers()
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:

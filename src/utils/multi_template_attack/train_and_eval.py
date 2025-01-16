@@ -1,4 +1,5 @@
 from typing import *
+import os
 from copy import copy
 from tqdm.auto import tqdm
 import logging
@@ -17,7 +18,8 @@ class TimeSubsampleTransform(nn.Module):
         super().__init__()
         self.time_indices = time_indices
     def forward(self, x):
-        return x[..., self.time_indices]
+        x = x[..., self.time_indices]
+        return x
 
 def apply_time_subsample_transform(dataset: Dataset, time_indices: Sequence[int]):
     if dataset.transform is None:
@@ -34,8 +36,8 @@ class TemplateAttackTrainer:
     ):
         self.profiling_dataset = profiling_dataset
         self.attack_dataset = attack_dataset
-        trace_mean = self.profiling_dataset.traces.mean(axis=0, keepdims=True)
-        trace_std = self.profiling_dataset.traces.std(axis=0, keepdims=True)
+        trace_mean = self.profiling_dataset.traces.mean(axis=0).reshape(1, -1)
+        trace_std = self.profiling_dataset.traces.std(axis=0).reshape(1, -1)
         standardize_transform = Lambda(lambda x: (x - trace_mean) / trace_std)
         self.profiling_dataset.transform = standardize_transform
         self.attack_dataset.transform = standardize_transform
@@ -88,12 +90,12 @@ class TemplateAttackTrainer:
     def get_sequence_info(self, timesteps, means: Optional[Sequence[float]] = None):
         training_module = self.get_training_module(timesteps, means=means)
         profiling_dataset, attack_dataset = self.get_subsampled_datasets(timesteps)
-        profiling_dataloader = DataLoader(profiling_dataset, batch_size=len(profiling_dataset))
-        attack_dataloader = DataLoader(attack_dataset, batch_size=len(attack_dataset))
+        profiling_dataloader = DataLoader(profiling_dataset, batch_size=len(profiling_dataset), num_workers=5)
+        attack_dataloader = DataLoader(attack_dataset, batch_size=len(attack_dataset), num_workers=5)
         logger = logging.getLogger('pytorch_lightning')
         logger.setLevel(logging.ERROR)
         trainer = LightningTrainer(
-            max_steps=100, logger=False, enable_checkpointing=False, enable_progress_bar=False
+            max_steps=100, logger=False, enable_checkpointing=False, enable_progress_bar=True
         )
         trainer.fit(training_module, train_dataloaders=profiling_dataloader)
         logger.setLevel(logging.INFO)

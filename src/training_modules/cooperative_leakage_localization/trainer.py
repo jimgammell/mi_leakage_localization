@@ -79,8 +79,6 @@ class Trainer:
     ):
         lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -2)], start=[])
         beta1_vals = [0.0, 0.5, 0.9, 0.99]
-        beta2_vals = [0.9, 0.99, 0.999, 0.9999, 0.99999]
-        eps_vals = [1e-8, 1e-4, 1e0]
         weight_decay_vals = [0.0, 1e-4, 1e-2]
         lr_schedulers = [None, 'CosineDecayLRSched']
         results = defaultdict(list)
@@ -88,12 +86,10 @@ class Trainer:
             experiment_dir = os.path.join(logging_dir, f'trial_{trial_idx}')
             os.makedirs(experiment_dir, exist_ok=True)
             hparams = {
-                'lr': np.random.choice(lr_vals),
-                'beta_1': np.random.choice(beta1_vals),
-                'beta_2': np.random.choice(beta2_vals),
-                'eps': np.random.choice(eps_vals),
-                'weight_decay': np.random.choice(weight_decay_vals),
-                'lr_scheduler_name': np.random.choice(lr_schedulers)
+                'theta_lr': np.random.choice(lr_vals),
+                'theta_beta_1': np.random.choice(beta1_vals),
+                'theta_weight_decay': np.random.choice(weight_decay_vals),
+                'theta_lr_scheduler_name': np.random.choice(lr_schedulers)
             }
             override_kwargs.update(hparams)
             self.pretrain_classifiers(
@@ -106,11 +102,11 @@ class Trainer:
             training_curves = get_training_curves(experiment_dir)
             for key, val in hparams.items():
                 results[key].append(val)
-            optimal_idx = np.argmin(training_curves['val_rank'][-1])
-            results['min_rank'].append(training_curves['val_rank'][-1][optimal_idx])
-            results['final_rank'].append(training_curves['val_rank'][-1][-1])
-            results['min_loss'].append(training_curves['val_loss'][-1][optimal_idx])
-            results['final_loss'].append(training_curves['val_loss'][-1][-1])
+            optimal_idx = np.argmin(training_curves['val_theta_rank'][-1])
+            results['min_rank'].append(training_curves['val_theta_rank'][-1][optimal_idx])
+            results['final_rank'].append(training_curves['val_theta_rank'][-1][-1])
+            results['min_loss'].append(training_curves['val_theta_loss'][-1][optimal_idx])
+            results['final_loss'].append(training_curves['val_theta_loss'][-1][-1])
         with open(os.path.join(logging_dir, 'results.pickle'), 'wb') as f:
             pickle.dump(results, f)
     
