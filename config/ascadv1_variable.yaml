@@ -5,8 +5,9 @@ run_supervised_hparam_sweep: false
 train_supervised_model: false
 compute_nn_attributions: false
 pretrain_classifiers: false
-run_leakage_localization: false
 run_ll_classifiers_hparam_sweep: true
+run_leakage_localization: false
+hparam_tune: false
 max_classifiers_pretrain_steps: 50000
 max_leakage_localization_steps: 4000
 default_kwargs:

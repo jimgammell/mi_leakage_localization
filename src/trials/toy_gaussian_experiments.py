@@ -12,15 +12,17 @@ from utils.baseline_assessments import NeuralNetAttribution, FirstOrderStatistic
 class Trial:
     def __init__(self,
         logging_dir: Union[str, os.PathLike] = None,
+        seed_count: int = 1,
         trial_count: int = 21,
         run_baselines: bool = True
     ):
         self.logging_dir = logging_dir
+        self.seed_count = seed_count
         self.trial_count = trial_count
         self.run_kwargs = {'max_steps': 1000, 'anim_gammas': False}
         self.supervised_kwargs = {'classifier_name': 'mlp-1d', 'classifier_kwargs': {'use_dropout': False, 'layer_count': 1}, 'lr': 1e-3}
         self.leakage_localization_kwargs = {
-            'classifiers_name': 'mlp-1d', 'classifiers_kwargs': {'use_dropout': False, 'layer_count': 1}, 'theta_lr': 1e-3, 'etat_lr': 1e-3, 'adversarial_mode': False
+            'classifiers_name': 'mlp-1d', 'classifiers_kwargs': {'use_dropout': False, 'layer_count': 1}, 'theta_lr': 1e-3, 'etat_lr': 1e-3, 'adversarial_mode': False, 'ent_penalty': 1e-2
         }
         self.run_baselines = run_baselines
     
@@ -80,9 +82,10 @@ class Trial:
         if hparam_test:
             dataset_kwargss = [('test', {'no_hard_feature': True, 'easy_feature_count': 128})]
             budgets = [budgets[-1]]
-        logging_dir = os.path.join(self.logging_dir, '1o_count_sweep')
-        leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
-        np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
+        for seed in range(self.seed_count):
+            logging_dir = os.path.join(self.logging_dir, '1o_count_sweep', f'seed={seed}')
+            leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
+            np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
         if hparam_test:
             return leakage_assessments['test']['leakage_localization']
     
@@ -96,9 +99,10 @@ class Trial:
         if hparam_test:
             dataset_kwargss = [('test', {'no_hard_feature': True, 'random_feature_count': 0, 'easy_feature_count': 2, 'easy_feature_snrs': [1.0, 0.1]})]
             budgets = [budgets[self.trial_count//2]]
-        logging_dir = os.path.join(self.logging_dir, '1o_var_sweep')
-        leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
-        np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
+        for seed in range(self.seed_count):
+            logging_dir = os.path.join(self.logging_dir, '1o_var_sweep', f'seed={seed}')
+            leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
+            np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
     
     def run_xor_var_sweep(self, budgets: Union[float, Sequence[float]] = 1.0, hparam_test: bool = False):
         if not hasattr(budgets, '__len__'):
@@ -110,15 +114,24 @@ class Trial:
         if hparam_test:
             dataset_kwargss = [('test', {'easy_feature_snrs': 0.5})]
             budgets = [budgets[self.trial_count//2]]
-        logging_dir = os.path.join(self.logging_dir, 'xor_var_sweep')
-        leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
-        np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
+        for seed in range(self.seed_count):
+            logging_dir = os.path.join(self.logging_dir, 'xor_var_sweep', f'seed={seed}')
+            leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
+            np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
     
     def __call__(self):
-        self.hparam_sweep()
-        #self.run_1o_count_sweep(np.linspace(0.1, 1.0, self.trial_count))
-        #self.run_1o_var_sweep(1.0)
-        #self.run_xor_var_sweep(1.0)
+        r"""base_dir = r'/home/jgammell/Desktop/mi_leakage_localization/outputs/toy_gaussian/hparam_sweep'
+        subdirs = os.listdir(base_dir)
+        for subdir in subdirs:
+            if not os.path.exists(os.path.join(base_dir, subdir, '1o_count_sweep', 'leakage_assessments.npz')):
+                continue
+            leakage_assessment = np.load(os.path.join(base_dir, subdir, '1o_count_sweep', 'leakage_assessments.npz'), allow_pickle=True)['leakage_assessments'].item()['test']['leakage_localization']
+            min_ratio = leakage_assessment[0] / np.min(leakage_assessment[1:])
+            mean_ratio = leakage_assessment[0] / np.mean(leakage_assessment[1:])
+            print(f'subdir={subdir}, min_ratio={min_ratio}, mean_ratio={mean_ratio}')"""
+        self.run_1o_count_sweep(1.0)
+        self.run_1o_var_sweep(1.0)
+        self.run_xor_var_sweep(1.0)
     
     def hparam_sweep(self):
         orig_logging_dir = self.logging_dir

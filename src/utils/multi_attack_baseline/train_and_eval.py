@@ -39,7 +39,7 @@ class MultiAttackTrainer:
         self.attack_dataset = attack_dataset
         trace_mean = self.profiling_dataset.traces.mean(axis=0).reshape(1, -1)
         trace_std = self.profiling_dataset.traces.std(axis=0).reshape(1, -1)
-        standardize_transform = Lambda(lambda x: (x - trace_mean) / trace_std)
+        standardize_transform = Lambda(lambda x: (x - trace_mean) / (trace_std + 1e-4))
         self.profiling_dataset.transform = self.attack_dataset.transform = standardize_transform
         self.attack_type = attack_type
         self.window_size = window_size
