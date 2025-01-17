@@ -47,6 +47,8 @@ class Trial:
         os.makedirs(self.supervised_hparam_sweep_dir, exist_ok=True)
         self.ll_classifiers_hparam_sweep_dir = os.path.join(self.logging_dir, 'll_classifiers_hparam_sweep')
         os.makedirs(self.ll_classifiers_hparam_sweep_dir, exist_ok=True)
+        self.ll_hparam_sweep_dir = os.path.join(self.logging_dir, 'll_hparam_sweep')
+        os.makedirs(self.ll_hparam_sweep_dir, exist_ok=True)
         self.ground_truth_dir = os.path.join(self.logging_dir, 'ground_truth_assessments')
         os.makedirs(self.ground_truth_dir, exist_ok=True)
         
@@ -91,7 +93,7 @@ class Trial:
                         for target_idx, target in enumerate(targets):
                             self.profiling_dataset.target_values = [target]
                             self.attack_dataset.target_values = [target]
-                            trainer = MultiAttackTrainer(self.profiling_dataset, self.attack_dataset, attack_type=attack_type, window_size=window_size, max_parallel_timesteps=500)
+                            trainer = MultiAttackTrainer(self.profiling_dataset, self.attack_dataset, attack_type=attack_type, window_size=window_size, max_parallel_timesteps=100)
                             info = trainer.get_info()
                             assessments[window_size][target] = info
                         np.savez(os.path.join(self.ground_truth_dir, f'{name}.npz'), assessments=assessments[window_size])
@@ -166,8 +168,25 @@ class Trial:
             print('\tDone.')
         else:
             print('Found existing LL classifier pretraining sweep.')
-        self.optimal_hparams = plot_hparam_sweep(self.ll_classifiers_hparam_sweep_dir)
-        print(f'Optimal hyperparameters on {self.dataset_name}: {self.optimal_hparams}')
+        self.optimal_ll_pretrain_hparams = plot_hparam_sweep(self.ll_classifiers_hparam_sweep_dir)
+        print(f'Optimal hyperparameters on {self.dataset_name}: {self.optimal_ll_pretrain_hparams}')
+    
+    def run_ll_hparam_sweep(self):
+        if not os.path.exists(os.path.join(self.ll_hparam_sweep_dir, 'results.pickle')):
+            print('Running LL hparam sweep...')
+            kwargs = copy(self.trial_config['default_kwargs'])
+            kwargs.update(self.trial_config['classifiers_pretrain_kwargs'])
+            kwargs.update(self.trial_config['leakage_localization_kwargs'])
+            kwargs.update(self.optimal_ll_pretrain_hparams)
+            print(kwargs)
+            ll_trainer = LeakageLocalizationTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=kwargs)
+            ll_trainer.htune_leakage_localization(
+                self.ll_hparam_sweep_dir,
+                pretrained_classifiers_logging_dir=os.path.join(self.ll_classifiers_pretrain_dir, f'seed=0'),
+                max_steps=self.trial_config['max_leakage_localization_steps']
+            )
+        else:
+            print('Found existing LL hparam sweep.')
     
     def train_supervised_model(self):
         for seed in range(self.seed_count):
@@ -317,22 +336,26 @@ class Trial:
         })
     
     def pretrain_leakage_localization_classifiers(self):
-        if not os.path.exists(os.path.join(self.ll_classifiers_pretrain_dir, 'final_checkpoint.ckpt')):
-            print('Pretraining leakage localization classifiers...')
-            trainer = LeakageLocalizationTrainer(
-                self.profiling_dataset, self.attack_dataset,
-                default_training_module_kwargs=self.trial_config['default_kwargs']
-            )
-            classifiers_pretrain_kwargs = copy(self.trial_config['default_kwargs'])
-            classifiers_pretrain_kwargs.update(self.trial_config['classifiers_pretrain_kwargs'])
-            trainer.pretrain_classifiers(
-                logging_dir=self.ll_classifiers_pretrain_dir,
-                max_steps=self.trial_config['max_classifiers_pretrain_steps'],
-                override_kwargs=classifiers_pretrain_kwargs
-            )
-            print('\tDone.')
-        else:
-            print('Found pretrained leakage localization classifiers.')
+        for seed in range(self.seed_count):
+            subdir = os.path.join(self.ll_classifiers_pretrain_dir, f'seed={seed}')
+            os.makedirs(subdir, exist_ok=True)
+            if not os.path.exists(os.path.join(subdir, 'final_checkpoint.ckpt')):
+                print('Pretraining leakage localization classifiers...')
+                trainer = LeakageLocalizationTrainer(
+                    self.profiling_dataset, self.attack_dataset,
+                    default_training_module_kwargs=self.trial_config['default_kwargs']
+                )
+                classifiers_pretrain_kwargs = copy(self.trial_config['default_kwargs'])
+                classifiers_pretrain_kwargs.update(self.trial_config['classifiers_pretrain_kwargs'])
+                classifiers_pretrain_kwargs.update(self.optimal_ll_pretrain_hparams)
+                trainer.pretrain_classifiers(
+                    logging_dir=subdir,
+                    max_steps=self.trial_config['max_classifiers_pretrain_steps'],
+                    override_kwargs=classifiers_pretrain_kwargs
+                )
+                print('\tDone.')
+            else:
+                print('Found pretrained leakage localization classifiers.')
     
     def run_leakage_localization(self):
         if not os.path.exists(os.path.join(self.leakage_localization_dir, 'final_checkpoint.ckpt')):
@@ -432,6 +455,8 @@ class Trial:
                 self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
         if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
             self.run_ll_classifiers_hparam_sweep()
+        if ('run_ll_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_hparam_sweep']:
+            self.run_ll_hparam_sweep()
         if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:
             self.pretrain_leakage_localization_classifiers()
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:

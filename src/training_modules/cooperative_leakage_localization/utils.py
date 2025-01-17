@@ -10,7 +10,7 @@ class CondMutInfEstimator(nn.Module):
         classifiers_name: str,
         input_shape: Sequence[int],
         output_classes: int,
-        mutinf_estimate_with_labels: bool = True,
+        mutinf_estimate_with_labels: bool = False,
         classifiers_kwargs: dict = {}
     ):
         super().__init__()
@@ -53,10 +53,16 @@ class CondMutInfEstimator(nn.Module):
         assert False
 
 class SelectionMechanism(nn.Module):
-    def __init__(self, timesteps_per_trace: int, C: float = 1.0, average_gamma: bool = False, adversarial_mode: bool = False):
+    def __init__(self, timesteps_per_trace: int, C: Optional[float] = None, beta: Optional[float] = None, average_gamma: bool = False, adversarial_mode: bool = False):
         super().__init__()
         self.timesteps_per_trace = timesteps_per_trace
-        self.register_buffer('C', torch.tensor(C, dtype=torch.float))
+        if C is None:
+            assert beta is not None
+            log_C = np.log(self.timesteps_per_trace) + np.log(beta) - np.log(1-beta)
+        else:
+            assert beta is None
+            log_C = np.log(C)
+        self.register_buffer('log_C', torch.tensor(log_C, dtype=torch.float))
         self.average_gamma = average_gamma
         self.adversarial_mode = adversarial_mode
         self.etat = nn.Parameter(torch.zeros((1, self.timesteps_per_trace), dtype=torch.float), requires_grad=True)
@@ -91,7 +97,7 @@ class SelectionMechanism(nn.Module):
     
     def get_gammat(self):
         etat = self.get_etat()
-        gammat = etat + self.C.log() - torch.logsumexp(etat.squeeze(0), dim=0)
+        gammat = etat + self.log_C - torch.logsumexp(etat.squeeze(0), dim=0)
         return gammat
     
     def get_gamma(self):

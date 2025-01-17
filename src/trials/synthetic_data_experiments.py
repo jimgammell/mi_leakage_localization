@@ -53,20 +53,16 @@ class Trial:
         batch_size: int = 1000,
         timestep_count: int = 101,
         trial_count: int = 8,
-        budgets: Union[float, Sequence[float]] = np.logspace(-1, 3, 5),
         pretrain_classifiers_only: bool = False
     ):
         self.logging_dir = logging_dir
         self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
-        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'etat_lr': 1e-3, 'calibrate_classifiers': False, 'ent_penalty': 1e-2}
+        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'etat_lr': 1e-3, 'calibrate_classifiers': False, 'ent_penalty': 0.0, 'starting_prob': 0.5}
         self.run_kwargs.update(override_run_kwargs)
         self.leakage_localization_kwargs.update(override_leakage_localization_kwargs)
         self.batch_size = batch_size
         self.timestep_count = timestep_count
         self.trial_count = trial_count
-        self.budgets = budgets
-        if not hasattr(self.budgets, '__len__'):
-            self.budgets = [self.budgets]
         self.pretrain_classifiers_only = pretrain_classifiers_only
     
     def construct_datasets(self,
@@ -75,7 +71,7 @@ class Trial:
         data_var: float = 1.0,
         shuffle_locs: int = 1,
         max_no_ops: int = 0,
-        lpf_beta: float = 0.9   
+        lpf_beta: float = 0.0   
     ):
         leaky_count = shuffle_locs*(leaky_1o_count + 2*leaky_2o_count)
         if leaky_count > 0:
@@ -99,11 +95,11 @@ class Trial:
         attack_dataset = SyntheticAESLike(profiling_dataset, fixed_key=0)
         return profiling_dataset, attack_dataset, leaky_1o_pts, leaky_2o_pts
     
-    def construct_trainer(self, profiling_dataset, attack_dataset, budget):
+    def construct_trainer(self, profiling_dataset, attack_dataset):
         trainer = LeakageLocalizationTrainer(
             profiling_dataset, attack_dataset,
             default_data_module_kwargs={'train_batch_size': self.batch_size},
-            default_training_module_kwargs={'budget': budget, **self.leakage_localization_kwargs}
+            default_training_module_kwargs={**self.leakage_localization_kwargs}
         )
         return trainer
     
@@ -111,23 +107,21 @@ class Trial:
         os.makedirs(logging_dir, exist_ok=True)
         if os.path.exists(os.path.join(logging_dir, 'leakage_assessments.npz')):
             rv = np.load(os.path.join(logging_dir, 'leakage_assessments.npz'), allow_pickle=True)
-            leakage_assessments = rv['leakage_assessments']
+            leakage_assessments = rv['leakage_assessment']
             locs_1o = rv['locs_1o']
             locs_2o = rv['locs_2o']
         else:
             profiling_dataset, attack_dataset, locs_1o, locs_2o = self.construct_datasets(**kwargs)
-            trainer = self.construct_trainer(profiling_dataset, attack_dataset, 1.0) # classifier pretraining is independent of budget
+            trainer = self.construct_trainer(profiling_dataset, attack_dataset) # classifier pretraining is independent of budget
             trainer.pretrain_classifiers(os.path.join(logging_dir, 'classifiers_pretrain'), max_steps=self.run_kwargs['max_steps'])
             leakage_assessments = {}
-            for budget in self.budgets:
-                trainer = self.construct_trainer(profiling_dataset, attack_dataset, budget)
-                leakage_assessment = trainer.run(
-                    os.path.join(logging_dir, f'll_budget={budget}'),
-                    pretrained_classifiers_logging_dir=os.path.join(logging_dir, 'classifiers_pretrain'),
-                    **self.run_kwargs
-                )
-                leakage_assessments[budget] = leakage_assessment
-            np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments, locs_1o=locs_1o, locs_2o=locs_2o)
+            trainer = self.construct_trainer(profiling_dataset, attack_dataset)
+            leakage_assessment = trainer.run(
+                os.path.join(logging_dir, 'leakage_localization'),
+                pretrained_classifiers_logging_dir=os.path.join(logging_dir, 'classifiers_pretrain'),
+                **self.run_kwargs
+            )
+            np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessment=leakage_assessment, locs_1o=locs_1o, locs_2o=locs_2o)
         return leakage_assessments, locs_1o, locs_2o
     
     def plot_leakage_assessments(self, *args, **kwargs):

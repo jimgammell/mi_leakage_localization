@@ -42,7 +42,6 @@ class Trainer:
             os.makedirs(logging_dir)
             kwargs = copy(self.default_training_module_kwargs)
             kwargs.update(override_kwargs)
-            kwargs['budget'] *= 10
             training_module = Module(
                 train_etat=False,
                 timesteps_per_trace=self.profiling_dataset.timesteps_per_trace,
@@ -148,6 +147,34 @@ class Trainer:
             save_training_curves(training_curves, logging_dir)
             leakage_assessment = training_module.selection_mechanism.get_accumulated_gamma().reshape(-1)
             plot_leakage_assessment(leakage_assessment, os.path.join(logging_dir, 'leakage_assessment.png'))
+        else:
+            leakage_assessment = None
         training_curves = load_training_curves(logging_dir)
         plot_training_curves(logging_dir, anim_gammas=anim_gammas, reference=reference)
         return leakage_assessment
+    
+    def htune_leakage_localization(self,
+        logging_dir: Union[str, os.PathLike],
+        pretrained_classifiers_logging_dir: Optional[Union[str, os.PathLike]] = None,
+        trial_count: int = 25,
+        max_steps: int = 1000,
+        override_kwargs: dict = {}
+    ):
+        etat_lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -2)], start=[])
+        starting_probs = [1e-3, 1e-2, 1e-1, 2.5e-1, 5e-1]
+        ent_penalties = [0.0, 1e-4, 1e-2, 1e0]
+        theta_lr_scalars = [1e-2, 1e-1, 5e-1, 1e0]
+        for trial_idx in range(trial_count):
+            experiment_dir = os.path.join(logging_dir, f'trial_{trial_idx}')
+            os.makedirs(experiment_dir, exist_ok=True)
+            hparams = {
+                'etat_lr': np.random.choice(etat_lr_vals),
+                'theta_lr': self.default_training_module_kwargs['theta_lr']*np.random.choice(theta_lr_scalars),
+                'starting_prob': np.random.choice(starting_probs),
+                'ent_penalty': np.random.choice(ent_penalties)
+            }
+            override_kwargs.update(hparams)
+            leakage_assessment = self.run(
+                experiment_dir, pretrained_classifiers_logging_dir=pretrained_classifiers_logging_dir, max_steps=max_steps, anim_gammas=False, override_kwargs=override_kwargs
+            )
+            np.savez(os.path.join(experiment_dir, 'leakage_assessment.npz'), leakage_assessment=leakage_assessment)

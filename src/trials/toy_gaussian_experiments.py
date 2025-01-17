@@ -1,9 +1,12 @@
 from typing import *
 import os
+from collections import defaultdict
 from copy import copy
+from matplotlib import pyplot as plt
 import numpy as np
 from torch.utils.data import DataLoader
 
+from common import *
 from datasets.simple_gaussian import SimpleGaussianDataset
 from training_modules.cooperative_leakage_localization import LeakageLocalizationTrainer
 from training_modules.supervised_deep_sca import SupervisedTrainer
@@ -13,34 +16,34 @@ class Trial:
     def __init__(self,
         logging_dir: Union[str, os.PathLike] = None,
         seed_count: int = 1,
-        trial_count: int = 21,
+        trial_count: int = 11,
         run_baselines: bool = True
     ):
         self.logging_dir = logging_dir
         self.seed_count = seed_count
         self.trial_count = trial_count
-        self.run_kwargs = {'max_steps': 1000, 'anim_gammas': False}
+        self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
         self.supervised_kwargs = {'classifier_name': 'mlp-1d', 'classifier_kwargs': {'use_dropout': False, 'layer_count': 1}, 'lr': 1e-3}
         self.leakage_localization_kwargs = {
-            'classifiers_name': 'mlp-1d', 'classifiers_kwargs': {'use_dropout': False, 'layer_count': 1}, 'theta_lr': 1e-3, 'etat_lr': 1e-3, 'adversarial_mode': False, 'ent_penalty': 1e-2
+            'classifiers_name': 'mlp-1d', 'classifiers_kwargs': {'use_dropout': False, 'layer_count': 1}, 'theta_lr': 1e-3, 'etat_lr': 1e-3,
+            'adversarial_mode': False, 'ent_penalty': 0.0, 'starting_prob': 0.5,
         }
         self.run_baselines = run_baselines
     
-    def run_experiments(self, logging_dir, dataset_kwargss, budgets, run_baselines: bool = True):
-        assert len(budgets) == len(dataset_kwargss)
+    def run_experiments(self, logging_dir, dataset_kwargss, run_baselines: bool = True):
         leakage_assessments = {}
-        for (trial_name, dataset_kwargs), budget in zip(dataset_kwargss, budgets):
+        for trial_name, dataset_kwargs in dataset_kwargss:
             leakage_assessments[trial_name] = {}
             profiling_dataset = SimpleGaussianDataset(**dataset_kwargs)
             attack_dataset = SimpleGaussianDataset(**dataset_kwargs)
-            if self.run_baselines:
+            if run_baselines and self.run_baselines:
                 first_order_stats = FirstOrderStatistics(profiling_dataset)
-                leakage_assessments['snr'] = first_order_stats.snr_vals['label'].reshape(-1)
-                leakage_assessments['sosd'] = first_order_stats.sosd_vals['label'].reshape(-1)
-                leakage_assessments['cpa'] = first_order_stats.cpa_vals['label'].reshape(-1)
+                leakage_assessments[trial_name]['snr'] = first_order_stats.snr_vals['label'].reshape(-1)
+                leakage_assessments[trial_name]['sosd'] = first_order_stats.sosd_vals['label'].reshape(-1)
+                leakage_assessments[trial_name]['cpa'] = first_order_stats.cpa_vals['label'].reshape(-1)
                 sup_trainer = SupervisedTrainer(
                     profiling_dataset, attack_dataset,
-                    default_data_module_kwargs={'train_batch_size': len(profiling_dataset)},
+                    default_data_module_kwargs={'train_batch_size': len(profiling_dataset)//10},
                     default_training_module_kwargs=self.supervised_kwargs
                 )
                 sup_trainer.run(
@@ -56,101 +59,116 @@ class Trial:
                 leakage_assessments[trial_name]['inputxgrad'] = neural_net_attributor.compute_inputxgrad()
             ll_trainer = LeakageLocalizationTrainer(
                 profiling_dataset, attack_dataset,
-                default_data_module_kwargs={'train_batch_size': len(profiling_dataset)},
-                default_training_module_kwargs={**self.leakage_localization_kwargs, 'budget': budget}
+                default_data_module_kwargs={'train_batch_size': len(profiling_dataset)//10},
+                default_training_module_kwargs={**self.leakage_localization_kwargs}
             )
-            ll_trainer.pretrain_classifiers(os.path.join(logging_dir, trial_name, 'pretrain_classifiers'), max_steps=self.run_kwargs['max_steps'])
+            ll_trainer.pretrain_classifiers(os.path.join(logging_dir, trial_name, 'pretrain_classifiers'), max_steps=self.run_kwargs['max_steps']//10)
             ll_trainer = LeakageLocalizationTrainer(
                 profiling_dataset, attack_dataset,
-                default_data_module_kwargs={'train_batch_size': len(profiling_dataset)},
-                default_training_module_kwargs={**self.leakage_localization_kwargs, 'budget': budget}
+                default_data_module_kwargs={'train_batch_size': len(profiling_dataset)//10},
+                default_training_module_kwargs={**self.leakage_localization_kwargs}
             )
             ll_leakage_assessment = ll_trainer.run(
                 os.path.join(logging_dir, trial_name, 'leakage_localization'),
                 pretrained_classifiers_logging_dir=os.path.join(logging_dir, trial_name, 'pretrain_classifiers'),
-                **self.run_kwargs
+                max_steps=9*(self.run_kwargs['max_steps']//10),
+                anim_gammas=self.run_kwargs['anim_gammas']
             )
             leakage_assessments[trial_name]['leakage_localization'] = ll_leakage_assessment
         return leakage_assessments
     
-    def run_1o_count_sweep(self, budgets: Union[float, Sequence[float]] = 1.0, hparam_test: bool = False):
-        if not hasattr(budgets, '__len__'):
-            budgets = self.trial_count*[budgets]
+    def tune_1o_count_sweep(self):
+        dataset_kwargss = [('none', {'no_hard_feature': True, 'easy_feature_count': 101})]
+        for starting_prob in [0.001, 0.01, 0.1, 0.5]:
+            for ent_penalty in [0.0, 1e-4, 1e-2, 1e0]:
+                out = self.run_experiments(
+                    os.path.join(self.logging_dir, '1o_count_tune', f'starting_prob={starting_prob}__ent_penalty={ent_penalty}'),
+                    dataset_kwargss=dataset_kwargss, run_baselines=False
+                )
+                assessment = out['none']['leakage_localization'].reshape(-1)
+                assessment -= np.min(assessment)
+                assessment /= np.max(assessment)
+                print(f'prob={starting_prob}, ent_penalty={ent_penalty}, diff={np.min(assessment[1:]) - assessment[0]}')
+    
+    def run_1o_count_sweep(self):
         dataset_kwargss = [
-            (f'count={x}', {'no_hard_feature': True, 'easy_feature_count': x}) for x in range(1, self.trial_count+1)
+            (f'count={x}', {'no_hard_feature': True, 'easy_feature_count': x}) for x in [10*x + 1 for x in range(self.trial_count)]
         ][::-1]
-        if hparam_test:
-            dataset_kwargss = [('test', {'no_hard_feature': True, 'easy_feature_count': 128})]
-            budgets = [budgets[-1]]
         for seed in range(self.seed_count):
             logging_dir = os.path.join(self.logging_dir, '1o_count_sweep', f'seed={seed}')
-            leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
-            np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
-        if hparam_test:
-            return leakage_assessments['test']['leakage_localization']
+            if not os.path.exists(os.path.join(logging_dir, 'leakage_assessments.npz')):
+                leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss)
+                np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
+        
+    def plot_1o_count_sweep(self):
+        fig, axes = plt.subplots(1, 3, figsize=(3*PLOT_WIDTH, 1*PLOT_WIDTH))
+        for count in range(1, self.trial_count+1):
+            nn_attr_leakage_assessments = {key: [] for key in ['gradvis', 'saliency', 'lrp', 'occlusion', 'inputxgrad']}
+            ll_leakage_assessment = []
+            for seed in range(self.seed_count):
+                leakage_assessment = np.load(os.path.join(self.logging_dir, '1o_count_sweep', f'seed={seed}', 'leakage_assessments.npz'), allow_pickle=True)['leakage_assessments'].item()
+                for key in nn_attr_leakage_assessments.keys():
+                    _leakage_assessment = leakage_assessment[f'count={count}'][key].reshape(-1)
+                    nn_attr_leakage_assessments[key].append(_leakage_assessment)
+                ll_leakage_assessment.append(leakage_assessment[f'count={count}']['leakage_localization'].reshape(-1))
+            nn_attr_leakage_assessments = {key: np.stack(val) for key, val in nn_attr_leakage_assessments.items()}
+            ll_leakage_assessment = np.stack(ll_leakage_assessment)
+            colors = ['red', 'green', 'blue', 'orange', 'purple']
+            for idx, ((name, assessment), color) in enumerate(zip(nn_attr_leakage_assessments.items(), colors)):
+                assessment -= np.min(assessment, axis=-1, keepdims=True)
+                assessment /= np.max(assessment, axis=-1, keepdims=True)
+                nonleaky_pts = assessment[:, 0]
+                leaky_pts = assessment[:, 1:]
+                diffs = (leaky_pts - nonleaky_pts.reshape(-1, 1)).reshape(-1)
+                axes[1].plot(len(diffs)*[count], diffs, color=color, marker='.', markersize=1, linestyle='none')
+                #axes[1].errorbar([count], [np.median(diffs)], [[np.median(diffs)-np.min(diffs)], [np.max(diffs)-np.median(diffs)]], color=color, fmt='.', )
+            ll_leakage_assessment -= np.min(ll_leakage_assessment, axis=-1, keepdims=True)
+            ll_leakage_assessment /= np.max(ll_leakage_assessment, axis=-1, keepdims=True)
+            nonleaky_pts = ll_leakage_assessment[:, 0]
+            leaky_pts = ll_leakage_assessment[:, 1:]
+            diffs = (leaky_pts - nonleaky_pts.reshape(-1, 1)).reshape(-1)
+            axes[2].plot(len(diffs)*[count], diffs, color='blue', marker='.', linestyle='none')
+            #axes[2].errorbar([count], [np.median(diffs)], [[np.median(diffs)-np.min(diffs)], [np.max(diffs)-np.median(diffs)]], color='blue', fmt='.')
+        for ax in axes:
+            ax.set_xlabel('Leaky point count')
+            ax.set_ylabel('Estimated leakage')
+            ax.set_ylim(-1, 1)
+        axes[0].set_title('First-order statistics')
+        axes[1].set_title('Neural net attribution')
+        axes[2].set_title('Leakage localization')
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.logging_dir, '1o_count_sweep', 'sweep.png'), **SAVEFIG_KWARGS)
+        plt.close(fig)
     
-    def run_1o_var_sweep(self, budgets: Union[float, Sequence[float]] = 1.0, hparam_test: bool = False):
+    def run_1o_var_sweep(self, budgets: Union[float, Sequence[float]] = 1.0):
         if not hasattr(budgets, '__len__'):
             budgets = self.trial_count*[budgets]
         dataset_kwargss = [
             (f'var={x}', {'no_hard_feature': True, 'random_feature_count': 0, 'easy_feature_count': 2, 'easy_feature_snrs': [1.0, x]})
             for x in [0.5**n for n in range(1, self.trial_count//2+1)][::-1] + [1.0] + [2.0**n for n in range(1, self.trial_count//2+1)]
         ]
-        if hparam_test:
-            dataset_kwargss = [('test', {'no_hard_feature': True, 'random_feature_count': 0, 'easy_feature_count': 2, 'easy_feature_snrs': [1.0, 0.1]})]
-            budgets = [budgets[self.trial_count//2]]
         for seed in range(self.seed_count):
             logging_dir = os.path.join(self.logging_dir, '1o_var_sweep', f'seed={seed}')
-            leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
-            np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
+            if not os.path.exists(os.path.join(self.logging_dir, 'leakage_assessments.npz')):
+                leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
+                np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
     
-    def run_xor_var_sweep(self, budgets: Union[float, Sequence[float]] = 1.0, hparam_test: bool = False):
+    def run_xor_var_sweep(self, budgets: Union[float, Sequence[float]] = 1.0):
         if not hasattr(budgets, '__len__'):
             budgets = self.trial_count*[budgets]
         dataset_kwargss = [
             (f'var={x}', {'easy_feature_snrs': x})
             for x in [0.5**n for n in range(1, self.trial_count//2+1)][::-1] + [1.0] + [2.0**n for n in range(1, self.trial_count//2+1)]
         ][::-1]
-        if hparam_test:
-            dataset_kwargss = [('test', {'easy_feature_snrs': 0.5})]
-            budgets = [budgets[self.trial_count//2]]
         for seed in range(self.seed_count):
             logging_dir = os.path.join(self.logging_dir, 'xor_var_sweep', f'seed={seed}')
-            leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
-            np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
+            if not os.path.exists(os.path.join(logging_dir, 'leakage_assessments.npz')):
+                leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
+                np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
     
     def __call__(self):
-        r"""base_dir = r'/home/jgammell/Desktop/mi_leakage_localization/outputs/toy_gaussian/hparam_sweep'
-        subdirs = os.listdir(base_dir)
-        for subdir in subdirs:
-            if not os.path.exists(os.path.join(base_dir, subdir, '1o_count_sweep', 'leakage_assessments.npz')):
-                continue
-            leakage_assessment = np.load(os.path.join(base_dir, subdir, '1o_count_sweep', 'leakage_assessments.npz'), allow_pickle=True)['leakage_assessments'].item()['test']['leakage_localization']
-            min_ratio = leakage_assessment[0] / np.min(leakage_assessment[1:])
-            mean_ratio = leakage_assessment[0] / np.mean(leakage_assessment[1:])
-            print(f'subdir={subdir}, min_ratio={min_ratio}, mean_ratio={mean_ratio}')"""
-        self.run_1o_count_sweep(1.0)
+        #self.tune_1o_count_sweep()
+        self.run_1o_count_sweep()
+        #self.plot_1o_count_sweep()
         self.run_1o_var_sweep(1.0)
         self.run_xor_var_sweep(1.0)
-    
-    def hparam_sweep(self):
-        orig_logging_dir = self.logging_dir
-        run_baselines = self.run_baselines
-        self.run_baselines = False
-        performance = []
-        for trial_idx in range(50):
-            budget = 10**np.random.uniform(-2, 2)
-            ent_penalty = 10**np.random.uniform(-2, 2)
-            self.logging_dir = os.path.join(orig_logging_dir, 'hparam_sweep', f'budget={budget}__ent_penalty={ent_penalty}')
-            self.leakage_localization_kwargs['ent_penalty'] = ent_penalty
-            os.makedirs(self.logging_dir, exist_ok=True)
-            leakage_assessment = self.run_1o_count_sweep(budget, hparam_test=True)
-            performance.append((budget, ent_penalty, leakage_assessment))
-            #self.run_1o_var_sweep(budget, hparam_test=True)
-            #self.run_xor_var_sweep(budget, hparam_test=True)
-        performance.sort(key=lambda x: x[0])
-        performance.sort(key=lambda x: x[1])
-        for (budget, ent_penalty, leakage_assessment) in performance:
-            print(f'budget={budget}, ent_penalty={ent_penalty}, mean_ratio={leakage_assessment[0]/np.mean(leakage_assessment[1:])}, min_ratio={leakage_assessment[0]/np.min(leakage_assessment[1:])}')
-        self.logging_dir = orig_logging_dir
-        self.run_baselines = run_baselines

@@ -42,7 +42,7 @@ class Module(L.LightningModule):
         theta_weight_decay: float = 0.0,
         etat_weight_decay: float = 0.0,
         ent_penalty: float = 0.0,
-        budget: float = 50.0,
+        starting_prob: float = 0.5,
         adversarial_mode: bool = False,
         timesteps_per_trace: Optional[int] = None,
         class_count: int = 256,
@@ -74,14 +74,14 @@ class Module(L.LightningModule):
         )
         self.selection_mechanism = SelectionMechanism(
             self.hparams.timesteps_per_trace,
-            C=self.hparams.budget,
+            beta=self.hparams.starting_prob,
             adversarial_mode=self.hparams.adversarial_mode
         )
         if self.hparams.calibrate_classifiers:
             self.to_temperature = TemperaturePredictor(self.hparams.timesteps_per_trace)
         if self.hparams.gradient_estimator == 'REBAR':
-            self.rebar_etat = nn.Parameter(torch.tensor(np.log(np.exp(1.0)-1), dtype=torch.float32), requires_grad=True)
-            self.rebar_taut = nn.Parameter(torch.tensor(np.log(np.exp(0.5)-1), dtype=torch.float32), requires_grad=True)
+            self.rebar_etat = nn.Parameter(torch.tensor(np.log(1.0), dtype=torch.float32), requires_grad=True)
+            self.rebar_taut = nn.Parameter(torch.tensor(np.log(1.0), dtype=torch.float32), requires_grad=True)
         if not isinstance(self.hparams.reference_leakage_assessment, dict):
             if isinstance(self.hparams.reference_leakage_assessment, np.ndarray):
                 self.hparams.reference_leakage_assessment = {'ref_0': self.hparams.reference_leakage_assessment}
