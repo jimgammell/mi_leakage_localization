@@ -57,7 +57,7 @@ class Trial:
     ):
         self.logging_dir = logging_dir
         self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
-        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'etat_lr': 1e-3, 'calibrate_classifiers': False, 'ent_penalty': 0.0, 'starting_prob': 0.5}
+        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'etat_lr': 1e-3, 'calibrate_classifiers': False, 'ent_penalty': 1e-2, 'starting_prob': 0.1}
         self.run_kwargs.update(override_run_kwargs)
         self.leakage_localization_kwargs.update(override_leakage_localization_kwargs)
         self.batch_size = batch_size
@@ -215,9 +215,21 @@ class Trial:
         )
     
     def __call__(self):
-        self.run_1o_beta_sweep()
-        self.run_1o_data_var_sweep()
-        self.run_1o_leaky_pt_count_sweep()
-        self.run_1o_no_op_count_sweep()
-        self.run_1o_shuffle_loc_sweep()
+        try:
+            self.run_1o_leaky_pt_count_sweep()
+        except:
+            pass
+        try:
+            self.run_1o_beta_sweep()
+        except:
+            pass
+        #self.run_1o_data_var_sweep()
+        try:
+            self.run_1o_no_op_count_sweep()
+        except:
+            pass
+        try:
+            self.run_1o_shuffle_loc_sweep()
+        except:
+            pass
         #self.run_2o_trial()

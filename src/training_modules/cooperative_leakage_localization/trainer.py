@@ -163,13 +163,13 @@ class Trainer:
         etat_lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -2)], start=[])
         starting_probs = [1e-3, 1e-2, 1e-1, 2.5e-1, 5e-1]
         ent_penalties = [0.0, 1e-4, 1e-2, 1e0]
-        theta_lr_scalars = [1e-2, 1e-1, 5e-1, 1e0]
+        theta_lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -2)], start=[])
         for trial_idx in range(trial_count):
             experiment_dir = os.path.join(logging_dir, f'trial_{trial_idx}')
             os.makedirs(experiment_dir, exist_ok=True)
             hparams = {
                 'etat_lr': np.random.choice(etat_lr_vals),
-                'theta_lr': self.default_training_module_kwargs['theta_lr']*np.random.choice(theta_lr_scalars),
+                'theta_lr': np.random.choice(theta_lr_vals),
                 'starting_prob': np.random.choice(starting_probs),
                 'ent_penalty': np.random.choice(ent_penalties)
             }

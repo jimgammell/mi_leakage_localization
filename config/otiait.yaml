@@ -1,11 +1,12 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/one_trace_is_all_it_takes
 compute_ground_truth_assessments: true
 compute_first_order_stats: true
-run_supervised_hparam_sweep: false
-train_supervised_model: false
-compute_nn_attributions: false
-pretrain_classifiers: false
+run_supervised_hparam_sweep: true
+train_supervised_model: true
+compute_nn_attributions: true
+pretrain_classifiers: true
 run_ll_classifiers_hparam_sweep: true
+run_ll_hparam_sweep: true
 run_leakage_localization: false
 hparam_tune: false
 max_classifiers_pretrain_steps: 1000
@@ -15,7 +16,6 @@ default_kwargs:
   calibrate_classifiers: false
 classifiers_pretrain_kwargs:
   theta_lr: 1.e-3
-  budget: 1000.
   theta_lr_scheduler_name: CosineDecayLRSched
 supervised_training_kwargs:
   classifier_name: mlp-1d
@@ -26,4 +26,3 @@ leakage_localization_kwargs:
   etat_lr: 1.e-3
   etat_lr_scheduler_name: CosineDecayLRSched
   gradient_estimator: REBAR
-  budget: 100.
