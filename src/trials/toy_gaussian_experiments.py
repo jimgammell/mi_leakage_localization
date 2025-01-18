@@ -101,44 +101,70 @@ class Trial:
                 np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
         
     def plot_1o_count_sweep(self):
-        fig, axes = plt.subplots(1, 3, figsize=(3*PLOT_WIDTH, 1*PLOT_WIDTH))
-        for count in range(1, self.trial_count+1):
-            nn_attr_leakage_assessments = {key: [] for key in ['gradvis', 'saliency', 'lrp', 'occlusion', 'inputxgrad']}
+        counts = [10*x + 1 for x in range(self.trial_count)]
+        stat_traces = {key: {'min': [], 'med': [], 'max': []} for key in ['snr', 'sosd', 'cpa']}
+        nn_attr_traces = {key: {'min': [], 'med': [], 'max': []} for key in ['lrp', 'inputxgrad', 'saliency', 'gradvis', 'occlusion']}
+        ll_traces = {'min': [], 'med': [], 'max': []}
+        for count in counts:
+            stat_assessments = {key: [] for key in stat_traces.keys()}
+            nn_attr_leakage_assessments = {key: [] for key in nn_attr_traces.keys()}
             ll_leakage_assessment = []
             for seed in range(self.seed_count):
                 leakage_assessment = np.load(os.path.join(self.logging_dir, '1o_count_sweep', f'seed={seed}', 'leakage_assessments.npz'), allow_pickle=True)['leakage_assessments'].item()
+                for key in stat_assessments.keys():
+                    _leakage_assessment = leakage_assessment[f'count={count}'][key].reshape(-1)
+                    stat_assessments[key].append(_leakage_assessment)
                 for key in nn_attr_leakage_assessments.keys():
                     _leakage_assessment = leakage_assessment[f'count={count}'][key].reshape(-1)
                     nn_attr_leakage_assessments[key].append(_leakage_assessment)
                 ll_leakage_assessment.append(leakage_assessment[f'count={count}']['leakage_localization'].reshape(-1))
             nn_attr_leakage_assessments = {key: np.stack(val) for key, val in nn_attr_leakage_assessments.items()}
             ll_leakage_assessment = np.stack(ll_leakage_assessment)
-            colors = ['red', 'green', 'blue', 'orange', 'purple']
-            for idx, ((name, assessment), color) in enumerate(zip(nn_attr_leakage_assessments.items(), colors)):
+            for key, assessment in stat_assessments.items():
                 assessment -= np.min(assessment, axis=-1, keepdims=True)
                 assessment /= np.max(assessment, axis=-1, keepdims=True)
-                nonleaky_pts = assessment[:, 0]
-                leaky_pts = assessment[:, 1:]
-                diffs = (leaky_pts - nonleaky_pts.reshape(-1, 1)).reshape(-1)
-                axes[1].plot(len(diffs)*[count], diffs, color=color, marker='.', markersize=1, linestyle='none')
-                #axes[1].errorbar([count], [np.median(diffs)], [[np.median(diffs)-np.min(diffs)], [np.max(diffs)-np.median(diffs)]], color=color, fmt='.', )
-            ll_leakage_assessment -= np.min(ll_leakage_assessment, axis=-1, keepdims=True)
-            ll_leakage_assessment /= np.max(ll_leakage_assessment, axis=-1, keepdims=True)
-            nonleaky_pts = ll_leakage_assessment[:, 0]
-            leaky_pts = ll_leakage_assessment[:, 1:]
-            diffs = (leaky_pts - nonleaky_pts.reshape(-1, 1)).reshape(-1)
-            axes[2].plot(len(diffs)*[count], diffs, color='blue', marker='.', linestyle='none')
-            #axes[2].errorbar([count], [np.median(diffs)], [[np.median(diffs)-np.min(diffs)], [np.max(diffs)-np.median(diffs)]], color='blue', fmt='.')
+                nonleaky_vals = assessment[:, 0]
+                leaky_vals = assessment[:, 1:]
+                diffs = (leaky_vals - nonleaky_vals.reshape(-1, 1)).reshape(-1)
+                stat_traces[key]['min'].append(np.min(diffs))
+                stat_traces[key]['med'].append(np.median(diffs))
+                stat_traces[key]['max'].append(np.max(diffs))
+            for key, assessment in nn_attr_leakage_assessments.items():
+                assessment -= np.min(assessment, axis=-1, keepdims=True)
+                assessment /= np.max(assessment, axis=-1, keepdims=True)
+                nonleaky_vals = assessment[:, 0]
+                leaky_vals = assessment[:, 1:]
+                diffs = (leaky_vals - nonleaky_vals.reshape(-1, 1)).reshape(-1)
+                nn_attr_traces[key]['min'].append(np.min(diffs))
+                nn_attr_traces[key]['med'].append(np.median(diffs))
+                nn_attr_traces[key]['max'].append(np.max(diffs))
+            for assessment in [ll_leakage_assessment]:
+                assessment -= np.min(assessment, axis=-1, keepdims=True)
+                assessment /= np.max(assessment, axis=-1, keepdims=True)
+                nonleaky_vals = assessment[:, 0]
+                leaky_vals = assessment[:, 1:]
+                diffs = (leaky_vals - nonleaky_vals.reshape(-1, 1)).reshape(-1)
+                ll_traces['min'].append(np.min(diffs))
+                ll_traces['med'].append(np.median(diffs))
+                ll_traces['max'].append(np.max(diffs))
+        fig, axes = plt.subplots(1, 3, figsize=(3*PLOT_WIDTH, 1*PLOT_WIDTH))
+        colormap = plt.cm.get_cmap('tab10', 5)
+        for idx, (key, val) in enumerate(stat_traces.items()):
+            axes[0].plot(counts, val['med'], marker='.', label=key.replace('_', r'\_'), color=colormap(idx))
+            axes[0].fill_between(counts, val['min'], val['max'], alpha=0.25, color=colormap(idx))
+        for idx, (key, val) in enumerate(nn_attr_traces.items()):
+            axes[1].plot(counts, val['med'], marker='.', linestyle='--', label=key.replace('_', r'\_'), color=colormap(idx))
+            axes[1].fill_between(counts, val['min'], val['max'], alpha=0.25, color=colormap(idx))
+        axes[2].plot(counts, ll_traces['med'], marker='.', linestyle='--', color=colormap(0))
+        axes[2].fill_between(counts, ll_traces['min'], ll_traces['max'], alpha=0.25, color=colormap(0))
         for ax in axes:
-            ax.set_xlabel('Leaky point count')
-            ax.set_ylabel('Estimated leakage')
-            ax.set_ylim(-1, 1)
-        axes[0].set_title('First-order statistics')
-        axes[1].set_title('Neural net attribution')
-        axes[2].set_title('Leakage localization')
+            ax.set_xlabel('Leaking point count')
+            ax.set_ylabel('Normalized diff between leaky + nonleaky points')
+            ax.set_ylim(-1.05, 1.05)
+        axes[0].legend()
+        axes[1].legend()
         fig.tight_layout()
-        fig.savefig(os.path.join(self.logging_dir, '1o_count_sweep', 'sweep.png'), **SAVEFIG_KWARGS)
-        plt.close(fig)
+        fig.savefig(os.path.join(self.logging_dir, '1o_count_sweep', 'sweep.png'))
     
     def run_1o_var_sweep(self, budgets: Union[float, Sequence[float]] = 1.0):
         if not hasattr(budgets, '__len__'):
@@ -150,7 +176,7 @@ class Trial:
         for seed in range(self.seed_count):
             logging_dir = os.path.join(self.logging_dir, '1o_var_sweep', f'seed={seed}')
             if not os.path.exists(os.path.join(self.logging_dir, 'leakage_assessments.npz')):
-                leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
+                leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss)
                 np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
     
     def run_xor_var_sweep(self, budgets: Union[float, Sequence[float]] = 1.0):
@@ -163,12 +189,12 @@ class Trial:
         for seed in range(self.seed_count):
             logging_dir = os.path.join(self.logging_dir, 'xor_var_sweep', f'seed={seed}')
             if not os.path.exists(os.path.join(logging_dir, 'leakage_assessments.npz')):
-                leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss, budgets=budgets)
+                leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss)
                 np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
     
     def __call__(self):
         #self.tune_1o_count_sweep()
         self.run_1o_count_sweep()
-        #self.plot_1o_count_sweep()
-        self.run_1o_var_sweep(1.0)
-        self.run_xor_var_sweep(1.0)
+        self.plot_1o_count_sweep()
+        self.run_1o_var_sweep()
+        self.run_xor_var_sweep()
