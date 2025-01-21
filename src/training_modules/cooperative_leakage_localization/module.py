@@ -11,6 +11,7 @@ from ..utils import *
 import utils.lr_schedulers
 from utils.metrics import get_rank
 from utils.gmm_performance_correlation import GMMPerformanceCorrelation
+from utils.dnn_performance_auc import compute_dnn_performance_auc
 
 class TemperaturePredictor(nn.Module):
     def __init__(self, input_len: int):
@@ -54,7 +55,8 @@ class Module(L.LightningModule):
         train_etat: bool = True,
         calibrate_classifiers: bool = False, # Should we do an online temperature calibration for the classifiers? Prevents overconfidence and makes val loss more-correlated w/ performance
         compute_gmm_ktcc: bool = False,
-        reference_leakage_assessment: Optional[np.ndarray] = None
+        reference_leakage_assessment: Optional[np.ndarray] = None,
+        supervised_dnn: Optional[nn.Module] = None
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -309,11 +311,14 @@ class Module(L.LightningModule):
                 correlation = pearsonr(gamma, leakage_assessment.reshape(-1)).statistic
                 self.log(f'{key}_ktcc', ktcc)
                 self.log(f'{key}_corr', correlation)
-        if False: #self.current_epoch % (self.total_steps//(100*len(self.trainer.datamodule.train_dataloader()))) == 0:
+        if (
+            (self.hparams.supervised_dnn is not None) 
+            and (
+                (self.total_steps // (100*len(self.trainer.train_dataloader)) == 0)
+                or (self.current_epoch % (self.total_steps//(100*len(self.trainer.train_dataloader))) == 0)
+            )
+        ):
             gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1)
-            profiling_dataset = self.trainer.datamodule.profiling_dataset
-            attack_dataset = self.trainer.datamodule.attack_dataset
-            metric = GMMPerformanceCorrelation(gamma.argsort(), device='cuda')
-            metric.profile(profiling_dataset)
-            rv = metric(attack_dataset)
-            self.log('gmmperfcorr', rv)
+            dataloader = self.trainer.datamodule.val_dataloader()
+            dnn_auc = compute_dnn_performance_auc(dataloader, self.hparams.supervised_dnn, gamma, device=self.device)
+            self.log('dnn_auc', dnn_auc)

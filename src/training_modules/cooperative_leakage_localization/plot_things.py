@@ -7,6 +7,41 @@ import imageio
 from common import *
 from trials.utils import *
 
+def plot_ll_hparam_sweep(logging_dir):
+    with open(os.path.join(logging_dir, 'results.pickle'), 'rb') as f:
+        results = pickle.load(f)
+    hparam_names = ['etat_lr', 'theta_lr', 'starting_prob', 'ent_penalty']
+    result_names = ['dnn_auc']
+    fig, axes = plt.subplots(len(hparam_names), len(result_names), figsize=(PLOT_WIDTH*len(result_names), PLOT_WIDTH*len(hparam_names)))
+    if len(hparam_names) == 1:
+        axes = axes[np.newaxis, ...]
+    if len(result_names) == 1:
+        axes = axes[..., np.newaxis]
+    for row_idx, (hparam_name, axes_row) in enumerate(zip(hparam_names, axes)):
+        for col_idx, (result_name, ax) in enumerate(zip(result_names, axes_row)):
+            hparam_vals = results[hparam_name]
+            distinct_hparam_vals = list(set(hparam_vals))
+            if all(isinstance(x, int) or isinstance(x, float) for x in hparam_vals):
+                distinct_hparam_vals.sort()
+            result_vals = results[result_name]
+            label_to_num = {hparam_name: idx for idx, hparam_name in enumerate(distinct_hparam_vals)}
+            xx = [label_to_num[x] for x in hparam_vals]
+            ax.plot(xx, result_vals, color='blue', marker='.', linestyle='none', markersize=1, **PLOT_KWARGS)
+            #ax.plot([label_to_num[chosen_settings[hparam_name]]], [chosen_results[result_name]], color='red', marker='.', linestyle='none')
+            ax.set_xticks(list(label_to_num.values()))
+            if hparam_name in ['lr', 'eps', 'weight_decay']:
+                ticklabels = [f'{x:.1e}' for x in label_to_num.keys()]
+            else:
+                ticklabels = [str(x) for x in label_to_num.keys()]
+            ax.set_xticklabels(ticklabels, rotation=45 if 'lr' in hparam_name else 0, ha='right')
+            ax.set_xlabel(hparam_name.replace('_', '\_'))
+            ax.set_ylabel(result_name.replace('_', '\_'))
+            if 'loss' in result_name:
+                ax.set_yscale('symlog')
+    fig.tight_layout()
+    fig.savefig(os.path.join(logging_dir, 'hparam_sweep.pdf'), **SAVEFIG_KWARGS)
+    plt.close(fig)
+
 def plot_classifiers_hparam_sweep(logging_dir):
     with open(os.path.join(logging_dir, 'results.pickle'), 'rb') as f:
         results = pickle.load(f)
@@ -136,8 +171,8 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
         for key, val in corr_curves.items():
             axes[7].plot(*val, label=key.replace('_', r'\_'), **PLOT_KWARGS)
         axes[7].legend()
-    if 'gmmperfcorr' in training_curves:
-        axes[8].plot(*training_curves['gmmperfcorr'], color='blue', **PLOT_KWARGS)
+    if 'dnn_auc' in training_curves:
+        axes[8].plot(*training_curves['dnn_auc'], color='blue', **PLOT_KWARGS)
     if 'train_rebar_eta' in training_curves:
         axes[9].plot(*training_curves['train_rebar_eta'], color='blue', **PLOT_KWARGS)
     if 'train_rebar_tau' in training_curves:
@@ -154,7 +189,7 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     axes[5].set_ylabel(r'Inclusion probability $\gamma_t$')
     axes[6].set_ylabel('KTCC with reference leakage assessment')
     axes[7].set_ylabel('Correlation with reference leakage assessment')
-    axes[8].set_ylabel('GMM performance correlation')
+    axes[8].set_ylabel('DNN AUC')
     axes[9].set_ylabel(r'REBAR $\eta$')
     axes[10].set_ylabel(r'REBAR $\tau$')
     axes[11].set_ylabel('Calibration temperature')

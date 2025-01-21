@@ -101,11 +101,13 @@ class MultiAttackTrainer:
             log_p_y_mid_x = training_module.template_attacker.get_log_p_y_mid_x(attack_traces).cpu().numpy()
             batch_size, window_count, class_count = log_p_y_mid_x.shape
             _attack_labels = attack_labels.reshape(batch_size, 1).repeat(1, window_count).cpu().numpy()
-            rank = get_rank(log_p_y_mid_x.reshape(-1, self.class_count), _attack_labels.reshape(-1)).reshape(batch_size, window_count).mean(axis=0)
+            ranks = get_rank(log_p_y_mid_x.reshape(-1, self.class_count), _attack_labels.reshape(-1)).reshape(batch_size, window_count)
+            rank_mean, rank_std = ranks.mean(axis=0), ranks.std(axis=0)
             mutinf = training_module.template_attacker.get_pointwise_mutinf(attack_traces).cpu().numpy()
             info = {
                 'log_p_y_mid_x': log_p_y_mid_x.mean(axis=0),
-                'rank': rank,
+                'rank_mean': rank_mean,
+                'rank_std': rank_std,
                 'mutinf': mutinf
             }
         return info

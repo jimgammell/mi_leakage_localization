@@ -17,8 +17,9 @@ from datasets.aes_hd import AES_HD
 from datasets.ed25519_wolfssl import ED25519
 from datasets.one_truth_prevails import OneTruthPrevails
 from utils.baseline_assessments import FirstOrderStatistics, NeuralNetAttribution
-from training_modules import SupervisedTrainer, LeakageLocalizationTrainer
+from training_modules import SupervisedTrainer, SupervisedModule, LeakageLocalizationTrainer
 from training_modules.supervised_deep_sca.plot_things import plot_hparam_sweep
+from training_modules.cooperative_leakage_localization.plot_things import plot_ll_hparam_sweep
 from utils.aes_multi_trace_eval import AESMultiTraceEvaluator
 from utils.multi_attack_baseline import MultiAttackTrainer
 from utils.template_attack import TemplateAttack
@@ -193,33 +194,35 @@ class Trial:
         print(f'Optimal hyperparameters on {self.dataset_name}: {self.optimal_ll_pretrain_hparams}')
     
     def run_ll_hparam_sweep(self):
-        if not os.path.exists(os.path.join(self.ll_hparam_sweep_dir, 'results.pickle')):
+        training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.supervised_model_dir, 'll_eval', 'best_checkpoint.ckpt'))
+        supervised_dnn = training_module.classifier
+        if True: #not os.path.exists(os.path.join(self.ll_hparam_sweep_dir, 'results.pickle')):
             print('Running LL hparam sweep...')
             kwargs = copy(self.trial_config['default_kwargs'])
             kwargs.update(self.trial_config['classifiers_pretrain_kwargs'])
             kwargs.update(self.trial_config['leakage_localization_kwargs'])
             kwargs.update(self.optimal_ll_pretrain_hparams)
-            print(kwargs)
             ll_trainer = LeakageLocalizationTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=kwargs)
             ll_trainer.htune_leakage_localization(
                 self.ll_hparam_sweep_dir,
                 pretrained_classifiers_logging_dir=os.path.join(self.ll_classifiers_pretrain_dir, f'seed=0'),
                 max_steps=self.trial_config['max_leakage_localization_steps'],
+                supervised_dnn=supervised_dnn,
                 references={key: val.mean(axis=0) for key, val in self.get_ground_truth_assessments().items()}
             )
         else:
             print('Found existing LL hparam sweep.')
+        self.ll_optimal_hparams = plot_ll_hparam_sweep(self.ll_hparam_sweep_dir)
     
     def train_supervised_model(self):
-        for seed in range(self.seed_count):
-            subdir = os.path.join(self.supervised_model_dir, f'seed={seed}')
-            os.makedirs(subdir, exist_ok=True)
-            if not os.path.exists(os.path.join(subdir, 'final_checkpoint.ckpt')):
+        for subdir in ['ll_eval', *[f'seed={seed}' for seed in range(self.seed_count)]]:
+            os.makedirs(os.path.join(self.supervised_model_dir, subdir), exist_ok=True)
+            if not os.path.exists(os.path.join(self.supervised_model_dir, subdir, 'final_checkpoint.ckpt')):
                 print('Training supervised model...')
                 training_module_kwargs = copy(self.trial_config['supervised_training_kwargs'])
                 training_module_kwargs.update(self.optimal_hparams)
                 supervised_trainer = SupervisedTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=training_module_kwargs)
-                supervised_trainer.run(logging_dir=subdir, max_steps=self.trial_config['max_classifiers_pretrain_steps'])
+                supervised_trainer.run(logging_dir=os.path.join(self.supervised_model_dir, subdir), max_steps=self.trial_config['max_classifiers_pretrain_steps'])
                 print('\tDone.')
             else:
                 print('Found pretrained supervised model.')

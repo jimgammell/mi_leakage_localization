@@ -1,6 +1,7 @@
 from copy import copy
 from collections import defaultdict
 from scipy.stats import kendalltau, pearsonr
+from torch import nn
 from torch.utils.data import Dataset
 from lightning import LightningModule, Trainer as LightningTrainer
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
@@ -11,6 +12,7 @@ from trials.utils import *
 from datasets.data_module import DataModule
 from .module import Module
 from .plot_things import *
+from utils.dnn_performance_auc import compute_dnn_performance_auc
 
 class Trainer:
     def __init__(self,
@@ -134,18 +136,32 @@ class Trainer:
                 assert os.path.exists(pretrained_classifiers_logging_dir)
                 pretrained_module = Module.load_from_checkpoint(os.path.join(pretrained_classifiers_logging_dir, 'best_checkpoint.ckpt'))
                 training_module.cmi_estimator.classifiers.load_state_dict(pretrained_module.cmi_estimator.classifiers.state_dict())
+            if 'supervised_dnn' in override_kwargs:
+                checkpoint = ModelCheckpoint(
+                    monitor='dnn_auc',
+                    mode='max',
+                    save_top_k=1,
+                    dirpath=logging_dir,
+                    filename='best_checkpoint'
+                )
+                callbacks = [checkpoint]
+            else:
+                callbacks = []
             trainer = LightningTrainer(
                 max_steps=training_module.to_global_steps(max_steps),
                 val_check_interval=1.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
                 devices=1,
-                logger=TensorBoardLogger(logging_dir, name='lightning_output')
+                logger=TensorBoardLogger(logging_dir, name='lightning_output'),
+                callbacks=callbacks
             )
             trainer.fit(training_module, datamodule=self.data_module)
             trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             training_curves = get_training_curves(logging_dir)
             save_training_curves(training_curves, logging_dir)
+            if 'supervised_dnn' in override_kwargs:
+                training_module = Module.load_from_checkpoint(os.path.join(logging_dir, 'best_checkpoint.ckpt'))
             leakage_assessment = training_module.selection_mechanism.get_accumulated_gamma().reshape(-1)
             plot_leakage_assessment(leakage_assessment, os.path.join(logging_dir, 'leakage_assessment.png'))
         else:
@@ -157,16 +173,15 @@ class Trainer:
     def htune_leakage_localization(self,
         logging_dir: Union[str, os.PathLike],
         pretrained_classifiers_logging_dir: Optional[Union[str, os.PathLike]] = None,
-        trial_count: int = 100,
+        trial_count: int = 5,
         max_steps: int = 1000,
         override_kwargs: dict = {},
+        supervised_dnn: Optional[nn.Module] = None,
         references: Optional[dict] = None
     ):
-        if not isinstance(references, Sequence):
-            references = [references]
         etat_lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -2)], start=[])
         starting_probs = [1e-1*x for x in range(1, 10)]
-        ent_penalties = [0.0, 1e-4, 1e-2, 1e0]
+        ent_penalties = [0.0, 1e-6, 1e-4, 1e-2]
         theta_lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -2)], start=[])
         results = defaultdict(list)
         for trial_idx in range(trial_count):
@@ -180,8 +195,10 @@ class Trainer:
                     'ent_penalty': np.random.choice(ent_penalties)
                 }
                 override_kwargs.update(hparams)
+                override_kwargs.update({'supervised_dnn': supervised_dnn})
                 leakage_assessment = self.run(
-                    experiment_dir, pretrained_classifiers_logging_dir=pretrained_classifiers_logging_dir, max_steps=max_steps, anim_gammas=False, override_kwargs=override_kwargs
+                    experiment_dir, pretrained_classifiers_logging_dir=pretrained_classifiers_logging_dir,
+                    max_steps=max_steps, anim_gammas=False, override_kwargs=override_kwargs
                 )
                 with open(os.path.join(experiment_dir, 'hparams.pickle'), 'wb') as f:
                     pickle.dump(hparams, f)
@@ -189,13 +206,16 @@ class Trainer:
             else:
                 with open(os.path.join(experiment_dir, 'hparams.pickle'), 'rb') as f:
                     hparams = pickle.load(f)
-                leakage_assessment = np.load(os.path.join(experiment_dir, 'leakage_assessment.npz'))
-                for key, val in hparams.items():
-                    results[key].append(val)
-                for reference_name, reference in references.items():
-                    window_size = (len(leakage_assessment)-len(reference))//2
-                    leakage_assessment = torch.tensor(leakage_assessment).unfold(0, window_size, 1).mean(dim=-1).numpy()
-                    results[f'{reference_name}_pearsonr'].append(pearsonr(leakage_assessment, reference).statistic)
-                    results[f'{reference_name}_kendalltau'].append(kendalltau(leakage_assessment, reference).statistic)
+            _leakage_assessment = np.load(os.path.join(experiment_dir, 'leakage_assessment.npy'))
+            for key, val in hparams.items():
+                results[key].append(val)
+            training_curves = load_training_curves(experiment_dir)
+            dnn_auc = np.max(training_curves['dnn_auc'][-1])
+            results['dnn_auc'].append(dnn_auc)
+            for reference_name, reference in references.items():
+                window_size = int(reference_name.split('=')[-1])
+                leakage_assessment = torch.tensor(_leakage_assessment).unfold(0, window_size, 1).mean(dim=-1).numpy()
+                results[f'{reference_name}_pearsonr'].append(pearsonr(leakage_assessment, reference).statistic)
+                results[f'{reference_name}_kendalltau'].append(kendalltau(leakage_assessment, reference).statistic)
         with open(os.path.join(logging_dir, 'results.pickle'), 'wb') as f:
             pickle.dump(results, f)
