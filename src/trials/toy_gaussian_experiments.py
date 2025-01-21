@@ -26,7 +26,7 @@ class Trial:
         self.supervised_kwargs = {'classifier_name': 'mlp-1d', 'classifier_kwargs': {'use_dropout': False, 'layer_count': 1}, 'lr': 1e-3}
         self.leakage_localization_kwargs = {
             'classifiers_name': 'mlp-1d', 'classifiers_kwargs': {'use_dropout': False, 'layer_count': 1}, 'theta_lr': 1e-3, 'etat_lr': 1e-3,
-            'adversarial_mode': False, 'ent_penalty': 1e0, 'starting_prob': 0.5,
+            'adversarial_mode': False, 'ent_penalty': 1e-2, 'starting_prob': 0.5,
         }
         self.run_baselines = run_baselines
     
@@ -62,7 +62,7 @@ class Trial:
                 default_data_module_kwargs={'train_batch_size': len(profiling_dataset)//10},
                 default_training_module_kwargs={**self.leakage_localization_kwargs}
             )
-            ll_trainer.pretrain_classifiers(os.path.join(logging_dir, trial_name, 'pretrain_classifiers'), max_steps=2*self.run_kwargs['max_steps']//10)
+            ll_trainer.pretrain_classifiers(os.path.join(logging_dir, trial_name, 'pretrain_classifiers'), max_steps=self.run_kwargs['max_steps']//2)
             ll_trainer = LeakageLocalizationTrainer(
                 profiling_dataset, attack_dataset,
                 default_data_module_kwargs={'train_batch_size': len(profiling_dataset)//10},
@@ -71,7 +71,7 @@ class Trial:
             ll_leakage_assessment = ll_trainer.run(
                 os.path.join(logging_dir, trial_name, 'leakage_localization'),
                 pretrained_classifiers_logging_dir=os.path.join(logging_dir, trial_name, 'pretrain_classifiers'),
-                max_steps=8*(self.run_kwargs['max_steps']//10),
+                max_steps=self.run_kwargs['max_steps']//2,
                 anim_gammas=self.run_kwargs['anim_gammas']
             )
             leakage_assessments[trial_name]['leakage_localization'] = ll_leakage_assessment
@@ -89,6 +89,20 @@ class Trial:
                 assessment -= np.min(assessment)
                 assessment /= np.max(assessment)
                 print(f'prob={starting_prob}, ent_penalty={ent_penalty}, diff={np.min(assessment[1:]) - assessment[0]}')
+    
+    def tune_xor_var_sweep(self):
+        dataset_kwargss = [('none', {'easy_feature_snrs': 2.0})]
+        while True:
+            starting_prob = 10**np.random.uniform(-2, 0)
+            ent_penalty = 10**np.random.uniform(-6, 2)
+            out = self.run_experiments(
+                os.path.join(self.logging_dir, 'xor_var_tuning', f'starting_prob={starting_prob}__ent_penalty={ent_penalty}'),
+                dataset_kwargss=dataset_kwargss, run_baselines=False
+            )
+            assessment = out['none']['leakage_localization'].reshape(-1)
+            assessment -= np.min(assessment)
+            assessment /= np.max(assessment)
+            print(f'prob={starting_prob}, ent_penalty={ent_penalty}, assessment={assessment}')
     
     def run_1o_count_sweep(self):
         dataset_kwargss = [
@@ -197,4 +211,5 @@ class Trial:
         #self.run_1o_count_sweep()
         #self.plot_1o_count_sweep()
         #self.run_1o_var_sweep()
+        #self.tune_xor_var_sweep()
         self.run_xor_var_sweep()

@@ -1,5 +1,6 @@
 from copy import copy
 from collections import defaultdict
+from scipy.stats import kendalltau, pearsonr
 from torch.utils.data import Dataset
 from lightning import LightningModule, Trainer as LightningTrainer
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
@@ -156,25 +157,45 @@ class Trainer:
     def htune_leakage_localization(self,
         logging_dir: Union[str, os.PathLike],
         pretrained_classifiers_logging_dir: Optional[Union[str, os.PathLike]] = None,
-        trial_count: int = 25,
+        trial_count: int = 100,
         max_steps: int = 1000,
-        override_kwargs: dict = {}
+        override_kwargs: dict = {},
+        references: Optional[dict] = None
     ):
+        if not isinstance(references, Sequence):
+            references = [references]
         etat_lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -2)], start=[])
-        starting_probs = [1e-3, 1e-2, 1e-1, 2.5e-1, 5e-1]
+        starting_probs = [1e-1*x for x in range(1, 10)]
         ent_penalties = [0.0, 1e-4, 1e-2, 1e0]
         theta_lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -2)], start=[])
+        results = defaultdict(list)
         for trial_idx in range(trial_count):
             experiment_dir = os.path.join(logging_dir, f'trial_{trial_idx}')
             os.makedirs(experiment_dir, exist_ok=True)
-            hparams = {
-                'etat_lr': np.random.choice(etat_lr_vals),
-                'theta_lr': np.random.choice(theta_lr_vals),
-                'starting_prob': np.random.choice(starting_probs),
-                'ent_penalty': np.random.choice(ent_penalties)
-            }
-            override_kwargs.update(hparams)
-            leakage_assessment = self.run(
-                experiment_dir, pretrained_classifiers_logging_dir=pretrained_classifiers_logging_dir, max_steps=max_steps, anim_gammas=False, override_kwargs=override_kwargs
-            )
-            np.savez(os.path.join(experiment_dir, 'leakage_assessment.npz'), leakage_assessment=leakage_assessment)
+            if not os.path.exists(os.path.join(experiment_dir, 'training_curves.pickle')):
+                hparams = {
+                    'etat_lr': np.random.choice(etat_lr_vals),
+                    'theta_lr': np.random.choice(theta_lr_vals),
+                    'starting_prob': np.random.choice(starting_probs),
+                    'ent_penalty': np.random.choice(ent_penalties)
+                }
+                override_kwargs.update(hparams)
+                leakage_assessment = self.run(
+                    experiment_dir, pretrained_classifiers_logging_dir=pretrained_classifiers_logging_dir, max_steps=max_steps, anim_gammas=False, override_kwargs=override_kwargs
+                )
+                with open(os.path.join(experiment_dir, 'hparams.pickle'), 'wb') as f:
+                    pickle.dump(hparams, f)
+                np.save(os.path.join(experiment_dir, 'leakage_assessment.npy'), leakage_assessment)
+            else:
+                with open(os.path.join(experiment_dir, 'hparams.pickle'), 'rb') as f:
+                    hparams = pickle.load(f)
+                leakage_assessment = np.load(os.path.join(experiment_dir, 'leakage_assessment.npz'))
+                for key, val in hparams.items():
+                    results[key].append(val)
+                for reference_name, reference in references.items():
+                    window_size = (len(leakage_assessment)-len(reference))//2
+                    leakage_assessment = torch.tensor(leakage_assessment).unfold(0, window_size, 1).mean(dim=-1).numpy()
+                    results[f'{reference_name}_pearsonr'].append(pearsonr(leakage_assessment, reference).statistic)
+                    results[f'{reference_name}_kendalltau'].append(kendalltau(leakage_assessment, reference).statistic)
+        with open(os.path.join(logging_dir, 'results.pickle'), 'wb') as f:
+            pickle.dump(results, f)

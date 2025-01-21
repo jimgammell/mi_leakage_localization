@@ -1,6 +1,8 @@
 from typing import *
 from copy import copy
+from collections import defaultdict
 import numpy as np
+from scipy.stats import pearsonr, kendalltau
 from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D
 import torch
@@ -110,6 +112,25 @@ class Trial:
                     fig.savefig(os.path.join(self.ground_truth_dir, f'{name}.png'))
                     plt.close(fig)
     
+    def get_ground_truth_assessments(self):
+        rv = defaultdict(list)
+        for attack_type in ['mlp', 'template']:
+            for window_size in [1, 3, 5]:
+                assessment_name = f'{attack_type}__window_size={window_size}'
+                if 'ascadv1' in self.dataset_name:
+                    targets = ['subbytes', 'r_out', 'subbytes__r_out']
+                else:
+                    targets = ['subbytes']
+                for seed in range(self.seed_count):
+                    assessments = []
+                    for target in targets:
+                        name = f'{attack_type}__seed={seed}__window_size={window_size}'
+                        assessment = np.load(os.path.join(self.ground_truth_dir, f'{name}.npz'), allow_pickle=True)['assessments'].item()[target]['mutinf']
+                        assessments.append(assessment)
+                    rv[assessment_name].append(np.mean(np.stack(assessments), axis=0))
+                rv[assessment_name] = np.stack(rv[assessment_name])
+        return rv
+    
     def run_template_attacks(self):
         leakage_assessments = self.get_leakage_assessments()
         for name, assessments in leakage_assessments.items():
@@ -144,7 +165,7 @@ class Trial:
         plot_leakage_assessment(sosd, os.path.join(self.stats_dir, 'sosd.png'))
         plot_leakage_assessment(cpa, os.path.join(self.stats_dir, 'cpa.png'))
         self.first_order_stats = {
-            'snr': snr, 'sosd': sosd, 'cpa': cpa
+            'snr': np.abs(snr), 'sosd': np.abs(sosd), 'cpa': np.abs(cpa)
         }
     
     def run_supervised_hparam_sweep(self):
@@ -183,7 +204,8 @@ class Trial:
             ll_trainer.htune_leakage_localization(
                 self.ll_hparam_sweep_dir,
                 pretrained_classifiers_logging_dir=os.path.join(self.ll_classifiers_pretrain_dir, f'seed=0'),
-                max_steps=self.trial_config['max_leakage_localization_steps']
+                max_steps=self.trial_config['max_leakage_localization_steps'],
+                references={key: val.mean(axis=0) for key, val in self.get_ground_truth_assessments().items()}
             )
         else:
             print('Found existing LL hparam sweep.')
@@ -382,6 +404,7 @@ class Trial:
     
     def get_leakage_assessments(self):
         leakage_assessments = {}
+        leakage_assessments.update(self.random_assessment)
         if hasattr(self, 'first_order_stats'):
             leakage_assessments.update(self.first_order_stats)
         if hasattr(self, 'nn_attr_assessments'):
@@ -393,6 +416,35 @@ class Trial:
         if hasattr(self, 'leakage_localization_assessments'):
             leakage_assessments.update(self.leakage_localization_assessments)
         return leakage_assessments
+    
+    def eval_leakage_assessments(self): # should print out valid code for a Latex booktabs table
+        leakage_assessments = self.get_leakage_assessments()
+        ground_truth_assessments = self.get_ground_truth_assessments()
+        kendalltau_evaluations = {}
+        pearsonr_evaluations = {}
+        for leakage_assessment_name, leakage_assessment in leakage_assessments.items():
+            kendalltau_evaluations[leakage_assessment_name] = {}
+            pearsonr_evaluations[leakage_assessment_name] = {}
+            print(leakage_assessment_name)
+            for ground_truth_assessment_name, ground_truth_assessment in ground_truth_assessments.items():
+                print(f'\t{ground_truth_assessment_name}')
+                kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name] = []
+                pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name] = []
+                for seed in range(ground_truth_assessment.shape[0]):
+                    if leakage_assessment.ndim == 1:
+                        _leakage_assessment = leakage_assessment
+                    else:
+                        _leakage_assessment = leakage_assessment[seed, :]
+                    window_size = int(ground_truth_assessment_name.split('=')[-1])
+                    _leakage_assessment = torch.tensor(_leakage_assessment).unfold(0, window_size, 1).numpy().mean(axis=-1)
+                    _ground_truth_assessment = ground_truth_assessment[seed, :]
+                    kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].append(kendalltau(_leakage_assessment, _ground_truth_assessment).statistic)
+                    pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name].append(pearsonr(_leakage_assessment, _ground_truth_assessment).statistic)
+                kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name] = np.stack(kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name])
+                pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name] = np.stack(pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name])
+                print(f'\t\tKendall tau: {kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].mean()} +/- {kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].std()}')
+                print(f'\t\tPearson R: {pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name].mean()} +/- {pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name].std()}')
+        return kendalltau_evaluations, pearsonr_evaluations
     
     def plot_leakage_assessments(self):
         leakage_assessments = self.get_leakage_assessments()
@@ -422,6 +474,7 @@ class Trial:
         plt.close(fig)
     
     def __call__(self):
+        self.compute_random_assessment()
         if ('compute_ground_truth_assessments' in self.trial_config) and self.trial_config['compute_ground_truth_assessments']:
             self.compute_ground_truth_assessments()
         if ('compute_first_order_stats' in self.trial_config) and self.trial_config['compute_first_order_stats']:
@@ -455,10 +508,11 @@ class Trial:
                 self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
         if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
             self.run_ll_classifiers_hparam_sweep()
-        if ('run_ll_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_hparam_sweep']:
-            self.run_ll_hparam_sweep()
         if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:
             self.pretrain_leakage_localization_classifiers()
+        if ('run_ll_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_hparam_sweep']:
+            self.run_ll_hparam_sweep()
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:
             self.run_leakage_localization()
+        self.eval_leakage_assessments()
         self.plot_leakage_assessments()

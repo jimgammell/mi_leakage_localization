@@ -1,4 +1,5 @@
 from typing import *
+import time
 from collections import defaultdict
 from tqdm.auto import tqdm
 from copy import copy
@@ -35,6 +36,7 @@ class MultiAttackTrainer:
         window_size: int = 5,
         max_parallel_timesteps: Optional[int] = None
     ):
+        self.generator_seed = time.time_ns()&0xFFFFFFFF
         self.profiling_dataset = profiling_dataset
         self.attack_dataset = attack_dataset
         trace_mean = self.profiling_dataset.traces.mean(axis=0).reshape(1, -1)
@@ -86,9 +88,11 @@ class MultiAttackTrainer:
             t1 = t0 + self.max_parallel_timesteps
     
     def template_attack_sequence(self, timesteps, means: Optional[Sequence[float]] = None):
+        generator = torch.Generator()
+        generator.manual_seed(self.generator_seed)
         training_module = MultiTemplateAttackModule(len(timesteps), self.class_count, window_size=self.window_size, p_y=self.p_y, means=means)
         profiling_dataset, attack_dataset = self.get_subsampled_datasets(timesteps)
-        profiling_dataloader = DataLoader(profiling_dataset, shuffle=True, batch_size=self.batch_size, num_workers=5)
+        profiling_dataloader = DataLoader(profiling_dataset, shuffle=True, batch_size=self.batch_size, num_workers=5, generator=generator)
         attack_dataloader = DataLoader(attack_dataset, batch_size=len(attack_dataset), num_workers=5)
         trainer = LightningTrainer(max_steps=1000, logger=False, enable_checkpointing=False)
         trainer.fit(training_module, train_dataloaders=profiling_dataloader)
@@ -107,9 +111,11 @@ class MultiAttackTrainer:
         return info
     
     def mlp_attack_sequence(self, timesteps: int):
+        generator = torch.Generator()
+        generator.manual_seed(self.generator_seed)
         training_module = MultiMLPModule(len(timesteps), self.class_count, self.window_size)
         profiling_dataset, attack_dataset = self.get_subsampled_datasets(timesteps)
-        profiling_dataloader = DataLoader(profiling_dataset, shuffle=True, batch_size=self.batch_size, num_workers=5)
+        profiling_dataloader = DataLoader(profiling_dataset, shuffle=True, batch_size=self.batch_size, num_workers=5, generator=generator)
         attack_dataloader = DataLoader(attack_dataset, batch_size=len(attack_dataset), num_workers=5)
         trainer = LightningTrainer(max_steps=1000, logger=False, enable_checkpointing=False)
         trainer.fit(training_module, train_dataloaders=profiling_dataloader)
@@ -118,11 +124,13 @@ class MultiAttackTrainer:
             log_p_y_mid_x = training_module.multi_mlp.get_log_p_y_mid_x(attack_traces)
             batch_size, window_count, class_count = log_p_y_mid_x.shape
             _attack_labels = attack_labels.reshape(batch_size, 1).repeat(1, window_count).cpu().numpy()
-            rank = get_rank(log_p_y_mid_x.reshape(-1, self.class_count), _attack_labels.reshape(-1)).reshape(batch_size, window_count).mean(axis=0)
+            ranks = get_rank(log_p_y_mid_x.reshape(-1, self.class_count), _attack_labels.reshape(-1)).reshape(batch_size, window_count)
+            rank_mean, rank_std = ranks.mean(axis=0), ranks.std(axis=0)
             mutinf = training_module.multi_mlp.get_pointwise_mutinf(attack_traces).cpu().numpy()
             info = {
                 'log_p_y_mid_x': log_p_y_mid_x.mean(axis=0),
-                'rank': rank,
+                'rank_mean': rank_mean,
+                'rank_std': rank_std,
                 'mutinf': mutinf
             }
         return info

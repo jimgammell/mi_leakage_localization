@@ -1,15 +1,16 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/dpav4
-compute_ground_truth_assessments: true
+compute_ground_truth_assessments: false
 compute_first_order_stats: true
 run_supervised_hparam_sweep: false
-train_supervised_model: false
-compute_nn_attributions: false
+train_supervised_model: true
+compute_nn_attributions: true
 pretrain_classifiers: false
-run_ll_classifiers_hparam_sweep: true
+run_ll_classifiers_hparam_sweep: false
+run_ll_hparam_sweep: false
 run_leakage_localization: false
 hparam_tune: false
 max_classifiers_pretrain_steps: 10000
-max_leakage_localization_steps: 4000
+max_leakage_localization_steps: 10000
 default_kwargs:
   classifiers_name: mlp-1d
   calibrate_classifiers: true
@@ -17,7 +18,6 @@ default_kwargs:
   noise_scale: 1.0
 classifiers_pretrain_kwargs:
   theta_lr: 1.e-3
-  budget: 500.
 supervised_training_kwargs:
   classifier_name: mlp-1d
   lr: 1.e-3
@@ -25,9 +25,5 @@ supervised_training_kwargs:
 leakage_localization_kwargs:
   theta_lr: 1.e-3
   etat_lr: 1.e-3
-  etat_beta_1: 0.0
-  etat_beta_2: 0.9999
-  etat_eps: 1.e-8
   gradient_estimator: REBAR
-  budget: 50.
   etat_lr_scheduler_name: CosineDecayLRSched

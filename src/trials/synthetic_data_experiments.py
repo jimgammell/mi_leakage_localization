@@ -57,7 +57,7 @@ class Trial:
     ):
         self.logging_dir = logging_dir
         self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
-        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'etat_lr': 1e-3, 'calibrate_classifiers': False, 'ent_penalty': 1e-2, 'starting_prob': 0.1}
+        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'theta_weight_decay': 1e-4, 'etat_lr': 1e-3, 'calibrate_classifiers': False, 'ent_penalty': 1e-2, 'starting_prob': 0.5}
         self.run_kwargs.update(override_run_kwargs)
         self.leakage_localization_kwargs.update(override_leakage_localization_kwargs)
         self.batch_size = batch_size
@@ -71,7 +71,7 @@ class Trial:
         data_var: float = 1.0,
         shuffle_locs: int = 1,
         max_no_ops: int = 0,
-        lpf_beta: float = 0.0   
+        lpf_beta: float = 0.9   
     ):
         leaky_count = shuffle_locs*(leaky_1o_count + 2*leaky_2o_count)
         if leaky_count > 0:
@@ -131,7 +131,7 @@ class Trial:
     def run_1o_beta_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_beta_sweep')
         leakage_assessments = {}
-        for beta in [1 - 0.25**n for n in range(self.trial_count//2)] + [1 - (0.25**(self.trial_count//2))*(0.5**n) for n in range(self.trial_count//2)]:
+        for beta in [1 - 0.25**n for n in range(self.trial_count)][::-1]:
             subdir = os.path.join(exp_dir, f'beta={beta}')
             leakage_assessments[1-beta], *_ = self.run_experiment(subdir, {'lpf_beta': beta})
         self.plot_leakage_assessments(
@@ -216,11 +216,11 @@ class Trial:
     
     def __call__(self):
         try:
-            self.run_1o_leaky_pt_count_sweep()
+            self.run_1o_beta_sweep()
         except:
             pass
         try:
-            self.run_1o_beta_sweep()
+            self.run_1o_leaky_pt_count_sweep()
         except:
             pass
         #self.run_1o_data_var_sweep()

@@ -38,15 +38,16 @@ class SimpleGaussianDataset(Dataset):
             + 2*easy_feature_signal_std.reshape(1, 1, -1)*labels.reshape(-1, 1, 1).astype(float)
         )
         if not self.no_hard_feature:
+            hard_snr = 1e3
             masks = np.random.randint(2, size=(self.buffer_size,))
             masked_labels = masks ^ labels
             masks_feature = (
-                np.sqrt(0.5)*np.random.randn(self.buffer_size, 1, 1)
-                + 2*np.sqrt(0.5)*masks.reshape(-1, 1, 1).astype(float)
+                np.sqrt(1/(1+hard_snr))*np.random.randn(self.buffer_size, 1, 1)
+                + 2*np.sqrt(hard_snr)*masks.reshape(-1, 1, 1).astype(float)
             )
             masked_labels_feature = (
-                np.sqrt(0.5)*np.random.randn(self.buffer_size, 1, 1)
-                + 2*np.sqrt(0.5)*masked_labels.reshape(-1, 1, 1).astype(float)
+                np.sqrt(1/(1+hard_snr))*np.random.randn(self.buffer_size, 1, 1)
+                + 2*np.sqrt(hard_snr)*masked_labels.reshape(-1, 1, 1).astype(float)
             )
             datapoints = np.concatenate([random_features, easy_features, masks_feature, masked_labels_feature], axis=-1)
         else:

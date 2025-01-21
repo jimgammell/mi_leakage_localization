@@ -60,11 +60,11 @@ class SyntheticAES(Dataset):
         self.leaking_masked_subbytes_cycles = leaking_cycles[-self.shuffle_locs*self.leaking_timestep_count_2o:]
         if self.leaky_1o_pts is not None:
             self.leaking_subbytes_cycles = np.concatenate([self.leaking_subbytes_cycles, self.leaky_1o_pts])
-            self.leaking_timestep_count_1o = len(self.leaking_subbytes_cycles)
+            self.leaking_timestep_count_1o = len(self.leaking_subbytes_cycles)//self.shuffle_locs
         if self.leaky_2o_pts is not None:
             self.leaking_mask_cycles = np.concatenate([self.leaking_mask_cycles, self.leaky_2o_pts[0, :]])
             self.leaking_masked_subbytes_cycles = np.concatenate([self.leaking_masked_subbytes_cycles, self.leaky_2o_pts[1, :]])
-            self.leaking_timestep_count_2o = (len(self.leaking_mask_cycles) + len(self.leaking_masked_subbytes_cycles))//2
+            self.leaking_timestep_count_2o = (len(self.leaking_mask_cycles) + len(self.leaking_masked_subbytes_cycles))//(2*self.shuffle_locs)
         self.per_operation_power_consumption = np.sqrt(self.operation_var)*NUMPY_RNG.standard_normal(size=self.operation_count, dtype=np.float32)
         self.operations = NUMPY_RNG.choice(self.operation_count, self.timesteps_per_trace+LPF_BURN_IN_CYCLES, replace=True)
         self.fixed_noise_profile = self.per_operation_power_consumption[self.operations]

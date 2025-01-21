@@ -39,7 +39,7 @@ class Module(L.LightningModule):
         etat_beta_1: float = 0.9,
         etat_beta_2: float = 0.999,
         etat_eps: float = 1e-8,
-        theta_weight_decay: float = 0.0,
+        theta_weight_decay: float = 1e-2,
         etat_weight_decay: float = 0.0,
         ent_penalty: float = 0.0,
         starting_prob: float = 0.5,
