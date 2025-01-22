@@ -79,7 +79,7 @@ class Trainer:
         max_steps: int = 1000,
         override_kwargs: dict = {}
     ):
-        lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -2)], start=[])
+        lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-5, -3)], start=[])
         beta1_vals = [0.0, 0.5, 0.9, 0.99]
         weight_decay_vals = [0.0, 1e-4, 1e-2]
         lr_schedulers = [None, 'CosineDecayLRSched']
@@ -89,9 +89,12 @@ class Trainer:
             os.makedirs(experiment_dir, exist_ok=True)
             hparams = {
                 'theta_lr': np.random.choice(lr_vals),
-                'theta_beta_1': np.random.choice(beta1_vals),
-                'theta_weight_decay': np.random.choice(weight_decay_vals),
-                'theta_lr_scheduler_name': np.random.choice(lr_schedulers)
+                'theta_beta_1': 0.9, ##
+                'theta_weight_decay': 1e-4, ##
+                'theta_lr_scheduler_name': None ##
+                #'theta_beta_1': np.random.choice(beta1_vals),
+                #'theta_weight_decay': np.random.choice(weight_decay_vals),
+                #'theta_lr_scheduler_name': np.random.choice(lr_schedulers)
             }
             override_kwargs.update(hparams)
             self.pretrain_classifiers(
@@ -136,7 +139,7 @@ class Trainer:
                 assert os.path.exists(pretrained_classifiers_logging_dir)
                 pretrained_module = Module.load_from_checkpoint(os.path.join(pretrained_classifiers_logging_dir, 'best_checkpoint.ckpt'))
                 training_module.cmi_estimator.classifiers.load_state_dict(pretrained_module.cmi_estimator.classifiers.state_dict())
-            if 'supervised_dnn' in override_kwargs:
+            if False: # 'supervised_dnn' in override_kwargs:
                 checkpoint = ModelCheckpoint(
                     monitor='dnn_auc',
                     mode='max',
@@ -173,7 +176,7 @@ class Trainer:
     def htune_leakage_localization(self,
         logging_dir: Union[str, os.PathLike],
         pretrained_classifiers_logging_dir: Optional[Union[str, os.PathLike]] = None,
-        trial_count: int = 5,
+        trial_count: int = 50,
         max_steps: int = 1000,
         override_kwargs: dict = {},
         supervised_dnn: Optional[nn.Module] = None,
@@ -210,7 +213,7 @@ class Trainer:
             for key, val in hparams.items():
                 results[key].append(val)
             training_curves = load_training_curves(experiment_dir)
-            dnn_auc = np.max(training_curves['dnn_auc'][-1])
+            dnn_auc = training_curves['dnn_auc'][-1][-1]
             results['dnn_auc'].append(dnn_auc)
             for reference_name, reference in references.items():
                 window_size = int(reference_name.split('=')[-1])

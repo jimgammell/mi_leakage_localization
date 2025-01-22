@@ -57,7 +57,7 @@ class Trial:
     ):
         self.logging_dir = logging_dir
         self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
-        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'theta_weight_decay': 1e-4, 'etat_lr': 1e-3, 'calibrate_classifiers': False, 'ent_penalty': 1e-2, 'starting_prob': 0.5}
+        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'theta_weight_decay': 1e-4, 'etat_lr': 1e-3, 'calibrate_classifiers': False, 'ent_penalty': 0.0, 'starting_prob': 0.5}
         self.run_kwargs.update(override_run_kwargs)
         self.leakage_localization_kwargs.update(override_leakage_localization_kwargs)
         self.batch_size = batch_size
@@ -71,7 +71,7 @@ class Trial:
         data_var: float = 1.0,
         shuffle_locs: int = 1,
         max_no_ops: int = 0,
-        lpf_beta: float = 0.9   
+        lpf_beta: float = 0.5   
     ):
         leaky_count = shuffle_locs*(leaky_1o_count + 2*leaky_2o_count)
         if leaky_count > 0:
@@ -114,14 +114,16 @@ class Trial:
             profiling_dataset, attack_dataset, locs_1o, locs_2o = self.construct_datasets(**kwargs)
             trainer = self.construct_trainer(profiling_dataset, attack_dataset) # classifier pretraining is independent of budget
             trainer.pretrain_classifiers(os.path.join(logging_dir, 'classifiers_pretrain'), max_steps=self.run_kwargs['max_steps'])
-            leakage_assessments = {}
-            trainer = self.construct_trainer(profiling_dataset, attack_dataset)
-            leakage_assessment = trainer.run(
-                os.path.join(logging_dir, 'leakage_localization'),
-                pretrained_classifiers_logging_dir=os.path.join(logging_dir, 'classifiers_pretrain'),
-                **self.run_kwargs
-            )
-            np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessment=leakage_assessment, locs_1o=locs_1o, locs_2o=locs_2o)
+            for starting_prob in [0.01, 0.1, 0.5, 0.9, 0.99]:
+                self.leakage_localization_kwargs['starting_prob'] = starting_prob
+                leakage_assessments = {}
+                trainer = self.construct_trainer(profiling_dataset, attack_dataset)
+                leakage_assessment = trainer.run(
+                    os.path.join(logging_dir, f'starting_prob={starting_prob}'),
+                    pretrained_classifiers_logging_dir=os.path.join(logging_dir, 'classifiers_pretrain'),
+                    **self.run_kwargs
+                )
+                np.savez(os.path.join(logging_dir, f'starting_prob={starting_prob}', 'leakage_assessments.npz'), leakage_assessment=leakage_assessment, locs_1o=locs_1o, locs_2o=locs_2o)
         return leakage_assessments, locs_1o, locs_2o
     
     def plot_leakage_assessments(self, *args, **kwargs):
@@ -131,7 +133,7 @@ class Trial:
     def run_1o_beta_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_beta_sweep')
         leakage_assessments = {}
-        for beta in [1 - 0.25**n for n in range(self.trial_count)][::-1]:
+        for beta in [1 - 0.5**n for n in range(self.trial_count)][::-1]:
             subdir = os.path.join(exp_dir, f'beta={beta}')
             leakage_assessments[1-beta], *_ = self.run_experiment(subdir, {'lpf_beta': beta})
         self.plot_leakage_assessments(
@@ -215,21 +217,9 @@ class Trial:
         )
     
     def __call__(self):
-        try:
-            self.run_1o_beta_sweep()
-        except:
-            pass
-        try:
-            self.run_1o_leaky_pt_count_sweep()
-        except:
-            pass
+        self.run_1o_beta_sweep()
+        self.run_1o_leaky_pt_count_sweep()
         #self.run_1o_data_var_sweep()
-        try:
-            self.run_1o_no_op_count_sweep()
-        except:
-            pass
-        try:
-            self.run_1o_shuffle_loc_sweep()
-        except:
-            pass
+        self.run_1o_no_op_count_sweep()
+        self.run_1o_shuffle_loc_sweep()
         #self.run_2o_trial()

@@ -213,6 +213,35 @@ class Trial:
         else:
             print('Found existing LL hparam sweep.')
         self.ll_optimal_hparams = plot_ll_hparam_sweep(self.ll_hparam_sweep_dir)
+        print(f'Optimal LL hyperparameters on {self.dataset_name}: {self.ll_optimal_hparams}')
+        
+    def run_leakage_localization(self):
+        training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.supervised_model_dir, 'll_eval', 'best_checkpoint.ckpt'))
+        supervised_dnn = training_module.classifier
+        for seed in range(self.seed_count):
+            subdir = os.path.join(self.leakage_localization_dir, f'seed={seed}')
+            os.makedirs(subdir, exist_ok=True)
+            if not os.path.exists(os.path.join(subdir, 'best_checkpoint.ckpt')):
+                print('Running leakage localization...')
+                trainer = LeakageLocalizationTrainer(
+                    self.profiling_dataset, self.attack_dataset,
+                    default_training_module_kwargs=self.trial_config['default_kwargs']
+                )
+                leakage_localization_kwargs = copy(self.trial_config['default_kwargs'])
+                leakage_localization_kwargs.update(self.trial_config['leakage_localization_kwargs'])
+                leakage_localization_kwargs.update({'supervised_dnn': supervised_dnn})
+                leakage_localization_kwargs.update(self.ll_optimal_hparams)
+                leakage_assessment = trainer.run(
+                    logging_dir=subdir,
+                    pretrained_classifiers_logging_dir=os.path.join(self.ll_classifiers_pretrain_dir, f'seed={seed}') if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers'] else None,
+                    max_steps=self.trial_config['max_leakage_localization_steps'],
+                    override_kwargs=leakage_localization_kwargs,
+                    anim_gammas=False
+                )
+                self.leakage_localization_assessments = {
+                    'leakage_localization': leakage_assessment
+                }
+                print('\tDone.')
     
     def train_supervised_model(self):
         for subdir in ['ll_eval', *[f'seed={seed}' for seed in range(self.seed_count)]]:
@@ -382,29 +411,6 @@ class Trial:
             else:
                 print('Found pretrained leakage localization classifiers.')
     
-    def run_leakage_localization(self):
-        if not os.path.exists(os.path.join(self.leakage_localization_dir, 'final_checkpoint.ckpt')):
-            print('Running leakage localization...')
-            trainer = LeakageLocalizationTrainer(
-                self.profiling_dataset, self.attack_dataset,
-                default_training_module_kwargs=self.trial_config['default_kwargs'],
-                reference_leakage_assessment=self.get_leakage_assessments()
-            )
-            leakage_localization_kwargs = copy(self.trial_config['default_kwargs'])
-            leakage_localization_kwargs.update(self.trial_config['leakage_localization_kwargs'])
-            leakage_assessment = trainer.run(
-                logging_dir=self.leakage_localization_dir,
-                pretrained_classifiers_logging_dir=self.ll_classifiers_pretrain_dir if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers'] else None,
-                max_steps=self.trial_config['max_leakage_localization_steps'],
-                override_kwargs=leakage_localization_kwargs
-            )
-            self.leakage_localization_assessments = {
-                'leakage_localization': leakage_assessment
-            }
-            print('\tDone.')
-        else:
-            print('Found preexisting leakage localization output.')
-    
     def get_leakage_assessments(self):
         leakage_assessments = {}
         leakage_assessments.update(self.random_assessment)
@@ -482,33 +488,36 @@ class Trial:
             self.compute_ground_truth_assessments()
         if ('compute_first_order_stats' in self.trial_config) and self.trial_config['compute_first_order_stats']:
             self.compute_first_order_stats()
-        if ('run_supervised_hparam_sweep' in self.trial_config) and self.trial_config['run_supervised_hparam_sweep']:
-            self.run_supervised_hparam_sweep()
-        if ('train_supervised_model' in self.trial_config) and self.trial_config['train_supervised_model']:
-            self.train_supervised_model()
-            self.plot_supervised_training_curves()
-        if ('compute_nn_attributions' in self.trial_config) and self.trial_config['compute_nn_attributions']:
-            self.compute_neural_net_attributions()
-            if self.dataset_name == 'dpav4':
-                self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__DPAv4')
-                self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__DPAv4')
-                self.compute_supervised_ranks_over_time()
-                self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__DPAv4')
-                self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__DPAv4')
-            elif self.dataset_name == 'ascadv1_fixed':
-                self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__ASCADv1f')
-                self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__ASCADv1f')
-                self.compute_supervised_ranks_over_time()
-                self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__ASCADv1f')
-                self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__ASCADv1f')
-            elif self.dataset_name == 'ascadv1_variable':
-                self.compute_supervised_ranks_over_time()
-            elif self.dataset_name == 'aes_hd':
-                self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__AES_HD')
-                self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__AES_HD')
-                self.compute_supervised_ranks_over_time()
-                self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__AES_HD')
-                self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
+        try:
+            if ('run_supervised_hparam_sweep' in self.trial_config) and self.trial_config['run_supervised_hparam_sweep']:
+                self.run_supervised_hparam_sweep()
+            if ('train_supervised_model' in self.trial_config) and self.trial_config['train_supervised_model']:
+                self.train_supervised_model()
+                self.plot_supervised_training_curves()
+            if ('compute_nn_attributions' in self.trial_config) and self.trial_config['compute_nn_attributions']:
+                self.compute_neural_net_attributions()
+                if self.dataset_name == 'dpav4':
+                    self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__DPAv4')
+                    self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__DPAv4')
+                    self.compute_supervised_ranks_over_time()
+                    self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__DPAv4')
+                    self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__DPAv4')
+                elif self.dataset_name == 'ascadv1_fixed':
+                    self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__ASCADv1f')
+                    self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__ASCADv1f')
+                    self.compute_supervised_ranks_over_time()
+                    self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__ASCADv1f')
+                    self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__ASCADv1f')
+                elif self.dataset_name == 'ascadv1_variable':
+                    self.compute_supervised_ranks_over_time()
+                elif self.dataset_name == 'aes_hd':
+                    self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__AES_HD')
+                    self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__AES_HD')
+                    self.compute_supervised_ranks_over_time()
+                    self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__AES_HD')
+                    self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
+        except:
+            pass
         if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
             self.run_ll_classifiers_hparam_sweep()
         if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:

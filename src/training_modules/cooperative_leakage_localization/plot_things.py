@@ -11,12 +11,18 @@ def plot_ll_hparam_sweep(logging_dir):
     with open(os.path.join(logging_dir, 'results.pickle'), 'rb') as f:
         results = pickle.load(f)
     hparam_names = ['etat_lr', 'theta_lr', 'starting_prob', 'ent_penalty']
-    result_names = ['dnn_auc']
+    result_names = ['forward_dnn_auc', 'reverse_dnn_auc']
     fig, axes = plt.subplots(len(hparam_names), len(result_names), figsize=(PLOT_WIDTH*len(result_names), PLOT_WIDTH*len(hparam_names)))
     if len(hparam_names) == 1:
         axes = axes[np.newaxis, ...]
     if len(result_names) == 1:
         axes = axes[..., np.newaxis]
+    chosen_settings = {}
+    best_dnn_auc = -np.inf
+    #for idx in range(len(results['dnn_auc'])):
+    #    if results['dnn_auc'][idx] > best_dnn_auc:
+    #        best_dnn_auc = results['dnn_auc'][idx]
+    #        chosen_settings = {hparam_name: results[hparam_name][idx] for hparam_name in hparam_names}
     for row_idx, (hparam_name, axes_row) in enumerate(zip(hparam_names, axes)):
         for col_idx, (result_name, ax) in enumerate(zip(result_names, axes_row)):
             hparam_vals = results[hparam_name]
@@ -41,6 +47,7 @@ def plot_ll_hparam_sweep(logging_dir):
     fig.tight_layout()
     fig.savefig(os.path.join(logging_dir, 'hparam_sweep.pdf'), **SAVEFIG_KWARGS)
     plt.close(fig)
+    return chosen_settings
 
 def plot_classifiers_hparam_sweep(logging_dir):
     with open(os.path.join(logging_dir, 'results.pickle'), 'rb') as f:
@@ -167,12 +174,10 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
         for key, val in ktcc_curves.items():
             axes[6].plot(*val, label=key.replace('_', r'\_'), **PLOT_KWARGS)
         axes[6].legend()
-    if len(corr_curves) > 0:
-        for key, val in corr_curves.items():
-            axes[7].plot(*val, label=key.replace('_', r'\_'), **PLOT_KWARGS)
-        axes[7].legend()
-    if 'dnn_auc' in training_curves:
-        axes[8].plot(*training_curves['dnn_auc'], color='blue', **PLOT_KWARGS)
+    if 'forward_dnn_auc' in training_curves:
+        axes[7].plot(*training_curves['forward_dnn_auc'], color='blue', **PLOT_KWARGS)
+    if 'reverse_dnn_auc' in training_curves:
+        axes[8].plot(*training_curves['reverse_dnn_auc'], color='blue', **PLOT_KWARGS)
     if 'train_rebar_eta' in training_curves:
         axes[9].plot(*training_curves['train_rebar_eta'], color='blue', **PLOT_KWARGS)
     if 'train_rebar_tau' in training_curves:
@@ -188,8 +193,8 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     axes[4].set_ylabel(r'RMS gradient ($\theta$)')
     axes[5].set_ylabel(r'Inclusion probability $\gamma_t$')
     axes[6].set_ylabel('KTCC with reference leakage assessment')
-    axes[7].set_ylabel('Correlation with reference leakage assessment')
-    axes[8].set_ylabel('DNN AUC')
+    axes[7].set_ylabel('Forward DNN AUC')
+    axes[8].set_ylabel('Reverse DNN AUC')
     axes[9].set_ylabel(r'REBAR $\eta$')
     axes[10].set_ylabel(r'REBAR $\tau$')
     axes[11].set_ylabel('Calibration temperature')

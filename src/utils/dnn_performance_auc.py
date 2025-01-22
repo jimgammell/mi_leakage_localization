@@ -23,7 +23,7 @@ def compute_dnn_performance_auc(
     indices = leakage_assessment.reshape(-1).argsort()
     if not len(indices) % cluster_count == 0:
         indices = np.concatenate([
-            indices, indices[:-(cluster_count - (len(indices)%cluster_count))]
+            indices[:cluster_count - (len(indices)%cluster_count)], indices
         ])
     indices = torch.tensor(indices.reshape(cluster_count, -1), dtype=torch.long)
     mask = torch.zeros(1, timesteps_per_trace, dtype=torch.float, device=device)
@@ -34,5 +34,22 @@ def compute_dnn_performance_auc(
         logits = dnn(masked_traces)
         rank = get_rank(logits, labels).mean()
         ranks.append(rank)
-    auc = np.mean(ranks)
-    return auc
+    reverse_auc = np.mean(ranks)
+    
+    indices = leakage_assessment.reshape(-1).argsort()[::-1].copy()
+    if not len(indices) % cluster_count == 0:
+        indices = np.concatenate([
+            indices, indices[-(cluster_count - (len(indices)%cluster_count)):]
+        ])
+    indices = torch.tensor(indices.reshape(cluster_count, -1), dtype=torch.long)
+    mask = torch.zeros(1, timesteps_per_trace, dtype=torch.float, device=device)
+    ranks = []
+    for index_cluster in indices:
+        mask[:, index_cluster] = 1.
+        masked_traces = mask.unsqueeze(0)*traces
+        logits = dnn(masked_traces)
+        rank = get_rank(logits, labels).mean()
+        ranks.append(rank)
+    forward_auc = np.mean(ranks)
+    
+    return {'forward_dnn_auc': forward_auc, 'reverse_dnn_auc': reverse_auc}

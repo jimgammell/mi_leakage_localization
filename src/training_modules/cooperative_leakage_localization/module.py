@@ -320,5 +320,6 @@ class Module(L.LightningModule):
         ):
             gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1)
             dataloader = self.trainer.datamodule.val_dataloader()
-            dnn_auc = compute_dnn_performance_auc(dataloader, self.hparams.supervised_dnn, gamma, device=self.device)
-            self.log('dnn_auc', dnn_auc)
+            auc_results = compute_dnn_performance_auc(dataloader, self.hparams.supervised_dnn, gamma, device=self.device)
+            for key, val in auc_results.items():
+                self.log(key, val)

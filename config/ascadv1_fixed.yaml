@@ -1,13 +1,13 @@
 data_dir: /mnt/hdd/jgammell/leakage_localization/downloads/ascadv1
 compute_ground_truth_assessments: true
 compute_first_order_stats: true
-run_supervised_hparam_sweep: false
-train_supervised_model: false
+run_supervised_hparam_sweep: true
+train_supervised_model: true
 compute_nn_attributions: true
-pretrain_classifiers: false
-run_leakage_localization: false
-run_ll_classifiers_hparam_sweep: false
-run_ll_hparam_sweep: false
+pretrain_classifiers: true
+run_ll_classifiers_hparam_sweep: true
+run_ll_hparam_sweep: true
+run_leakage_localization: true
 max_classifiers_pretrain_steps: 10000
 max_leakage_localization_steps: 10000
 default_kwargs:
