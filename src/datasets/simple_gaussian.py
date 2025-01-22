@@ -38,7 +38,7 @@ class SimpleGaussianDataset(Dataset):
             + 2*easy_feature_signal_std.reshape(1, 1, -1)*labels.reshape(-1, 1, 1).astype(float)
         )
         if not self.no_hard_feature:
-            hard_snr = 1e3
+            hard_snr = 1e0
             masks = np.random.randint(2, size=(self.buffer_size,))
             masked_labels = masks ^ labels
             masks_feature = (

@@ -12,6 +12,8 @@ from datasets.synthetic_aes import SyntheticAES, SyntheticAESLike
 from training_modules.cooperative_leakage_localization import LeakageLocalizationTrainer
 
 def _plot_leakage_assessments(dest, leakage_assessments, leaking_instruction_timesteps=None, title=None, to_label=None):
+    print(leakage_assessments)
+    assert False
     keys = list(leakage_assessments.keys())
     if isinstance(keys[0], Number):
         assert all(isinstance(key, Number) for key in keys)
@@ -57,7 +59,7 @@ class Trial:
     ):
         self.logging_dir = logging_dir
         self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
-        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'theta_weight_decay': 1e-4, 'etat_lr': 1e-3, 'calibrate_classifiers': False, 'ent_penalty': 0.0, 'starting_prob': 0.5}
+        self.leakage_localization_kwargs = {'classifiers_name': 'mlp-1d', 'theta_lr': 1e-3, 'theta_weight_decay': 1e-2, 'etat_lr': 1e-3, 'calibrate_classifiers': False, 'ent_penalty': 0.0, 'starting_prob': 0.5}
         self.run_kwargs.update(override_run_kwargs)
         self.leakage_localization_kwargs.update(override_leakage_localization_kwargs)
         self.batch_size = batch_size
@@ -104,19 +106,15 @@ class Trial:
         return trainer
     
     def run_experiment(self, logging_dir, kwargs):
+        leakage_assessments = {}
         os.makedirs(logging_dir, exist_ok=True)
-        if os.path.exists(os.path.join(logging_dir, 'leakage_assessments.npz')):
-            rv = np.load(os.path.join(logging_dir, 'leakage_assessments.npz'), allow_pickle=True)
-            leakage_assessments = rv['leakage_assessment']
-            locs_1o = rv['locs_1o']
-            locs_2o = rv['locs_2o']
-        else:
-            profiling_dataset, attack_dataset, locs_1o, locs_2o = self.construct_datasets(**kwargs)
+        profiling_dataset, attack_dataset, locs_1o, locs_2o = self.construct_datasets(**kwargs)
+        if not os.path.exists(os.path.join(logging_dir, 'classifiers_pretrain', 'best_checkpoint.ckpt')):
             trainer = self.construct_trainer(profiling_dataset, attack_dataset) # classifier pretraining is independent of budget
             trainer.pretrain_classifiers(os.path.join(logging_dir, 'classifiers_pretrain'), max_steps=self.run_kwargs['max_steps'])
-            for starting_prob in [0.01, 0.1, 0.5, 0.9, 0.99]:
+        for starting_prob in [0.01, 0.1, 0.5, 0.9, 0.99]:
+            if not os.path.exists(os.path.join(logging_dir, f'starting_prob={starting_prob}', 'leakage_assessments.npz')):
                 self.leakage_localization_kwargs['starting_prob'] = starting_prob
-                leakage_assessments = {}
                 trainer = self.construct_trainer(profiling_dataset, attack_dataset)
                 leakage_assessment = trainer.run(
                     os.path.join(logging_dir, f'starting_prob={starting_prob}'),
@@ -124,7 +122,12 @@ class Trial:
                     **self.run_kwargs
                 )
                 np.savez(os.path.join(logging_dir, f'starting_prob={starting_prob}', 'leakage_assessments.npz'), leakage_assessment=leakage_assessment, locs_1o=locs_1o, locs_2o=locs_2o)
-        return leakage_assessments, locs_1o, locs_2o
+            else:
+                data = np.load(os.path.join(logging_dir, f'starting_prob={starting_prob}', 'leakage_assessments.npz'), allow_pickle=True)
+                leakage_assessment = data['leakage_assessment']
+                locs_1o = data['locs_1o']
+                locs_2o = data['locs_2o']
+        return leakage_assessment, locs_1o, locs_2o
     
     def plot_leakage_assessments(self, *args, **kwargs):
         if not self.pretrain_classifiers_only:
@@ -136,13 +139,13 @@ class Trial:
         for beta in [1 - 0.5**n for n in range(self.trial_count)][::-1]:
             subdir = os.path.join(exp_dir, f'beta={beta}')
             leakage_assessments[1-beta], *_ = self.run_experiment(subdir, {'lpf_beta': beta})
-        self.plot_leakage_assessments(
-            os.path.join(exp_dir, 'sweep.pdf'),
-            leakage_assessments,
-            self.timestep_count//2,
-            title=r'Sweep of low-pass filter coefficient: $\beta_{\mathrm{LPF}}$',
-            to_label=lambda x: r'$\beta_{\mathrm{LPF}}='+f'{1-x}'+r'$'
-        )
+        #self.plot_leakage_assessments(
+        #    os.path.join(exp_dir, 'sweep.pdf'),
+        #    leakage_assessments,
+        #    self.timestep_count//2,
+        #    title=r'Sweep of low-pass filter coefficient: $\beta_{\mathrm{LPF}}$',
+        #    to_label=lambda x: r'$\beta_{\mathrm{LPF}}='+f'{1-x}'+r'$'
+        #)
     
     def run_1o_data_var_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_data_var_sweep')
@@ -150,13 +153,13 @@ class Trial:
         for var in [1.0] + [0.5**(-2*n) for n in range(1, self.trial_count//2)] + [0.5**(2*n) for n in range(1, self.trial_count//2)] + [0.0]:
             subdir = os.path.join(exp_dir, f'var={var}')
             leakage_assessments[var], *_ = self.run_experiment(subdir, {'data_var': var})
-        self.plot_leakage_assessments(
-            os.path.join(exp_dir, 'sweep.pdf'),
-            leakage_assessments,
-            self.timestep_count//2,
-            title=r'Sweep of data-dependent variance: $\sigma_{\mathrm{data}}$',
-            to_label=lambda x: r'$\sigma_{\mathrm{data}}='+f'{x}'+r'$'
-        )
+        #self.plot_leakage_assessments(
+        #    os.path.join(exp_dir, 'sweep.pdf'),
+        #    leakage_assessments,
+        #    self.timestep_count//2,
+        #    title=r'Sweep of data-dependent variance: $\sigma_{\mathrm{data}}$',
+        #    to_label=lambda x: r'$\sigma_{\mathrm{data}}='+f'{x}'+r'$'
+        #)
     
     def run_1o_leaky_pt_count_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_leaky_pt_sweep')
@@ -166,13 +169,13 @@ class Trial:
             subdir = os.path.join(exp_dir, f'count={count}')
             leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'leaky_1o_count': count})
             locss.append(locs)
-        self.plot_leakage_assessments(
-            os.path.join(exp_dir, 'sweep.pdf'),
-            leakage_assessments,
-            locss,
-            title=r'Sweep of leaky instruction count: $n_{\mathrm{lkg}}$',
-            to_label=lambda x: r'$n_{\mathrm{lkg}}='+f'{x}'+r'$'
-        )
+        #self.plot_leakage_assessments(
+        #    os.path.join(exp_dir, 'sweep.pdf'),
+        #    leakage_assessments,
+        #    locss,
+        #    title=r'Sweep of leaky instruction count: $n_{\mathrm{lkg}}$',
+        #    to_label=lambda x: r'$n_{\mathrm{lkg}}='+f'{x}'+r'$'
+        #)
     
     def run_1o_no_op_count_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_no_op_sweep')
@@ -182,13 +185,13 @@ class Trial:
             subdir = os.path.join(exp_dir, f'count={count}')
             leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'max_no_ops': count})
             locss.append(locs)
-        self.plot_leakage_assessments(
-            os.path.join(exp_dir, 'sweep.pdf'),
-            leakage_assessments,
-            self.timestep_count//2,
-            title=r'Sweep of max no-ops: $n_{\mathrm{no-op}}$',
-            to_label=lambda x: r'$n_{\mathrm{no-op}}='+f'{x}'+r'$'
-        )
+        #self.plot_leakage_assessments(
+        #    os.path.join(exp_dir, 'sweep.pdf'),
+        #    leakage_assessments,
+        #    self.timestep_count//2,
+        #    title=r'Sweep of max no-ops: $n_{\mathrm{no-op}}$',
+        #    to_label=lambda x: r'$n_{\mathrm{no-op}}='+f'{x}'+r'$'
+        #)
     
     def run_1o_shuffle_loc_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_shuffle_sweep')
@@ -198,13 +201,13 @@ class Trial:
             subdir = os.path.join(exp_dir, f'count={count}')
             leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'shuffle_locs': count})
             locss.append(locs)
-        self.plot_leakage_assessments(
-            os.path.join(exp_dir, 'sweep.pdf'),
-            leakage_assessments,
-            locss,
-            title=r'Sweep of shuffle location count: $n_{\mathrm{shuff}}$',
-            to_label=lambda x: r'$n_{\mathrm{shuff}}='+f'{x}'+r'$'
-        )
+        #self.plot_leakage_assessments(
+        #    os.path.join(exp_dir, 'sweep.pdf'),
+        #    leakage_assessments,
+        #    locss,
+        #    title=r'Sweep of shuffle location count: $n_{\mathrm{shuff}}$',
+        #    to_label=lambda x: r'$n_{\mathrm{shuff}}='+f'{x}'+r'$'
+        #)
     
     def run_2o_trial(self):
         exp_dir = os.path.join(self.logging_dir, '2o_trial')

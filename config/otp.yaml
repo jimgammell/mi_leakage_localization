@@ -12,14 +12,11 @@ max_classifiers_pretrain_steps: 1000
 max_leakage_localization_steps: 10000
 default_kwargs:
   classifiers_name: mlp-1d
-  calibrate_classifiers: false
 classifiers_pretrain_kwargs:
   theta_lr: 1.e-3
 supervised_training_kwargs:
   classifier_name: mlp-1d
   lr: 1.e-4
-  weight_decay: 1.e-2
-  lr_scheduler_name: CosineDecayLRSched
 leakage_localization_kwargs:
   theta_lr: 1.e-5
   etat_lr: 1.e-3

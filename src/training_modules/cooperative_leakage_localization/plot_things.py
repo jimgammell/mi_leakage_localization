@@ -17,12 +17,16 @@ def plot_ll_hparam_sweep(logging_dir):
         axes = axes[np.newaxis, ...]
     if len(result_names) == 1:
         axes = axes[..., np.newaxis]
-    chosen_settings = {}
-    best_dnn_auc = -np.inf
-    #for idx in range(len(results['dnn_auc'])):
-    #    if results['dnn_auc'][idx] > best_dnn_auc:
-    #        best_dnn_auc = results['dnn_auc'][idx]
-    #        chosen_settings = {hparam_name: results[hparam_name][idx] for hparam_name in hparam_names}
+    best_forward_dnn_auc = np.min(results['forward_dnn_auc'])
+    best_reverse_dnn_auc = -np.inf
+    for idx in range(len(results['reverse_dnn_auc'])):
+        forward_dnn_auc = results['forward_dnn_auc'][idx]
+        reverse_dnn_auc = results['reverse_dnn_auc'][idx]
+        if forward_dnn_auc <= 1.01*best_forward_dnn_auc:
+            if reverse_dnn_auc > best_reverse_dnn_auc:
+                best_reverse_dnn_auc = reverse_dnn_auc
+                chosen_settings = {hparam_name: results[hparam_name][idx] for hparam_name in hparam_names}
+                chosen_results = {result_name: results[result_name][idx] for result_name in result_names}
     for row_idx, (hparam_name, axes_row) in enumerate(zip(hparam_names, axes)):
         for col_idx, (result_name, ax) in enumerate(zip(result_names, axes_row)):
             hparam_vals = results[hparam_name]
@@ -33,7 +37,7 @@ def plot_ll_hparam_sweep(logging_dir):
             label_to_num = {hparam_name: idx for idx, hparam_name in enumerate(distinct_hparam_vals)}
             xx = [label_to_num[x] for x in hparam_vals]
             ax.plot(xx, result_vals, color='blue', marker='.', linestyle='none', markersize=1, **PLOT_KWARGS)
-            #ax.plot([label_to_num[chosen_settings[hparam_name]]], [chosen_results[result_name]], color='red', marker='.', linestyle='none')
+            ax.plot([label_to_num[chosen_settings[hparam_name]]], [chosen_results[result_name]], color='red', marker='.', linestyle='none')
             ax.set_xticks(list(label_to_num.values()))
             if hparam_name in ['lr', 'eps', 'weight_decay']:
                 ticklabels = [f'{x:.1e}' for x in label_to_num.keys()]

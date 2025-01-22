@@ -74,7 +74,7 @@ class Trainer:
         max_steps: int = 1000,
         override_kwargs: dict = {}
     ):
-        lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -2)], start=[])
+        lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -3)], start=[])
         beta1_vals = [0.0, 0.5, 0.9, 0.99]
         weight_decay_vals = [0.0, 1e-4, 1e-2]
         lr_schedulers = [None, 'CosineDecayLRSched']
