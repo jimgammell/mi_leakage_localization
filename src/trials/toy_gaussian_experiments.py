@@ -18,16 +18,16 @@ class Trial:
         logging_dir: Union[str, os.PathLike] = None,
         seed_count: int = 1,
         trial_count: int = 11,
-        run_baselines: bool = False
+        run_baselines: bool = True
     ):
         self.logging_dir = logging_dir
         self.seed_count = seed_count
         self.trial_count = trial_count
-        self.run_kwargs = {'max_steps': 1000, 'anim_gammas': False}
+        self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
         self.supervised_kwargs = {'classifier_name': 'mlp-1d', 'classifier_kwargs': {'layer_count': 1}, 'lr': 1e-3}
         self.leakage_localization_kwargs = {
             'classifiers_name': 'mlp-1d', 'classifiers_kwargs': {'layer_count': 1}, 'theta_lr': 1e-3, 'etat_lr': 1e-3,
-            'adversarial_mode': False, 'ent_penalty': 1e-4, 'starting_prob': 0.5,
+            'adversarial_mode': True, 'ent_penalty': 0., 'starting_prob': 0.5,
         }
         self.run_baselines = run_baselines
     

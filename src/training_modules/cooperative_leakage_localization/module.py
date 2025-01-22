@@ -44,7 +44,7 @@ class Module(L.LightningModule):
         etat_weight_decay: float = 0.0,
         ent_penalty: float = 0.0,
         starting_prob: float = 0.5,
-        adversarial_mode: bool = False,
+        adversarial_mode: bool = True, ###########
         timesteps_per_trace: Optional[int] = None,
         class_count: int = 256,
         gradient_estimator: Literal['REINFORCE', 'REBAR'] = 'REBAR',
@@ -192,6 +192,11 @@ class Module(L.LightningModule):
             rb_tilde_detached = nn.functional.sigmoid(to_z(log_alpha.detach(), v.detach())/temperature) # We only want to 'detach' with respect to log_gamma, not the temperature.
         else:
             raise NotImplementedError
+        if self.hparams.adversarial_mode:
+            b = 1-b
+            rb = 1-rb
+            rb_tilde = 1-rb_tilde
+            rb_tilde_detached = 1-rb_tilde_detached
         return b, rb, rb_tilde, rb_tilde_detached
     
     def step(self, batch, train_theta: bool = True, train_etat: bool = True):
