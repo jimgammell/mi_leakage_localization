@@ -112,7 +112,7 @@ class Trial:
         if not os.path.exists(os.path.join(logging_dir, 'classifiers_pretrain', 'best_checkpoint.ckpt')):
             trainer = self.construct_trainer(profiling_dataset, attack_dataset) # classifier pretraining is independent of budget
             trainer.pretrain_classifiers(os.path.join(logging_dir, 'classifiers_pretrain'), max_steps=self.run_kwargs['max_steps'])
-        for starting_prob in [0.01, 0.1, 0.5, 0.9, 0.99]:
+        for starting_prob in [0.05, 0.1, 0.5, 0.9, 0.95]:
             if not os.path.exists(os.path.join(logging_dir, f'starting_prob={starting_prob}', 'leakage_assessments.npz')):
                 self.leakage_localization_kwargs['starting_prob'] = starting_prob
                 trainer = self.construct_trainer(profiling_dataset, attack_dataset)
@@ -181,7 +181,7 @@ class Trial:
         exp_dir = os.path.join(self.logging_dir, '1o_no_op_sweep')
         leakage_assessments = {}
         locss = []
-        for count in [0] + [1 + 2*x for x in range(self.trial_count-1)]:
+        for count in [0] + [1 + 4*x for x in range(self.trial_count-1)]:
             subdir = os.path.join(exp_dir, f'count={count}')
             leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'max_no_ops': count})
             locss.append(locs)

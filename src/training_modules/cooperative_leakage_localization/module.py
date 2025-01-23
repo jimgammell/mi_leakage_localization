@@ -40,7 +40,8 @@ class Module(L.LightningModule):
         etat_beta_1: float = 0.9,
         etat_beta_2: float = 0.999,
         etat_eps: float = 1e-8,
-        theta_weight_decay: float = 1e-2,
+        etat_steps_per_theta_step: int = 1,
+        theta_weight_decay: float = 0.0,
         etat_weight_decay: float = 0.0,
         ent_penalty: float = 0.0,
         starting_prob: float = 0.5,
@@ -93,6 +94,7 @@ class Module(L.LightningModule):
                 pass
             else:
                 assert False
+        self.etat_step_counter = 0
     
     def to_global_steps(self, steps): # Lightning considers it a 'step' any time any optimizer is stepped. This converts training steps to Lightning steps (e.g. to pass to Trainer).
         out = 0
@@ -295,7 +297,18 @@ class Module(L.LightningModule):
         return rv
     
     def training_step(self, batch):
-        rv = self.step(batch, train_theta=self.hparams.train_theta, train_etat=self.hparams.train_etat)
+        if not(self.hparams.train_theta):
+            train_theta = False
+        elif self.hparams.train_theta and not(self.hparams.train_etat):
+            train_theta = True
+        else:
+            self.etat_step_counter += 1
+            if self.etat_step_counter <= self.hparams.etat_steps_per_theta_step:
+                train_theta = True
+                self.etat_step_counter = 0
+            else:
+                train_theta = False
+        rv = self.step(batch, train_theta=train_theta, train_etat=self.hparams.train_etat)
         for key, val in rv.items():
             self.log(f'train_{key}', val, on_step=False, on_epoch=True)
     
@@ -305,10 +318,6 @@ class Module(L.LightningModule):
             self.log(f'val_{key}', val, on_step=False, on_epoch=True)
     
     def on_train_epoch_end(self):
-        log_gamma = self.selection_mechanism.get_log_gamma().detach().cpu().numpy().squeeze()
-        log_gamma_save_dir = os.path.join(self.logger.log_dir, 'log_gamma_over_time')
-        os.makedirs(log_gamma_save_dir, exist_ok=True)
-        np.save(os.path.join(log_gamma_save_dir, f'log_gamma__step={self.global_step}.npy'), log_gamma)
         if self.hparams.reference_leakage_assessment is not None:
             gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1) #get_gamma().detach().cpu().numpy().reshape(-1)
             for key, leakage_assessment in self.hparams.reference_leakage_assessment.items():
@@ -317,14 +326,18 @@ class Module(L.LightningModule):
                 self.log(f'{key}_ktcc', ktcc)
                 self.log(f'{key}_corr', correlation)
         if (
-            (self.hparams.supervised_dnn is not None) 
-            and (
-                (self.total_steps // (100*len(self.trainer.train_dataloader)) == 0)
-                or (self.current_epoch % (self.total_steps//(100*len(self.trainer.train_dataloader))) == 0)
-            )
+            (self.total_steps // (100*len(self.trainer.train_dataloader)) == 0)
+            or (self.current_epoch % (self.total_steps//(100*len(self.trainer.train_dataloader))) == 0)
         ):
-            gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1)
-            dataloader = self.trainer.datamodule.val_dataloader()
-            auc_results = compute_dnn_performance_auc(dataloader, self.hparams.supervised_dnn, gamma, device=self.device)
-            for key, val in auc_results.items():
-                self.log(key, val)
+            log_gamma = self.selection_mechanism.get_log_gamma().detach().cpu().numpy().squeeze()
+            log_gamma_save_dir = os.path.join(self.logger.log_dir, 'log_gamma_over_time')
+            os.makedirs(log_gamma_save_dir, exist_ok=True)
+            np.save(os.path.join(log_gamma_save_dir, f'log_gamma__step={self.global_step}.npy'), log_gamma)
+            
+            if self.hparams.supervised_dnn is not None:
+                gamma = self.selection_mechanism.get_accumulated_gamma().reshape(-1)
+                dataloader = self.trainer.datamodule.val_dataloader()
+                auc_results = compute_dnn_performance_auc(dataloader, self.hparams.supervised_dnn, gamma, device=self.device)
+                for key, val in auc_results.items():
+                    self.log(key, val)
+                self.log('early_stop_metric', auc_results['reverse_dnn_auc'] - auc_results['forward_dnn_auc'])

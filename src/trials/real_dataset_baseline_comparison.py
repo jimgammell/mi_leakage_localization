@@ -172,7 +172,11 @@ class Trial:
     def run_supervised_hparam_sweep(self):
         if not os.path.exists(os.path.join(self.supervised_hparam_sweep_dir, 'results.pickle')):
             print('Running supervised hparam sweep...')
-            supervised_trainer = SupervisedTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=self.trial_config['supervised_training_kwargs'])
+            supervised_trainer = SupervisedTrainer(
+                self.profiling_dataset, self.attack_dataset,
+                default_training_module_kwargs=self.trial_config['supervised_training_kwargs'],
+                default_data_module_kwargs={'gaussian_noise_std': 0.5 if self.dataset_name == 'aes_hd' else 0.0}
+            )
             supervised_trainer.hparam_tune(logging_dir=self.supervised_hparam_sweep_dir, max_steps=self.trial_config['max_classifiers_pretrain_steps'])
             print('\tDone.')
         else:
@@ -185,7 +189,11 @@ class Trial:
             print('Running LL classifiers hparam sweep...')
             kwargs = copy(self.trial_config['default_kwargs'])
             kwargs.update(self.trial_config['classifiers_pretrain_kwargs'])
-            ll_trainer = LeakageLocalizationTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=kwargs)
+            ll_trainer = LeakageLocalizationTrainer(
+                self.profiling_dataset, self.attack_dataset,
+                default_training_module_kwargs=kwargs,
+                default_data_module_kwargs={'gaussian_noise_std': 0.5 if self.dataset_name == 'aes_hd' else 0.0}
+            )
             ll_trainer.htune_pretrain_classifiers(logging_dir=self.ll_classifiers_hparam_sweep_dir, max_steps=self.trial_config['max_classifiers_pretrain_steps'])
             print('\tDone.')
         else:
@@ -196,16 +204,19 @@ class Trial:
     def run_ll_hparam_sweep(self):
         training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.supervised_model_dir, 'll_eval', 'best_checkpoint.ckpt'))
         supervised_dnn = training_module.classifier
+        use_pretrained_classifiers = self.dataset_name not in ['otp', 'otiait', 'dpav4']
         if True: #not os.path.exists(os.path.join(self.ll_hparam_sweep_dir, 'results.pickle')):
             print('Running LL hparam sweep...')
             kwargs = copy(self.trial_config['default_kwargs'])
             kwargs.update(self.trial_config['classifiers_pretrain_kwargs'])
             kwargs.update(self.trial_config['leakage_localization_kwargs'])
-            kwargs.update(self.optimal_ll_pretrain_hparams)
+            if use_pretrained_classifiers:
+                kwargs.update(self.optimal_ll_pretrain_hparams)
             ll_trainer = LeakageLocalizationTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=kwargs)
             ll_trainer.htune_leakage_localization(
                 self.ll_hparam_sweep_dir,
-                pretrained_classifiers_logging_dir=os.path.join(self.ll_classifiers_pretrain_dir, f'seed=0'),
+                pretrained_classifiers_logging_dir=os.path.join(self.ll_classifiers_pretrain_dir, f'seed=0') if use_pretrained_classifiers else None,
+                trial_count=25 if use_pretrained_classifiers else 50,
                 max_steps=self.trial_config['max_leakage_localization_steps'],
                 supervised_dnn=supervised_dnn,
                 references={key: val.mean(axis=0) for key, val in self.get_ground_truth_assessments().items()}
@@ -518,10 +529,11 @@ class Trial:
                     self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
         except:
             pass
-        if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
-            self.run_ll_classifiers_hparam_sweep()
-        if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:
-            self.pretrain_leakage_localization_classifiers()
+        if self.dataset_name not in ['otiait', 'otp', 'dpav4']:
+            if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
+                self.run_ll_classifiers_hparam_sweep()
+            if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:
+                self.pretrain_leakage_localization_classifiers()
         if ('run_ll_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_hparam_sweep']:
             self.run_ll_hparam_sweep()
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:

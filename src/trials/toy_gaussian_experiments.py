@@ -23,7 +23,7 @@ class Trial:
         self.logging_dir = logging_dir
         self.seed_count = seed_count
         self.trial_count = trial_count
-        self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
+        self.run_kwargs = {'max_steps': 1000, 'anim_gammas': False}
         self.supervised_kwargs = {'classifier_name': 'mlp-1d', 'classifier_kwargs': {'layer_count': 1}, 'lr': 1e-3}
         self.leakage_localization_kwargs = {
             'classifiers_name': 'mlp-1d', 'classifiers_kwargs': {'layer_count': 1}, 'theta_lr': 1e-3, 'etat_lr': 1e-3,
@@ -183,6 +183,72 @@ class Trial:
         fig.tight_layout()
         fig.savefig(os.path.join(self.logging_dir, 'xor_var_sweep', 'sweep.png'), **SAVEFIG_KWARGS)
     
+    def create_main_paper_plot(self):
+        fig, axes = plt.subplots(3, 2, figsize=(2*PLOT_WIDTH, 3*PLOT_WIDTH))
+        for ax in axes[:, 0]:
+            ax.set_xlabel('SNR of first-order leaking point')
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+        for ax in axes[:, 1]:
+            ax.set_xlabel('Leaking point count')
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+        axes[0, 0].set_ylabel('Estimated leakage by SNR')
+        axes[0, 1].set_ylabel('Estimated leakage by SNR')
+        axes[1, 0].set_ylabel('Estimated leakage by 1-occlusion')
+        axes[1, 1].set_ylabel('Estimated leakage by 1-occlusion')
+        axes[2, 0].set_ylabel('Estimated leakage by ALL (Ours)')
+        axes[2, 1].set_ylabel('Estimated leakage by ALL (Ours)')
+        axes = axes.T
+        traces = defaultdict(list)
+        xor_vars = [0.5**n for n in range(1, self.trial_count//2+1)][::-1] + [1.0] + [2.0**n for n in range(1, self.trial_count//2+1)]
+        for xor_var in xor_vars:
+            _traces = defaultdict(list)
+            for seed in range(self.seed_count):
+                leakage_assessments = np.load(os.path.join(self.logging_dir, 'xor_var_sweep', f'seed={seed}', 'leakage_assessments.npz'), allow_pickle=True)['leakage_assessments'].item()
+                for key, val in leakage_assessments[f'var={xor_var}'].items():
+                    if not key in ['snr', 'occlusion', 'leakage_localization']:
+                        continue
+                    _traces[key].append(val.reshape(-1))
+            _traces = {key: np.stack(val) for key, val in _traces.items()}
+            for key, val in _traces.items():
+                traces[key].append(val)
+        traces = {key: np.stack(val) for key, val in traces.items()}
+        for key, ax in zip(['snr', 'occlusion', 'leakage_localization'], axes[0, :]):
+            trace = traces[key]
+            ax.plot(xor_vars, np.median(trace[:, :, 0], axis=-1), color='red', label='Random', **PLOT_KWARGS)
+            ax.fill_between(xor_vars, np.min(trace[:, :, 0], axis=-1), np.max(trace[:, :, 0], axis=-1), color='red', alpha=0.25, **PLOT_KWARGS)
+            ax.plot(xor_vars, np.median(trace[:, :, 1], axis=-1), color='blue', label='1st-order', **PLOT_KWARGS)
+            ax.fill_between(xor_vars, np.min(trace[:, :, 1], axis=-1), np.max(trace[:, :, 1], axis=-1), color='blue', alpha=0.25, **PLOT_KWARGS)
+            ax.plot(xor_vars, np.median(trace[:, :, 2], axis=-1), color='green', label='2nd-order (share 1)', **PLOT_KWARGS)
+            ax.fill_between(xor_vars, np.min(trace[:, :, 2], axis=-1), np.max(trace[:, :, 2], axis=-1), color='green', alpha=0.25, **PLOT_KWARGS)
+            ax.plot(xor_vars, np.median(trace[:, :, 3], axis=-1), color='purple', label='2nd-order (share 2)', **PLOT_KWARGS)
+            ax.fill_between(xor_vars, np.min(trace[:, :, 3], axis=-1), np.max(trace[:, :, 3], axis=-1), color='purple', alpha=0.25, **PLOT_KWARGS)
+        traces = defaultdict(list)
+        counts = [2*x+1 for x in range(10)] + [10*x+1 for x in range(3, 11)]
+        for count in counts:
+            _traces = defaultdict(list)
+            for seed in range(self.seed_count):
+                leakage_assessments = np.load(os.path.join(self.logging_dir, '1o_count_sweep', f'seed={seed}', 'leakage_assessments.npz'), allow_pickle=True)['leakage_assessments'].item()
+                for key, val in leakage_assessments[f'count={count}'].items():
+                    if not key in ['snr', 'occlusion', 'leakage_localization']:
+                        continue
+                    _traces[key].append(val.reshape(-1))
+            _traces = {key: np.stack(val) for key, val in _traces.items()}
+            for key, val in _traces.items():
+                traces[key].append(val)
+        for key, ax in zip(['snr', 'occlusion', 'leakage_localization'], axes[1, :]):
+            trace = traces[key]
+            for seed, marker in zip(range(self.seed_count), ['.', 'v', '^', '1', '2']):
+                for idx, (count, assessment) in enumerate(zip(counts, trace)):
+                    ax.plot(count*[count], assessment[seed, 1:], color='blue', marker=marker, linestyle='none', label='leaking' if idx == seed == 0 else None, **PLOT_KWARGS)
+                    ax.plot([count], [assessment[seed, 0]], color='red', marker=marker, linestyle='none', label='non-leaking' if idx == seed == 0 else None, **PLOT_KWARGS)
+        for ax in axes.flatten():
+            ax.legend()
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.logging_dir, 'main_paper_plot.pdf'), **SAVEFIG_KWARGS)
+        plt.close(fig)
+    
     def run_1o_var_sweep(self, budgets: Union[float, Sequence[float]] = 1.0):
         if not hasattr(budgets, '__len__'):
             budgets = self.trial_count*[budgets]
@@ -205,15 +271,15 @@ class Trial:
         ]
         for seed in range(self.seed_count):
             logging_dir = os.path.join(self.logging_dir, 'xor_var_sweep', f'seed={seed}')
-            leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss)
-            np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
+            if not os.path.exists(os.path.join(logging_dir, 'leakage_assessments.npz')):
+                leakage_assessments = self.run_experiments(logging_dir, dataset_kwargss)
+                np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
     
     def __call__(self):
-        orig_logging_dir = self.logging_dir
-        for starting_prob in [0.01, 0.1, 0.5, 0.9, 0.99]:
-            self.logging_dir = os.path.join(orig_logging_dir, f'starting_prob={starting_prob}')
-            self.leakage_localization_kwargs['starting_prob'] = starting_prob
-            self.run_xor_var_sweep()
-            self.plot_xor_var_sweep()
-            self.run_1o_count_sweep()
-            self.plot_1o_count_sweep()
+        self.leakage_localization_kwargs['starting_prob'] = 0.5
+        self.run_xor_var_sweep()
+        self.plot_xor_var_sweep()
+        self.leakage_localization_kwargs['starting_prob'] = 0.9
+        self.run_1o_count_sweep()
+        self.plot_1o_count_sweep()
+        self.create_main_paper_plot()

@@ -10,7 +10,7 @@ class CondMutInfEstimator(nn.Module):
         classifiers_name: str,
         input_shape: Sequence[int],
         output_classes: int,
-        mutinf_estimate_with_labels: bool = False,
+        mutinf_estimate_with_labels: bool = True,
         classifiers_kwargs: dict = {}
     ):
         super().__init__()

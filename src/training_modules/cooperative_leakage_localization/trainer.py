@@ -1,4 +1,5 @@
 from copy import copy
+import json
 from collections import defaultdict
 from scipy.stats import kendalltau, pearsonr
 from torch import nn
@@ -171,40 +172,46 @@ class Trainer:
     def htune_leakage_localization(self,
         logging_dir: Union[str, os.PathLike],
         pretrained_classifiers_logging_dir: Optional[Union[str, os.PathLike]] = None,
-        trial_count: int = 25,
+        trial_count: int = 1,
         max_steps: int = 1000,
         override_kwargs: dict = {},
         supervised_dnn: Optional[nn.Module] = None,
         references: Optional[dict] = None
     ):
-        etat_lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -2)], start=[])
-        starting_probs = [1e-1*x for x in range(1, 10)]
-        ent_penalties = [0.0, 1e-6, 1e-4, 1e-2]
-        theta_lr_vals = sum([[m*10**n for m in range(1, 10)] for n in range(-6, -3)], start=[])
         results = defaultdict(list)
         for trial_idx in range(trial_count):
             experiment_dir = os.path.join(logging_dir, f'trial_{trial_idx}')
             os.makedirs(experiment_dir, exist_ok=True)
-            if not os.path.exists(os.path.join(experiment_dir, 'training_curves.pickle')):
-                hparams = {
-                    'etat_lr': np.random.choice(etat_lr_vals),
-                    'theta_lr': np.random.choice(theta_lr_vals),
-                    'starting_prob': np.random.choice(starting_probs),
-                    'ent_penalty': np.random.choice(ent_penalties)
-                }
+            if not os.path.exists(os.path.join(experiment_dir, 'leakage_assessment.npy')):
+                if pretrained_classifiers_logging_dir is None:
+                    hparams = {
+                        'theta_lr': float(np.random.choice([1e-8, 1e-7, 1e-6, 1e-5, 1e-4])),
+                        'etat_lr': float(np.random.choice([1e-5, 1e-4, 1e-3, 1e-2])),
+                        'starting_prob': float(np.random.choice([0.1, 0.5, 0.9])),
+                        'theta_weight_decay': float(np.random.choice([1e-2, 1e0, 1e2])),
+                        'noise_scale': float(np.random.choice([0.0, 1.0, 10.0])),
+                        'etat_steps_per_theta_step': int(np.random.choice([1, 2, 4]))
+                    }
+                else:
+                    hparams = {
+                        'etat_lr': np.random.choice(sum([[m*10**n for m in range(1, 10)] for n in range(-3, -1)], start=[])),
+                        'etat_beta_2': 0.99999,
+                        'theta_lr': np.random.choice([0.01, 0.1, 1.0])*self.default_training_module_kwargs['theta_lr'],
+                        'starting_prob': np.random.choice([1e-1*x for x in range(1, 10)]),
+                        'ent_penalty': np.random.choice([0.0, 1e-6, 1e-4, 1e-2])
+                    }
                 override_kwargs.update(hparams)
                 override_kwargs.update({'supervised_dnn': supervised_dnn})
                 leakage_assessment = self.run(
                     experiment_dir, pretrained_classifiers_logging_dir=pretrained_classifiers_logging_dir,
                     max_steps=max_steps, anim_gammas=False, override_kwargs=override_kwargs
                 )
-                with open(os.path.join(experiment_dir, 'hparams.pickle'), 'wb') as f:
-                    pickle.dump(hparams, f)
+                with open(os.path.join(experiment_dir, 'hparams.json'), 'w') as f:
+                    json.dump(hparams, f, indent='  ')
                 np.save(os.path.join(experiment_dir, 'leakage_assessment.npy'), leakage_assessment)
-            else:
-                with open(os.path.join(experiment_dir, 'hparams.pickle'), 'rb') as f:
-                    hparams = pickle.load(f)
             _leakage_assessment = np.load(os.path.join(experiment_dir, 'leakage_assessment.npy'))
+            with open(os.path.join(experiment_dir, 'hparams.json'), 'r') as f:
+                hparams = json.load(f)
             for key, val in hparams.items():
                 results[key].append(val)
             training_curves = load_training_curves(experiment_dir)
@@ -212,10 +219,11 @@ class Trainer:
             reverse_dnn_auc = training_curves['reverse_dnn_auc'][-1][-1]
             results['forward_dnn_auc'].append(forward_dnn_auc)
             results['reverse_dnn_auc'].append(reverse_dnn_auc)
-            for reference_name, reference in references.items():
-                window_size = int(reference_name.split('=')[-1])
-                leakage_assessment = torch.tensor(_leakage_assessment).unfold(0, window_size, 1).mean(dim=-1).numpy()
-                results[f'{reference_name}_pearsonr'].append(pearsonr(leakage_assessment, reference).statistic)
-                results[f'{reference_name}_kendalltau'].append(kendalltau(leakage_assessment, reference).statistic)
+            if references is not None:
+                for reference_name, reference in references.items():
+                    window_size = int(reference_name.split('=')[-1])
+                    leakage_assessment = torch.tensor(_leakage_assessment).unfold(0, window_size, 1).mean(dim=-1).numpy()
+                    results[f'{reference_name}_pearsonr'].append(pearsonr(leakage_assessment, reference).statistic)
+                    results[f'{reference_name}_kendalltau'].append(kendalltau(leakage_assessment, reference).statistic)
         with open(os.path.join(logging_dir, 'results.pickle'), 'wb') as f:
             pickle.dump(results, f)

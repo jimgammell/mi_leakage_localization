@@ -75,14 +75,11 @@ class DataModule(L.LightningDataModule):
             self.val_indices = indices[self.train_length:]
         self.train_dataset = Subset(copy(self.profiling_dataset), self.train_indices)
         self.val_dataset = Subset(copy(self.profiling_dataset), self.val_indices)
-        set_transforms(self.train_dataset, self.data_transform, self.target_transform)
+        set_transforms(self.train_dataset, self.aug_data_transform, self.target_transform)
         set_transforms(self.val_dataset, self.data_transform, self.target_transform)
         set_transforms(self.attack_dataset, self.data_transform, self.target_transform)
-        if self.adversarial_mode:
-            self.aug_train_dataset = copy(self.train_dataset)
-            set_transforms(self.aug_train_dataset, self.aug_data_transform, self.target_transform)
         dataloader_kwargs = {
-            'num_workers': max(os.cpu_count()//2, 1),
+            'num_workers': max(os.cpu_count()//4, 1),
             'pin_memory': True,
             'persistent_workers': True,
             'prefetch_factor': 4
@@ -92,13 +89,8 @@ class DataModule(L.LightningDataModule):
     
     def train_dataloader(self, override_batch_size=None, override_aug_batch_size=None):
         train_batch_size = min(self.train_batch_size if override_batch_size is None else override_batch_size, len(self.train_dataset))
-        aug_batch_size = min(self.aug_train_batch_size if override_aug_batch_size is None else override_aug_batch_size, len(self.train_dataset))
         train_dataloader = DataLoader(self.train_dataset, batch_size=train_batch_size, shuffle=True, **self.dataloader_kwargs)
-        if self.adversarial_mode:
-            aug_dataloader = DataLoader(self.aug_train_dataset, batch_size=aug_batch_size, shuffle=True, drop_last=True, **self.dataloader_kwargs)
-            return [aug_dataloader, train_dataloader]
-        else:
-            return train_dataloader
+        return train_dataloader
     
     def val_dataloader(self, override_batch_size=None):
         batch_size = min(self.eval_batch_size if override_batch_size is None else override_batch_size, len(self.val_dataset))

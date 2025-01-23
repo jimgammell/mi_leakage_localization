@@ -84,6 +84,7 @@ class AES_HD(Dataset):
     
     def __getitem__(self, indices):
         trace = self.traces[indices, np.newaxis, :]
+        #trace = trace + np.random.rand(*trace.shape).astype(np.float32) - 0.5
         target = self.targets[indices].squeeze()
         metadata = {key: val[indices].squeeze() for key, val in self.metadata.items()}
         if self.transform is not None:
