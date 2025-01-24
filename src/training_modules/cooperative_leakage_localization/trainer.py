@@ -189,16 +189,15 @@ class Trainer:
                         'etat_lr': float(np.random.choice([1e-5, 1e-4, 1e-3, 1e-2])),
                         'starting_prob': float(np.random.choice([0.1, 0.5, 0.9])),
                         'theta_weight_decay': float(np.random.choice([1e-2, 1e0, 1e2])),
-                        'noise_scale': float(np.random.choice([0.0, 1.0, 10.0])),
                         'etat_steps_per_theta_step': int(np.random.choice([1, 2, 4]))
                     }
                 else:
                     hparams = {
-                        'etat_lr': np.random.choice(sum([[m*10**n for m in range(1, 10)] for n in range(-3, -1)], start=[])),
-                        'etat_beta_2': 0.99999,
-                        'theta_lr': np.random.choice([0.01, 0.1, 1.0])*self.default_training_module_kwargs['theta_lr'],
-                        'starting_prob': np.random.choice([1e-1*x for x in range(1, 10)]),
-                        'ent_penalty': np.random.choice([0.0, 1e-6, 1e-4, 1e-2])
+                        'theta_lr': float(np.random.choice([1e-2, 1e-1, 1e0]))*self.default_training_module_kwargs['theta_lr'],
+                        'etat_lr': float(np.random.choice([1e-5, 1e-4, 1e-3, 1e-2])),
+                        'starting_prob': float(np.random.choice([0.1, 0.5, 0.9])),
+                        'etat_steps_per_theta_step': int(np.random.choice([1, 2, 4])),
+                        'theta_weight_decay': float(np.random.choice([0.0, 1e-2, 1e0, 1e2]))
                     }
                 override_kwargs.update(hparams)
                 override_kwargs.update({'supervised_dnn': supervised_dnn})

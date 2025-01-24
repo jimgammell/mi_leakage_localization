@@ -60,12 +60,12 @@ class Trial:
                 leakage_assessments[trial_name]['inputxgrad'] = neural_net_attributor.compute_inputxgrad()
             for assessment_name, assessment in leakage_assessments[trial_name].items():
                 plot_leakage_assessment(assessment.reshape(-1), os.path.join(logging_dir, trial_name, '{}.png'.format(assessment_name.replace('_', r'\_'))))
-            ll_trainer = LeakageLocalizationTrainer(
-                profiling_dataset, attack_dataset,
-                default_data_module_kwargs={'train_batch_size': len(profiling_dataset)//10},
-                default_training_module_kwargs={**self.leakage_localization_kwargs}
-            )
-            ll_trainer.pretrain_classifiers(os.path.join(logging_dir, trial_name, 'pretrain_classifiers'), max_steps=self.run_kwargs['max_steps']//2)
+            #ll_trainer = LeakageLocalizationTrainer(
+            #    profiling_dataset, attack_dataset,
+            #    default_data_module_kwargs={'train_batch_size': len(profiling_dataset)//10},
+            #    default_training_module_kwargs={**self.leakage_localization_kwargs}
+            #)
+            #ll_trainer.pretrain_classifiers(os.path.join(logging_dir, trial_name, 'pretrain_classifiers'), max_steps=self.run_kwargs['max_steps']//2)
             ll_trainer = LeakageLocalizationTrainer(
                 profiling_dataset, attack_dataset,
                 default_data_module_kwargs={'train_batch_size': len(profiling_dataset)//10},
@@ -73,8 +73,8 @@ class Trial:
             )
             ll_leakage_assessment = ll_trainer.run(
                 os.path.join(logging_dir, trial_name, 'leakage_localization'),
-                pretrained_classifiers_logging_dir=os.path.join(logging_dir, trial_name, 'pretrain_classifiers'),
-                max_steps=self.run_kwargs['max_steps']//2,
+                #pretrained_classifiers_logging_dir=os.path.join(logging_dir, trial_name, 'pretrain_classifiers'),
+                max_steps=self.run_kwargs['max_steps'], #//2,
                 anim_gammas=self.run_kwargs['anim_gammas']
             )
             leakage_assessments[trial_name]['leakage_localization'] = ll_leakage_assessment
@@ -109,7 +109,7 @@ class Trial:
     
     def run_1o_count_sweep(self):
         dataset_kwargss = [
-            (f'count={x}', {'no_hard_feature': True, 'easy_feature_count': x}) for x in [2*x+1 for x in range(10)] + [10*x+1 for x in range(3, 11)]
+            (f'count={x}', {'no_hard_feature': True, 'easy_feature_count': x}) for x in [2**x for x in range(14)][::-1]
         ]
         for seed in range(self.seed_count):
             logging_dir = os.path.join(self.logging_dir, '1o_count_sweep', f'seed={seed}')
@@ -118,7 +118,7 @@ class Trial:
                 np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
         
     def plot_1o_count_sweep(self):
-        counts = [2*x+1 for x in range(10)] + [10*x+1 for x in range(3, 11)]
+        counts = [1024] #[2**x for x in range(14)]
         traces = defaultdict(list)
         for count in counts:
             _traces = defaultdict(list)
@@ -277,9 +277,10 @@ class Trial:
     
     def __call__(self):
         self.leakage_localization_kwargs['starting_prob'] = 0.5
-        self.run_xor_var_sweep()
-        self.plot_xor_var_sweep()
-        self.leakage_localization_kwargs['starting_prob'] = 0.9
+        #self.run_xor_var_sweep()
+        #self.plot_xor_var_sweep()
+        #self.leakage_localization_kwargs['starting_prob'] = 0.9
+        self.leakage_localization_kwargs['starting_prob'] = 0.5
         self.run_1o_count_sweep()
         self.plot_1o_count_sweep()
         self.create_main_paper_plot()
