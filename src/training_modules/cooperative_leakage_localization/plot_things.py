@@ -10,21 +10,21 @@ from trials.utils import *
 def plot_ll_hparam_sweep(logging_dir):
     with open(os.path.join(logging_dir, 'results.pickle'), 'rb') as f:
         results = pickle.load(f)
-    hparam_names = ['etat_lr', 'theta_lr', 'starting_prob', 'ent_penalty']
+    hparam_names = ['theta_lr', 'etat_lr', 'starting_prob', 'theta_weight_decay', 'etat_steps_per_theta_step']
     result_names = ['forward_dnn_auc', 'reverse_dnn_auc']
     fig, axes = plt.subplots(len(hparam_names), len(result_names), figsize=(PLOT_WIDTH*len(result_names), PLOT_WIDTH*len(hparam_names)))
     if len(hparam_names) == 1:
         axes = axes[np.newaxis, ...]
     if len(result_names) == 1:
         axes = axes[..., np.newaxis]
-    best_forward_dnn_auc = np.min(results['forward_dnn_auc'])
-    best_reverse_dnn_auc = -np.inf
-    for idx in range(len(results['reverse_dnn_auc'])):
+    best_reverse_dnn_auc = np.max(results['reverse_dnn_auc'])
+    best_forward_dnn_auc = np.inf
+    for idx in range(len(results['forward_dnn_auc'])):
         forward_dnn_auc = results['forward_dnn_auc'][idx]
         reverse_dnn_auc = results['reverse_dnn_auc'][idx]
-        if forward_dnn_auc <= 1.01*best_forward_dnn_auc:
-            if reverse_dnn_auc > best_reverse_dnn_auc:
-                best_reverse_dnn_auc = reverse_dnn_auc
+        if reverse_dnn_auc == best_reverse_dnn_auc:
+            if forward_dnn_auc < best_forward_dnn_auc:
+                best_forward_dnn_auc = forward_dnn_auc
                 chosen_settings = {hparam_name: results[hparam_name][idx] for hparam_name in hparam_names}
                 chosen_results = {result_name: results[result_name][idx] for result_name in result_names}
     for row_idx, (hparam_name, axes_row) in enumerate(zip(hparam_names, axes)):

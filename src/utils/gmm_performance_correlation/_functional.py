@@ -104,22 +104,20 @@ def prob_diff(x_mean, x_var, x_count, y_mean, y_var, y_count):
     return 2*get_normal_cdf(np.abs(z)) - 1
 
 @jit(nopython=True)
-def _soft_kendall_tau(x_mean, x_var, ref, count):
+def _soft_kendall_tau(target, ref, count):
     num = 0.
     denom = 0.
-    for i in range(len(x_mean)):
-        for j in range(i+1, len(x_mean)):
-            weight = prob_diff(x_mean[i], x_var[i], count, x_mean[j], x_var[j], count)
+    for i in range(len(ref)):
+        for j in range(i+1, len(ref)):
+            weight = np.abs(ref[i] - ref[j])
             if ref[i] > ref[j]:
-                num += weight*(1 if x_mean[i] > x_mean[j] else -1)
+                num += weight*(1 if target[i] > target[j] else -1)
             else:
-                num += weight*(1 if x_mean[j] > x_mean[i] else -1)
+                num += weight*(1 if target[j] > target[i] else -1)
             denom += weight
     tau = num/denom
     return tau
 
-def soft_kendall_tau(x, ref):
-    x_mean = get_sample_mean(x)
-    x_var = get_sample_var(x, x_mean[:, np.newaxis])
-    count = x.shape[-1]
-    return _soft_kendall_tau(x_mean, x_var, ref, count)
+def soft_kendall_tau(target, ref):
+    count = ref.shape[-1]
+    return _soft_kendall_tau(target, ref, count)

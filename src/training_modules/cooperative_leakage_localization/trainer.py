@@ -162,9 +162,10 @@ class Trainer:
             if False: # 'supervised_dnn' in override_kwargs:
                 training_module = Module.load_from_checkpoint(os.path.join(logging_dir, 'best_checkpoint.ckpt'))
             leakage_assessment = training_module.selection_mechanism.get_accumulated_gamma().reshape(-1)
+            np.save(os.path.join(logging_dir, 'leakage_assessment.npy'), leakage_assessment)
             plot_leakage_assessment(leakage_assessment, os.path.join(logging_dir, 'leakage_assessment.png'))
         else:
-            leakage_assessment = None
+            leakage_assessment = np.load(os.path.join(logging_dir, 'leakage_assessment.npy'))
         training_curves = load_training_curves(logging_dir)
         plot_training_curves(logging_dir, anim_gammas=anim_gammas, reference=reference)
         return leakage_assessment
@@ -218,11 +219,11 @@ class Trainer:
             reverse_dnn_auc = training_curves['reverse_dnn_auc'][-1][-1]
             results['forward_dnn_auc'].append(forward_dnn_auc)
             results['reverse_dnn_auc'].append(reverse_dnn_auc)
-            if references is not None:
+            r"""if references is not None:
                 for reference_name, reference in references.items():
                     window_size = int(reference_name.split('=')[-1])
                     leakage_assessment = torch.tensor(_leakage_assessment).unfold(0, window_size, 1).mean(dim=-1).numpy()
                     results[f'{reference_name}_pearsonr'].append(pearsonr(leakage_assessment, reference).statistic)
-                    results[f'{reference_name}_kendalltau'].append(kendalltau(leakage_assessment, reference).statistic)
+                    results[f'{reference_name}_kendalltau'].append(kendalltau(leakage_assessment, reference).statistic)"""
         with open(os.path.join(logging_dir, 'results.pickle'), 'wb') as f:
             pickle.dump(results, f)

@@ -13,6 +13,18 @@ from training_modules.supervised_deep_sca import SupervisedTrainer
 from utils.baseline_assessments import NeuralNetAttribution, FirstOrderStatistics
 from trials.utils import *
 
+to_names = {
+    'snr': 'SNR',
+    'sosd': 'SoSD',
+    'cpa': 'CPA',
+    'gradvis': 'GradVis',
+    'lrp': 'LRP',
+    'saliency': 'saliency',
+    'occlusion': 'occlusion',
+    'inputxgrad': 'inpXgrad',
+    'leakage_localization': 'ALL (Ours)'
+}
+
 class Trial:
     def __init__(self,
         logging_dir: Union[str, os.PathLike] = None,
@@ -23,7 +35,7 @@ class Trial:
         self.logging_dir = logging_dir
         self.seed_count = seed_count
         self.trial_count = trial_count
-        self.run_kwargs = {'max_steps': 1000, 'anim_gammas': False}
+        self.run_kwargs = {'max_steps': 10000, 'anim_gammas': False}
         self.supervised_kwargs = {'classifier_name': 'mlp-1d', 'classifier_kwargs': {'layer_count': 1}, 'lr': 1e-3}
         self.leakage_localization_kwargs = {
             'classifiers_name': 'mlp-1d', 'classifiers_kwargs': {'layer_count': 1}, 'theta_lr': 1e-3, 'etat_lr': 1e-3,
@@ -118,7 +130,7 @@ class Trial:
                 np.savez(os.path.join(logging_dir, 'leakage_assessments.npz'), leakage_assessments=leakage_assessments)
         
     def plot_1o_count_sweep(self):
-        counts = [1024] #[2**x for x in range(14)]
+        counts = [2**x for x in range(14)]
         traces = defaultdict(list)
         for count in counts:
             _traces = defaultdict(list)
@@ -128,24 +140,26 @@ class Trial:
                     _traces[key].append(val.reshape(-1))
             _traces = {key: np.stack(val) for key, val in _traces.items()}
             for key, val in _traces.items():
-                traces[key].append(val)
+                traces[key].append(np.abs(val))
         col_count = 4
         row_count = int(np.ceil(len(traces)/col_count))
         fig, axes = plt.subplots(row_count, col_count, figsize=(PLOT_WIDTH*col_count, PLOT_WIDTH*row_count))
         for (trace_name, trace), ax in zip(traces.items(), axes.flatten()):
-            ax.set_title(trace_name.replace('_', r'\_'))
+            ax.set_title(to_names[trace_name])
             ax.set_xlabel('Number of leaky points')
             ax.set_ylabel('Estimated leakage of measurement')
             for seed, marker in zip(range(self.seed_count), ['.', 'v', '^', '1', '2']):
-                for count, assessment in zip(counts, trace):
-                    ax.plot(count*[count], assessment[seed, 1:], color='blue', marker=marker, linestyle='none')
-                    ax.plot([count], [assessment[seed, 0]], color='red', marker=marker, linestyle='none')
+                for idx, (count, assessment) in enumerate(zip(counts, trace)):
+                    ax.plot(count*[count], assessment[seed, 1:], color='blue', marker=marker, linestyle='none', label='leaking' if idx == seed == 0 else None, **PLOT_KWARGS)
+            for seed, marker in zip(range(self.seed_count), ['.', 'v', '^', '1', '2']):
+                for idx, (count, assessment) in enumerate(zip(counts, trace)):
+                    ax.plot([count], [assessment[seed, 0]], color='red', marker=marker, linestyle='none', label='non-leaking' if idx == seed == 0 else None, **PLOT_KWARGS)
             ax.set_xscale('log')
             ax.set_yscale('log')
         for ax in axes.flatten()[len(traces):]:
             ax.axis('off')
         fig.tight_layout()
-        fig.savefig(os.path.join(self.logging_dir, '1o_count_sweep', 'sweep.png'), **SAVEFIG_KWARGS)
+        fig.savefig(os.path.join(self.logging_dir, '1o_count_sweep', 'sweep.pdf'), **SAVEFIG_KWARGS)
     
     def plot_xor_var_sweep(self):
         vars = [0.5**n for n in range(1, self.trial_count//2+1)][::-1] + [1.0] + [2.0**n for n in range(1, self.trial_count//2+1)]
@@ -158,13 +172,13 @@ class Trial:
                     _traces[key].append(val.reshape(-1))
             _traces = {key: np.stack(val) for key, val in _traces.items()}
             for key, val in _traces.items():
-                traces[key].append(val)
+                traces[key].append(np.abs(val))
         traces = {key: np.stack(val) for key, val in traces.items()}
         col_count = 4
         row_count = int(np.ceil(len(traces)/col_count))
         fig, axes = plt.subplots(row_count, col_count, figsize=(PLOT_WIDTH*col_count, PLOT_WIDTH*row_count))
         for (trace_name, trace), ax in zip(traces.items(), axes.flatten()):
-            ax.set_title(trace_name.replace('_', r'\_'))
+            ax.set_title(to_names[trace_name])
             ax.set_xlabel('SNR of 1st-order measurement')
             ax.set_ylabel('Estimated leakage of measurement')
             ax.plot(vars, np.median(trace[:, :, 0], axis=-1), color='red', label='Random', **PLOT_KWARGS)
@@ -181,7 +195,7 @@ class Trial:
         for ax in axes.flatten()[len(traces):]:
             ax.axis('off')
         fig.tight_layout()
-        fig.savefig(os.path.join(self.logging_dir, 'xor_var_sweep', 'sweep.png'), **SAVEFIG_KWARGS)
+        fig.savefig(os.path.join(self.logging_dir, 'xor_var_sweep', 'sweep.pdf'), **SAVEFIG_KWARGS)
     
     def create_main_paper_plot(self):
         fig, axes = plt.subplots(3, 2, figsize=(2*PLOT_WIDTH, 3*PLOT_WIDTH))
@@ -225,7 +239,7 @@ class Trial:
             ax.plot(xor_vars, np.median(trace[:, :, 3], axis=-1), color='purple', label='2nd-order (share 2)', **PLOT_KWARGS)
             ax.fill_between(xor_vars, np.min(trace[:, :, 3], axis=-1), np.max(trace[:, :, 3], axis=-1), color='purple', alpha=0.25, **PLOT_KWARGS)
         traces = defaultdict(list)
-        counts = [2*x+1 for x in range(10)] + [10*x+1 for x in range(3, 11)]
+        counts = [2**x for x in range(14)]
         for count in counts:
             _traces = defaultdict(list)
             for seed in range(self.seed_count):
@@ -242,6 +256,8 @@ class Trial:
             for seed, marker in zip(range(self.seed_count), ['.', 'v', '^', '1', '2']):
                 for idx, (count, assessment) in enumerate(zip(counts, trace)):
                     ax.plot(count*[count], assessment[seed, 1:], color='blue', marker=marker, linestyle='none', label='leaking' if idx == seed == 0 else None, **PLOT_KWARGS)
+            for seed, marker in zip(range(self.seed_count), ['.', 'v', '^', '1', '2']):
+                for idx, (count, assessment) in enumerate(zip(counts, trace)):
                     ax.plot([count], [assessment[seed, 0]], color='red', marker=marker, linestyle='none', label='non-leaking' if idx == seed == 0 else None, **PLOT_KWARGS)
         for ax in axes.flatten():
             ax.legend()
@@ -277,10 +293,9 @@ class Trial:
     
     def __call__(self):
         self.leakage_localization_kwargs['starting_prob'] = 0.5
-        #self.run_xor_var_sweep()
-        #self.plot_xor_var_sweep()
-        #self.leakage_localization_kwargs['starting_prob'] = 0.9
-        self.leakage_localization_kwargs['starting_prob'] = 0.5
+        self.run_xor_var_sweep()
+        self.plot_xor_var_sweep()
+        self.leakage_localization_kwargs['starting_prob'] = 0.9
         self.run_1o_count_sweep()
         self.plot_1o_count_sweep()
         self.create_main_paper_plot()

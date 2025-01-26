@@ -1,5 +1,6 @@
 from typing import *
 import os
+from copy import copy
 import numpy as np
 
 from datasets.aes_pt_v2 import AES_PTv2, VALID_DEVICES as _VALID_DEVICES
@@ -80,25 +81,27 @@ class Trial:
         )
         return trainer
     
-    def run_leakage_assessments(self):
-        for dataset_name, (profiling_dataset, attack_dataset) in self.get_datasets().items():
-            logging_dir = os.path.join(self.logging_dir, f'dataset_name={dataset_name}')
-            os.makedirs(logging_dir, exist_ok=True)
-            trainer = self.get_trainer(profiling_dataset, attack_dataset, budget=1.0)
-            trainer.pretrain_classifiers(
-                os.path.join(logging_dir, 'classifiers_pretrain'),
-                max_steps=self.run_kwargs['max_steps']
-            )
-            for budget in self.budgets:
-                subdir = os.path.join(logging_dir, f'budget={budget}')
-                os.makedirs(subdir, exist_ok=True)
-                trainer = self.get_trainer(profiling_dataset, attack_dataset, budget=budget)
-                leakage_assessment = trainer.run(
-                    subdir,
-                    pretrained_classifiers_logging_dir=os.path.join(logging_dir, 'classifiers_pretrain'),
-                    **self.run_kwargs
+    def run_hparam_sweep(self):
+        base_dir = os.path.join(self.logging_dir, 'hparam_sweeps')
+        for dataset_name, dataset in self.get_datasets().items():
+            if not os.path.exists(os.path.join(self.ll_hparam_sweep_dir, 'results.pickle')):
+                print('Running LL hparam sweep...')
+                kwargs = copy(self.trial_config['default_kwargs'])
+                kwargs.update(self.trial_config['classifiers_pretrain_kwargs'])
+                kwargs.update(self.trial_config['leakage_localization_kwargs'])
+                ll_trainer = LeakageLocalizationTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=kwargs)
+                ll_trainer.htune_leakage_localization(
+                    self.ll_hparam_sweep_dir,
+                    pretrained_classifiers_logging_dir=None,
+                    trial_count=50,
+                    max_steps=10000,
+                    supervised_dnn=None,
+                    references=None, #{key: val.mean(axis=0) for key, val in self.get_ground_truth_assessments().items()}
                 )
-                np.savez(os.path.join(subdir, 'leakage_assessment.npz'), leakage_assessment=leakage_assessment)
+            else:
+                print('Found existing LL hparam sweep.')
+        #self.ll_optimal_hparams = plot_ll_hparam_sweep(self.ll_hparam_sweep_dir)
+        #print(f'Optimal LL hyperparameters on {self.dataset_name}: {self.ll_optimal_hparams}')
     
     def __call__(self):
-        self.run_leakage_assessments()
+        self.run_hparam_sweep()

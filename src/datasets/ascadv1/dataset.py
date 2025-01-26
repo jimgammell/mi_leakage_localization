@@ -107,11 +107,13 @@ class ASCADv1(Dataset):
             r = masks[:, :-2][..., self.target_byte].squeeze()
         aux_metadata = {
             'subbytes': AES_SBOX[key ^ plaintext],
+            'subbytes__r_in': AES_SBOX[key ^ plaintext] ^ r_in,
             'subbytes__r': AES_SBOX[key ^ plaintext] ^ r,
             'subbytes__r_out': AES_SBOX[key ^ plaintext] ^ r_out,
             'r_in': r_in,
             'r_out': r_out,
-            'r': r
+            'r': r,
+            'k__p__r_in': key ^ plaintext ^ r_in
         }
         targets = []
         for target_val in self.target_values:

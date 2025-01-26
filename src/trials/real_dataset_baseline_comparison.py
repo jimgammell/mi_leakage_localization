@@ -4,6 +4,7 @@ from collections import defaultdict
 import numpy as np
 from scipy.stats import pearsonr, kendalltau
 from matplotlib import pyplot as plt
+from matplotlib import cm
 from matplotlib.lines import Line2D
 import torch
 from torch.utils.data import DataLoader
@@ -21,7 +22,7 @@ from training_modules import SupervisedTrainer, SupervisedModule, LeakageLocaliz
 from training_modules.supervised_deep_sca.plot_things import plot_hparam_sweep
 from training_modules.cooperative_leakage_localization.plot_things import plot_ll_hparam_sweep
 from utils.aes_multi_trace_eval import AESMultiTraceEvaluator
-from utils.multi_attack_baseline import MultiAttackTrainer
+from utils.multi_attack_baseline import MultiAttackTrainer, soft_kendall_tau
 from utils.template_attack import TemplateAttack
 
 class Trial:
@@ -79,14 +80,14 @@ class Trial:
         print('\tDone.')
         
     def compute_ground_truth_assessments(self):
-        for seed in range(self.seed_count):
-            for attack_type in ['mlp', 'template']:
+        for seed in [0]: #range(self.seed_count):
+            for attack_type in ['template']: #['mlp', 'template']:
                 assessments = {}
-                for window_size in [1, 3, 5]:
+                for window_size in [5]: #[1, 3, 5]:
                     name = f'{attack_type}__seed={seed}__window_size={window_size}'
                     assessments[window_size] = {}
                     if 'ascadv1' in self.dataset_name:
-                        targets = ['subbytes', 'r_out', 'subbytes__r_out']
+                        targets = ['subbytes', 'r_out', 'subbytes__r_out', 'r_in', 'subbytes__r_in', 'r', 'subbytes__r']
                     else:
                         targets = ['subbytes']
                     fig, axes = plt.subplots(len(targets), 3, figsize=(PLOT_WIDTH*3, PLOT_WIDTH*len(targets)))
@@ -103,18 +104,21 @@ class Trial:
                     else:
                         assessments[window_size] = np.load(os.path.join(self.ground_truth_dir, f'{name}.npz'), allow_pickle=True)['assessments'].item()
                     for target_idx, target in enumerate(targets):
-                        for key_idx, key in enumerate(['log_p_y_mid_x', 'rank', 'mutinf']):
+                        for key_idx, key in enumerate(['log_p_y_mid_x', 'mutinf']):
                             assessment = assessments[window_size][target][key]
                             axes[target_idx, key_idx].plot(assessment, linestyle='none', marker='.', markersize=1, color='blue')
                             axes[target_idx, key_idx].set_xlabel(r'Timesteps $t$')
                             axes[target_idx, key_idx].set_ylabel(r'Estimated leakage of $X_t$')
                             axes[target_idx, key_idx].set_title('Method: ' + key.replace('_', r'\_'))
+                        #rank_mean, rank_std = assessments[window_size][target]['rank_mean'], assessments[window_size][target]['rank_std']
+                        #axes[target_idx, 2].fill_between(np.arange(len(assessments[window_size][target]['rank_mean'])), rank_mean-rank_std, rank_mean+rank_std, color='blue', alpha=0.25)
+                        #axes[target_idx, 2].plot(rank_mean, linestyle='-', color='blue')
                     fig.tight_layout()
                     fig.savefig(os.path.join(self.ground_truth_dir, f'{name}.png'))
                     plt.close(fig)
     
     def get_ground_truth_assessments(self):
-        rv = defaultdict(list)
+        rv = {}
         for attack_type in ['mlp', 'template']:
             for window_size in [1, 3, 5]:
                 assessment_name = f'{attack_type}__window_size={window_size}'
@@ -122,14 +126,14 @@ class Trial:
                     targets = ['subbytes', 'r_out', 'subbytes__r_out']
                 else:
                     targets = ['subbytes']
+                mutinfs = defaultdict(list)
                 for seed in range(self.seed_count):
-                    assessments = []
                     for target in targets:
                         name = f'{attack_type}__seed={seed}__window_size={window_size}'
-                        assessment = np.load(os.path.join(self.ground_truth_dir, f'{name}.npz'), allow_pickle=True)['assessments'].item()[target]['mutinf']
-                        assessments.append(assessment)
-                    rv[assessment_name].append(np.mean(np.stack(assessments), axis=0))
-                rv[assessment_name] = np.stack(rv[assessment_name])
+                        assessment = np.load(os.path.join(self.ground_truth_dir, f'{name}.npz'), allow_pickle=True)['assessments'].item()[target]
+                        mutinfs[target].append(assessment['mutinf'])
+                mutinfs = {key: np.stack(val) for key, val in mutinfs.items()}
+                rv[assessment_name] = mutinfs
         return rv
     
     def run_template_attacks(self):
@@ -146,6 +150,12 @@ class Trial:
                     
     def compute_random_assessment(self):
         self.random_assessment = {'random': np.random.randn(self.seed_count, self.profiling_dataset.timesteps_per_trace)}
+        
+    def compute_ascad_first_order_stats(self):
+        for target in ['subbytes', 'subbytes__r_in', 'subbytes__r', 'subbytes__r_out', 'r_in', 'r_out', 'r']:
+            first_order_stats = FirstOrderStatistics(self.profiling_dataset, targets=target)
+            snr = first_order_stats.snr_vals[target].reshape(-1)
+            plot_leakage_assessment(snr, os.path.join(self.stats_dir, f'snr_target={target}.png'))
         
     def compute_first_order_stats(self):
         if not os.path.exists(os.path.join(self.stats_dir, 'stats.npy')):
@@ -205,7 +215,7 @@ class Trial:
         training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.supervised_model_dir, 'll_eval', 'best_checkpoint.ckpt'))
         supervised_dnn = training_module.classifier
         use_pretrained_classifiers = self.dataset_name not in ['otp', 'otiait', 'dpav4']
-        if True: #not os.path.exists(os.path.join(self.ll_hparam_sweep_dir, 'results.pickle')):
+        if not os.path.exists(os.path.join(self.ll_hparam_sweep_dir, 'results.pickle')):
             print('Running LL hparam sweep...')
             kwargs = copy(self.trial_config['default_kwargs'])
             kwargs.update(self.trial_config['classifiers_pretrain_kwargs'])
@@ -229,6 +239,8 @@ class Trial:
     def run_leakage_localization(self):
         training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.supervised_model_dir, 'll_eval', 'best_checkpoint.ckpt'))
         supervised_dnn = training_module.classifier
+        use_pretrained_classifiers = self.dataset_name not in ['otp', 'otiait', 'dpav4']
+        assessments = []
         for seed in range(self.seed_count):
             subdir = os.path.join(self.leakage_localization_dir, f'seed={seed}')
             os.makedirs(subdir, exist_ok=True)
@@ -244,15 +256,19 @@ class Trial:
                 leakage_localization_kwargs.update(self.ll_optimal_hparams)
                 leakage_assessment = trainer.run(
                     logging_dir=subdir,
-                    pretrained_classifiers_logging_dir=os.path.join(self.ll_classifiers_pretrain_dir, f'seed={seed}') if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers'] else None,
+                    pretrained_classifiers_logging_dir=os.path.join(self.ll_classifiers_pretrain_dir, f'seed={seed}') if use_pretrained_classifiers else None,
                     max_steps=self.trial_config['max_leakage_localization_steps'],
                     override_kwargs=leakage_localization_kwargs,
                     anim_gammas=False
                 )
-                self.leakage_localization_assessments = {
-                    'leakage_localization': leakage_assessment
-                }
-                print('\tDone.')
+            else:
+                assert os.path.exists(os.path.join(subdir, 'leakage_assessment.npy'))
+                leakage_assessment = np.load(os.path.join(subdir, 'leakage_assessment.npy'))
+            assessments.append(leakage_assessment)
+        self.leakage_localization_assessments = {
+            'leakage_localization': np.stack(assessments)
+        }
+        print('\tDone.')
     
     def train_supervised_model(self):
         for subdir in ['ll_eval', *[f'seed={seed}' for seed in range(self.seed_count)]]:
@@ -327,11 +343,46 @@ class Trial:
         ax.axhline(0.5*(self.profiling_dataset.class_count+1), linestyle=':', color='black', label='random guessing')
         ax.legend(loc='upper right')
         ax.set_xscale('log')
-        ax.set_yscale('log')
         ax.set_xlabel('Traces seen')
         ax.set_ylabel('Rank')
         fig.tight_layout()
-        fig.savefig(os.path.join(self.supervised_model_dir, to_name('rank_over_time.pdf')), **SAVEFIG_KWARGS)
+        fig.savefig(os.path.join(self.supervised_model_dir, to_name('rank_over_time.png')), **SAVEFIG_KWARGS)
+        plt.close(fig)
+    
+    def create_paper_rot_plot(self):
+        fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
+        colormap = plt.cm.get_cmap('tab10', self.seed_count)
+        for seed in range(self.seed_count):
+            subdir = os.path.join(self.supervised_model_dir, f'seed={seed}')
+            rank_over_time = np.load(os.path.join(subdir, 'rank_over_time.npy'))
+            color = colormap(seed)
+            ax.plot(np.arange(1, len(rank_over_time)+1), rank_over_time, color=color)
+            if os.path.exists(os.path.join(subdir, 'wouters_rank_over_time.npy')):
+                wouters_rank_over_time = np.load(os.path.join(subdir, 'wouters_rank_over_time.npy'))
+                ax.plot(np.arange(1, len(wouters_rank_over_time)+1), wouters_rank_over_time, color=color, linestyle='--')
+            else:
+                wouters_rank_over_time = None
+            if os.path.exists(os.path.join(subdir, 'zaid_rank_over_time.npy')):
+                zaid_rank_over_time = np.load(os.path.join(subdir, 'zaid_rank_over_time.npy'))
+                ax.plot(np.arange(1, len(zaid_rank_over_time)+1), zaid_rank_over_time, color=color, linestyle='-.')
+            else:
+                zaid_rank_over_time = None
+        ax.axhline(0.5*(self.profiling_dataset.class_count+1), linestyle=':', color='black', label='random guessing')
+        legend_handles = [
+            Line2D([0], [0], color='black', linestyle=':', label='random guessing'),
+            Line2D([0], [0], color='gray', linestyle='-', label='ours')
+        ]
+        if wouters_rank_over_time is not None:
+            legend_handles.append(Line2D([0], [0], color='gray', linestyle='--', label='Wouters et al.'))
+        if zaid_rank_over_time is not None:
+            legend_handles.append(Line2D([0], [0], color='gray', linestyle='-.', label='Zaid et al.'))
+        ax.legend(loc='upper right', handles=legend_handles)
+        ax.set_xscale('log')
+        ax.set_xlabel('Traces seen')
+        ax.set_ylabel('Rank')
+        ax.set_title('Dataset:' + self.dataset_name.replace('_', r'\_'))
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.supervised_model_dir, 'paper_rank_over_time.pdf'), **SAVEFIG_KWARGS)
         plt.close(fig)
         
     def compute_neural_net_attributions(self, wouters_zaid_model=None):
@@ -441,15 +492,13 @@ class Trial:
         leakage_assessments = self.get_leakage_assessments()
         ground_truth_assessments = self.get_ground_truth_assessments()
         kendalltau_evaluations = {}
-        pearsonr_evaluations = {}
         for leakage_assessment_name, leakage_assessment in leakage_assessments.items():
             kendalltau_evaluations[leakage_assessment_name] = {}
-            pearsonr_evaluations[leakage_assessment_name] = {}
             print(leakage_assessment_name)
             for ground_truth_assessment_name, ground_truth_assessment in ground_truth_assessments.items():
                 print(f'\t{ground_truth_assessment_name}')
+                ground_truth_assessment = np.mean(np.stack(list(ground_truth_assessment.values())), axis=0)
                 kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name] = []
-                pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name] = []
                 for seed in range(ground_truth_assessment.shape[0]):
                     if leakage_assessment.ndim == 1:
                         _leakage_assessment = leakage_assessment
@@ -457,14 +506,34 @@ class Trial:
                         _leakage_assessment = leakage_assessment[seed, :]
                     window_size = int(ground_truth_assessment_name.split('=')[-1])
                     _leakage_assessment = torch.tensor(_leakage_assessment).unfold(0, window_size, 1).numpy().mean(axis=-1)
-                    _ground_truth_assessment = ground_truth_assessment[seed, :]
-                    kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].append(kendalltau(_leakage_assessment, _ground_truth_assessment).statistic)
-                    pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name].append(pearsonr(_leakage_assessment, _ground_truth_assessment).statistic)
+                    #mutinf, rank_mean, rank_std = ground_truth_assessment[seed, 0, :], ground_truth_assessment[seed, 1, :], ground_truth_assessment[seed, 2, :]
+                    mutinf = ground_truth_assessment[seed, :]
+                    kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].append(soft_kendall_tau(_leakage_assessment, mutinf))
                 kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name] = np.stack(kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name])
-                pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name] = np.stack(pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name])
                 print(f'\t\tKendall tau: {kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].mean()} +/- {kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].std()}')
-                print(f'\t\tPearson R: {pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name].mean()} +/- {pearsonr_evaluations[leakage_assessment_name][ground_truth_assessment_name].std()}')
-        return kendalltau_evaluations, pearsonr_evaluations
+        return kendalltau_evaluations
+    
+    def create_main_paper_leakage_assessment_plots(self):
+        leakage_assessments = self.get_leakage_assessments()['leakage_localization'].reshape(self.seed_count, -1)
+        ground_truth_assessments = self.get_ground_truth_assessments()['template__window_size=5']
+        fig, axes = plt.subplots(2, 1, figsize=(PLOT_WIDTH, 2*PLOT_WIDTH))
+        cmap = cm.get_cmap('tab10', len(ground_truth_assessments))
+        colors = [cmap(i) for i in range(len(ground_truth_assessments))]
+        for (key, _ground_truth_assessment), color in zip(ground_truth_assessments.items(), colors):
+            axes[0].fill_between(range(_ground_truth_assessment.shape[-1]), np.min(_ground_truth_assessment, axis=0), np.max(_ground_truth_assessment, axis=0), color=color, alpha=0.25, **PLOT_KWARGS)
+            axes[0].plot(np.median(_ground_truth_assessment, axis=0), color=color, marker='.', markersize=1, linestyle='none', label=key.replace('_', r'\_'), **PLOT_KWARGS)
+        axes[1].fill_between(range(leakage_assessments.shape[-1]), np.min(leakage_assessments, axis=0), np.max(leakage_assessments, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
+        axes[1].plot(np.median(leakage_assessments, axis=0), color='blue', marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
+        axes[0].set_yscale('log')
+        axes[0].legend()
+        axes[0].set_xlabel(r'Timestep $t$')
+        axes[0].set_ylabel(r'Estimated leakage of $X_t$')
+        axes[0].set_title('Ground truth-like assessment')
+        axes[1].set_xlabel(r'Timestep $t$')
+        axes[1].set_ylabel(r'Estimated leakage of $X_t$')
+        axes[1].set_title('Adversarial leakage localization (ours)')
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.logging_dir, 'main_paper_leakage_assessments.pdf'), **SAVEFIG_KWARGS)
     
     def plot_leakage_assessments(self):
         leakage_assessments = self.get_leakage_assessments()
@@ -495,40 +564,43 @@ class Trial:
     
     def __call__(self):
         self.compute_random_assessment()
+        if 'ascad' in self.dataset_name:
+            self.compute_ascad_first_order_stats()
         if ('compute_ground_truth_assessments' in self.trial_config) and self.trial_config['compute_ground_truth_assessments']:
             self.compute_ground_truth_assessments()
         if ('compute_first_order_stats' in self.trial_config) and self.trial_config['compute_first_order_stats']:
             self.compute_first_order_stats()
-        try:
-            if ('run_supervised_hparam_sweep' in self.trial_config) and self.trial_config['run_supervised_hparam_sweep']:
-                self.run_supervised_hparam_sweep()
-            if ('train_supervised_model' in self.trial_config) and self.trial_config['train_supervised_model']:
-                self.train_supervised_model()
-                self.plot_supervised_training_curves()
-            if ('compute_nn_attributions' in self.trial_config) and self.trial_config['compute_nn_attributions']:
-                self.compute_neural_net_attributions()
-                if self.dataset_name == 'dpav4':
-                    self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__DPAv4')
-                    self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__DPAv4')
-                    self.compute_supervised_ranks_over_time()
-                    self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__DPAv4')
-                    self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__DPAv4')
-                elif self.dataset_name == 'ascadv1_fixed':
-                    self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__ASCADv1f')
-                    self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__ASCADv1f')
-                    self.compute_supervised_ranks_over_time()
-                    self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__ASCADv1f')
-                    self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__ASCADv1f')
-                elif self.dataset_name == 'ascadv1_variable':
-                    self.compute_supervised_ranks_over_time()
-                elif self.dataset_name == 'aes_hd':
-                    self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__AES_HD')
-                    self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__AES_HD')
-                    self.compute_supervised_ranks_over_time()
-                    self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__AES_HD')
-                    self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
-        except:
-            pass
+        if ('run_supervised_hparam_sweep' in self.trial_config) and self.trial_config['run_supervised_hparam_sweep']:
+            self.run_supervised_hparam_sweep()
+        if ('train_supervised_model' in self.trial_config) and self.trial_config['train_supervised_model']:
+            self.train_supervised_model()
+            self.plot_supervised_training_curves()
+        if ('compute_nn_attributions' in self.trial_config) and self.trial_config['compute_nn_attributions']:
+            self.compute_neural_net_attributions()
+            if self.dataset_name == 'dpav4':
+                self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__DPAv4')
+                self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__DPAv4')
+                self.compute_supervised_ranks_over_time()
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__DPAv4')
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__DPAv4')
+                self.create_paper_rot_plot()
+            elif self.dataset_name == 'ascadv1_fixed':
+                self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__ASCADv1f')
+                self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__ASCADv1f')
+                self.compute_supervised_ranks_over_time()
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__ASCADv1f')
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__ASCADv1f')
+                self.create_paper_rot_plot()
+            elif self.dataset_name == 'ascadv1_variable':
+                self.compute_supervised_ranks_over_time()
+                self.create_paper_rot_plot()
+            elif self.dataset_name == 'aes_hd':
+                self.compute_neural_net_attributions(wouters_zaid_model='ZaidNet__AES_HD')
+                self.compute_neural_net_attributions(wouters_zaid_model='WoutersNet__AES_HD')
+                self.compute_supervised_ranks_over_time()
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__AES_HD')
+                self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
+                self.create_paper_rot_plot()
         if self.dataset_name not in ['otiait', 'otp', 'dpav4']:
             if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
                 self.run_ll_classifiers_hparam_sweep()
@@ -540,3 +612,4 @@ class Trial:
             self.run_leakage_localization()
         self.eval_leakage_assessments()
         self.plot_leakage_assessments()
+        self.create_main_paper_leakage_assessment_plots()

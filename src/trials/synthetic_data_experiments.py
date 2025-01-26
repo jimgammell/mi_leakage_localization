@@ -55,6 +55,7 @@ class Trial:
         batch_size: int = 1000,
         timestep_count: int = 101,
         trial_count: int = 8,
+        seed_count: int = 1,
         pretrain_classifiers_only: bool = False
     ):
         self.logging_dir = logging_dir
@@ -65,7 +66,12 @@ class Trial:
         self.batch_size = batch_size
         self.timestep_count = timestep_count
         self.trial_count = trial_count
+        self.seed_count = seed_count
         self.pretrain_classifiers_only = pretrain_classifiers_only
+        self.betas = np.array([1 - 0.5**n for n in range(self.trial_count)][::-1])
+        self.leaky_pt_counts = np.array([0] + [1 + 2*x for x in range(self.trial_count-1)])
+        self.no_op_counts = np.array([0] + [1 + 4*x for x in range(self.trial_count-1)])
+        self.shuffle_loc_counts = np.array([1 + 2*x for x in range(self.trial_count)])
     
     def construct_datasets(self,
         leaky_1o_count: int = 1,
@@ -109,16 +115,16 @@ class Trial:
         leakage_assessments = {}
         os.makedirs(logging_dir, exist_ok=True)
         profiling_dataset, attack_dataset, locs_1o, locs_2o = self.construct_datasets(**kwargs)
-        if not os.path.exists(os.path.join(logging_dir, 'classifiers_pretrain', 'best_checkpoint.ckpt')):
-            trainer = self.construct_trainer(profiling_dataset, attack_dataset) # classifier pretraining is independent of budget
-            trainer.pretrain_classifiers(os.path.join(logging_dir, 'classifiers_pretrain'), max_steps=self.run_kwargs['max_steps'])
+        #if not os.path.exists(os.path.join(logging_dir, 'classifiers_pretrain', 'best_checkpoint.ckpt')):
+        #    trainer = self.construct_trainer(profiling_dataset, attack_dataset) # classifier pretraining is independent of budget
+        #    trainer.pretrain_classifiers(os.path.join(logging_dir, 'classifiers_pretrain'), max_steps=self.run_kwargs['max_steps'])
         for starting_prob in [0.05, 0.1, 0.5, 0.9, 0.95]:
             if not os.path.exists(os.path.join(logging_dir, f'starting_prob={starting_prob}', 'leakage_assessments.npz')):
                 self.leakage_localization_kwargs['starting_prob'] = starting_prob
                 trainer = self.construct_trainer(profiling_dataset, attack_dataset)
                 leakage_assessment = trainer.run(
                     os.path.join(logging_dir, f'starting_prob={starting_prob}'),
-                    pretrained_classifiers_logging_dir=os.path.join(logging_dir, 'classifiers_pretrain'),
+                    pretrained_classifiers_logging_dir=None, #os.path.join(logging_dir, 'classifiers_pretrain'),
                     **self.run_kwargs
                 )
                 np.savez(os.path.join(logging_dir, f'starting_prob={starting_prob}', 'leakage_assessments.npz'), leakage_assessment=leakage_assessment, locs_1o=locs_1o, locs_2o=locs_2o)
@@ -136,78 +142,204 @@ class Trial:
     def run_1o_beta_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_beta_sweep')
         leakage_assessments = {}
-        for beta in [1 - 0.5**n for n in range(self.trial_count)][::-1]:
-            subdir = os.path.join(exp_dir, f'beta={beta}')
-            leakage_assessments[1-beta], *_ = self.run_experiment(subdir, {'lpf_beta': beta})
-        #self.plot_leakage_assessments(
-        #    os.path.join(exp_dir, 'sweep.pdf'),
-        #    leakage_assessments,
-        #    self.timestep_count//2,
-        #    title=r'Sweep of low-pass filter coefficient: $\beta_{\mathrm{LPF}}$',
-        #    to_label=lambda x: r'$\beta_{\mathrm{LPF}}='+f'{1-x}'+r'$'
-        #)
+        for seed in range(self.seed_count):
+            for beta in self.betas:
+                subdir = os.path.join(exp_dir, f'seed={seed}', f'beta={beta}')
+                leakage_assessments[1-beta], *_ = self.run_experiment(subdir, {'lpf_beta': beta})
+    
+    def plot_1o_beta_sweep(self, axes=None, subsample=None):
+        full_plot = axes is None
+        betas = self.betas[::-1] if subsample is None else self.betas[subsample][::-1]
+        if full_plot:
+            fig, axes = plt.subplots(5, self.trial_count, figsize=(self.trial_count*PLOT_WIDTH, 5*PLOT_WIDTH))
+        else:
+            axes = axes.reshape(1, len(betas))
+        exp_dir = os.path.join(self.logging_dir, '1o_beta_sweep')
+        for beta_idx, beta in enumerate(betas):
+            for starting_prob_idx, starting_prob in enumerate([0.05, 0.1, 0.5, 0.9, 0.95] if full_plot else [0.5]):
+                leakage_assessments = []
+                ax = axes[starting_prob_idx, beta_idx]
+                for seed in range(self.seed_count):
+                    subdir = os.path.join(exp_dir, f'seed={seed}', f'beta={beta}', f'starting_prob={starting_prob}')
+                    assert os.path.exists(os.path.join(subdir, 'leakage_assessments.npz'))
+                    data = np.load(os.path.join(subdir, 'leakage_assessments.npz'), allow_pickle=True)
+                    leakage_assessment = data['leakage_assessment'].reshape(-1)
+                    loc_1o = data['locs_1o'][0]
+                    leakage_assessments.append(leakage_assessment)
+                leakage_assessments = np.stack(leakage_assessments)
+                ax.axvline(loc_1o, linestyle='--', color='black')
+                ax.fill_between(np.arange(self.timestep_count), np.min(leakage_assessments, axis=0), np.max(leakage_assessments, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
+                ax.plot(np.arange(self.timestep_count), np.median(leakage_assessments, axis=0), color='blue', marker='.', markersize=5, linestyle='-', linewidth=0.1, **PLOT_KWARGS)
+                ax.set_xlabel(r'Timestep $t$')
+                ax.set_ylabel(r'Estimated leakage of $X_t$')
+                ax.set_title(r'LPF coefficient $\beta='+f'{beta}'+r'$')
+                ax.set_xlim(0, self.timestep_count-1)
+                ax.set_ylim(0.0, 1.0)
+        if full_plot:
+            fig.tight_layout()
+            fig.savefig(os.path.join(exp_dir, 'beta_sweep.pdf'))
     
     def run_1o_data_var_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_data_var_sweep')
         leakage_assessments = {}
-        for var in [1.0] + [0.5**(-2*n) for n in range(1, self.trial_count//2)] + [0.5**(2*n) for n in range(1, self.trial_count//2)] + [0.0]:
-            subdir = os.path.join(exp_dir, f'var={var}')
-            leakage_assessments[var], *_ = self.run_experiment(subdir, {'data_var': var})
-        #self.plot_leakage_assessments(
-        #    os.path.join(exp_dir, 'sweep.pdf'),
-        #    leakage_assessments,
-        #    self.timestep_count//2,
-        #    title=r'Sweep of data-dependent variance: $\sigma_{\mathrm{data}}$',
-        #    to_label=lambda x: r'$\sigma_{\mathrm{data}}='+f'{x}'+r'$'
-        #)
+        for seed in range(self.seed_count):
+            for var in [1.0] + [0.5**(-2*n) for n in range(1, self.trial_count//2)] + [0.5**(2*n) for n in range(1, self.trial_count//2)] + [0.0]:
+                subdir = os.path.join(exp_dir, f'seed={seed}', f'var={var}')
+                leakage_assessments[var], *_ = self.run_experiment(subdir, {'data_var': var})
     
     def run_1o_leaky_pt_count_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_leaky_pt_sweep')
         leakage_assessments = {}
         locss = []
-        for count in [0] + [1 + 2*x for x in range(self.trial_count-1)]:
-            subdir = os.path.join(exp_dir, f'count={count}')
-            leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'leaky_1o_count': count})
-            locss.append(locs)
-        #self.plot_leakage_assessments(
-        #    os.path.join(exp_dir, 'sweep.pdf'),
-        #    leakage_assessments,
-        #    locss,
-        #    title=r'Sweep of leaky instruction count: $n_{\mathrm{lkg}}$',
-        #    to_label=lambda x: r'$n_{\mathrm{lkg}}='+f'{x}'+r'$'
-        #)
+        for seed in range(self.seed_count):
+            for count in [0] + [1 + 2*x for x in range(self.trial_count-1)]:
+                subdir = os.path.join(exp_dir, f'seed={seed}', f'count={count}')
+                leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'leaky_1o_count': count})
+                locss.append(locs)
+                
+    def plot_1o_leaky_pt_count_sweep(self, axes=None, subsample=None):
+        full_plot = axes is None
+        leaky_pt_counts = self.leaky_pt_counts if subsample is None else self.leaky_pt_counts[subsample]
+        if full_plot:
+            fig, axes = plt.subplots(5, self.trial_count, figsize=(self.trial_count*PLOT_WIDTH, 5*PLOT_WIDTH))
+        else:
+            axes = axes.reshape(1, len(leaky_pt_counts))
+        exp_dir = os.path.join(self.logging_dir, '1o_leaky_pt_sweep')
+        for leaky_pt_count_idx, leaky_pt_count in enumerate(leaky_pt_counts):
+            for starting_prob_idx, starting_prob in enumerate([0.05, 0.1, 0.5, 0.9, 0.95] if full_plot else [0.5]):
+                leakage_assessments = []
+                ax = axes[starting_prob_idx, leaky_pt_count_idx]
+                for seed in range(self.seed_count):
+                    subdir = os.path.join(exp_dir, f'seed={seed}', f'count={leaky_pt_count}', f'starting_prob={starting_prob}')
+                    assert os.path.exists(os.path.join(subdir, 'leakage_assessments.npz'))
+                    data = np.load(os.path.join(subdir, 'leakage_assessments.npz'), allow_pickle=True)
+                    leakage_assessment = data['leakage_assessment'].reshape(-1)
+                    locs_1o = data['locs_1o']
+                    leakage_assessments.append(leakage_assessment)
+                leakage_assessments = np.stack(leakage_assessments)
+                try:
+                    for loc_1o in locs_1o:
+                        ax.axvline(loc_1o, linestyle='--', color='black')
+                except TypeError:
+                    pass
+                ax.fill_between(np.arange(self.timestep_count), np.min(leakage_assessments, axis=0), np.max(leakage_assessments, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
+                ax.plot(np.arange(self.timestep_count), np.median(leakage_assessments, axis=0), color='blue', marker='.', markersize=5, linestyle='-', linewidth=0.1, **PLOT_KWARGS)
+                ax.set_xlabel(r'Timestep $t$')
+                ax.set_ylabel(r'Estimated leakage of $X_t$')
+                ax.set_title(f'Leaky point count: {leaky_pt_count}')
+                ax.set_xlim(0, self.timestep_count-1)
+                ax.set_ylim(0.0, 1.0)
+        if full_plot:
+            fig.tight_layout()
+            fig.savefig(os.path.join(exp_dir, 'leaky_pt_count_sweep.pdf'), **SAVEFIG_KWARGS)
     
     def run_1o_no_op_count_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_no_op_sweep')
         leakage_assessments = {}
         locss = []
-        for count in [0] + [1 + 4*x for x in range(self.trial_count-1)]:
-            subdir = os.path.join(exp_dir, f'count={count}')
-            leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'max_no_ops': count})
-            locss.append(locs)
-        #self.plot_leakage_assessments(
-        #    os.path.join(exp_dir, 'sweep.pdf'),
-        #    leakage_assessments,
-        #    self.timestep_count//2,
-        #    title=r'Sweep of max no-ops: $n_{\mathrm{no-op}}$',
-        #    to_label=lambda x: r'$n_{\mathrm{no-op}}='+f'{x}'+r'$'
-        #)
+        for seed in range(self.seed_count):
+            for count in self.no_op_counts:
+                subdir = os.path.join(exp_dir, f'seed={seed}', f'count={count}')
+                leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'max_no_ops': count})
+                locss.append(locs)
+
+    def plot_1o_no_op_count_sweep(self, axes=None, subsample=None):
+        full_plot = axes is None
+        no_op_counts = self.no_op_counts if subsample is None else self.no_op_counts[subsample]
+        if full_plot:
+            fig, axes = plt.subplots(5, self.trial_count, figsize=(self.trial_count*PLOT_WIDTH, 5*PLOT_WIDTH))
+        else:
+            axes = axes.reshape(1, len(no_op_counts))
+        exp_dir = os.path.join(self.logging_dir, '1o_no_op_sweep')
+        for no_op_count_idx, no_op_count in enumerate(no_op_counts):
+            for starting_prob_idx, starting_prob in enumerate([0.05, 0.1, 0.5, 0.9, 0.95] if full_plot else [0.5]):
+                leakage_assessments = []
+                ax = axes[starting_prob_idx, no_op_count_idx]
+                for seed in range(self.seed_count):
+                    subdir = os.path.join(exp_dir, f'seed={seed}', f'count={no_op_count}', f'starting_prob={starting_prob}')
+                    assert os.path.exists(os.path.join(subdir, 'leakage_assessments.npz'))
+                    data = np.load(os.path.join(subdir, 'leakage_assessments.npz'), allow_pickle=True)
+                    leakage_assessment = data['leakage_assessment'].reshape(-1)
+                    locs_1o = data['locs_1o']
+                    leakage_assessments.append(leakage_assessment)
+                leakage_assessments = np.stack(leakage_assessments)
+                try:
+                    for loc_1o in locs_1o:
+                        ax.axvline(loc_1o, linestyle='--', color='black')
+                except TypeError:
+                    pass
+                ax.fill_between(np.arange(self.timestep_count), np.min(leakage_assessments, axis=0), np.max(leakage_assessments, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
+                ax.plot(np.arange(self.timestep_count), np.median(leakage_assessments, axis=0), color='blue', marker='.', markersize=5, linestyle='-', linewidth=0.1, **PLOT_KWARGS)
+                ax.set_xlabel(r'Timestep $t$')
+                ax.set_ylabel(r'Estimated leakage of $X_t$')
+                ax.set_title(f'Max no-op count: {no_op_count}')
+                ax.set_xlim(0, self.timestep_count-1)
+                ax.set_ylim(0.0, 1.0)
+        if full_plot:
+            fig.tight_layout()
+            fig.savefig(os.path.join(exp_dir, 'no_op_count_sweep.pdf'), **SAVEFIG_KWARGS)
     
     def run_1o_shuffle_loc_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_shuffle_sweep')
         leakage_assessments = {}
         locss = []
-        for count in [1 + 2*x for x in range(self.trial_count)]:
-            subdir = os.path.join(exp_dir, f'count={count}')
-            leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'shuffle_locs': count})
-            locss.append(locs)
-        #self.plot_leakage_assessments(
-        #    os.path.join(exp_dir, 'sweep.pdf'),
-        #    leakage_assessments,
-        #    locss,
-        #    title=r'Sweep of shuffle location count: $n_{\mathrm{shuff}}$',
-        #    to_label=lambda x: r'$n_{\mathrm{shuff}}='+f'{x}'+r'$'
-        #)
+        for seed in range(self.seed_count):
+            for count in self.shuffle_loc_counts:
+                subdir = os.path.join(exp_dir, f'seed={seed}', f'count={count}')
+                leakage_assessments[count], locs, _ = self.run_experiment(subdir, {'shuffle_locs': count})
+                locss.append(locs)
+
+    def plot_1o_shuffle_loc_sweep(self, axes=None, subsample=None):
+        full_plot = axes is None
+        shuffle_loc_counts = self.shuffle_loc_counts if subsample is None else self.shuffle_loc_counts[subsample]
+        if full_plot:
+            fig, axes = plt.subplots(5, self.trial_count, figsize=(self.trial_count*PLOT_WIDTH, 5*PLOT_WIDTH))
+        else:
+            axes = axes.reshape(1, len(shuffle_loc_counts))
+        exp_dir = os.path.join(self.logging_dir, '1o_shuffle_sweep')
+        for shuffle_loc_count_idx, shuffle_loc_count in enumerate(shuffle_loc_counts):
+            for starting_prob_idx, starting_prob in enumerate([0.05, 0.1, 0.5, 0.9, 0.95] if full_plot else [0.5]):
+                leakage_assessments = []
+                ax = axes[starting_prob_idx, shuffle_loc_count_idx]
+                for seed in range(self.seed_count):
+                    subdir = os.path.join(exp_dir, f'seed={seed}', f'count={shuffle_loc_count}', f'starting_prob={starting_prob}')
+                    assert os.path.exists(os.path.join(subdir, 'leakage_assessments.npz'))
+                    data = np.load(os.path.join(subdir, 'leakage_assessments.npz'), allow_pickle=True)
+                    leakage_assessment = data['leakage_assessment'].reshape(-1)
+                    locs_1o = data['locs_1o']
+                    leakage_assessments.append(leakage_assessment)
+                leakage_assessments = np.stack(leakage_assessments)
+                try:
+                    for loc_1o in locs_1o:
+                        ax.axvline(loc_1o, linestyle='--', color='black')
+                except TypeError:
+                    pass
+                ax.fill_between(np.arange(self.timestep_count), np.min(leakage_assessments, axis=0), np.max(leakage_assessments, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
+                ax.plot(np.arange(self.timestep_count), np.median(leakage_assessments, axis=0), color='blue', marker='.', markersize=5, linestyle='-', linewidth=0.1, **PLOT_KWARGS)
+                if full_plot:
+                    ax.set_xlabel(r'Timestep $t$')
+                    ax.set_ylabel(r'Estimated leakage of $X_t$')
+                ax.set_title(f'Shuffle location count: {shuffle_loc_count}')
+                ax.set_xlim(0, self.timestep_count-1)
+                ax.set_ylim(0.0, 1.0)
+        if full_plot:
+            fig.tight_layout()
+            fig.savefig(os.path.join(exp_dir, 'shuffle_loc_count_sweep.pdf'), **SAVEFIG_KWARGS)
+    
+    def plot_main_paper_sweeps(self):
+        #subsample = np.linspace(0, self.trial_count-1, 4).astype(int)
+        subsample = np.arange(self.trial_count)
+        fig, axes = plt.subplots(4, len(subsample), figsize=(0.5*len(subsample)*PLOT_WIDTH, 0.5*4*PLOT_WIDTH), sharex=True, sharey=True)
+        self.plot_1o_beta_sweep(axes[0, :], subsample)
+        self.plot_1o_leaky_pt_count_sweep(axes[1, :], subsample)
+        self.plot_1o_no_op_count_sweep(axes[2, :], subsample)
+        self.plot_1o_shuffle_loc_sweep(axes[3, :], subsample)
+        for ax in axes[:, 0]:
+            ax.set_ylabel(r'Estimated leakage of $X_t$')
+        for ax in axes[-1, :]:
+            ax.set_xlabel(r'Timestep $t$')
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.logging_dir, 'main_paper_sweep.pdf'), **SAVEFIG_KWARGS)
     
     def run_2o_trial(self):
         exp_dir = os.path.join(self.logging_dir, '2o_trial')
@@ -221,8 +353,11 @@ class Trial:
     
     def __call__(self):
         self.run_1o_beta_sweep()
+        self.plot_1o_beta_sweep()
         self.run_1o_leaky_pt_count_sweep()
-        #self.run_1o_data_var_sweep()
+        self.plot_1o_leaky_pt_count_sweep()
         self.run_1o_no_op_count_sweep()
+        self.plot_1o_no_op_count_sweep()
         self.run_1o_shuffle_loc_sweep()
-        #self.run_2o_trial()
+        self.plot_1o_shuffle_loc_sweep()
+        self.plot_main_paper_sweeps()

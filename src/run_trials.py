@@ -42,7 +42,8 @@ def main():
     
     if dataset == 'synthetic':
         trial = SyntheticTrial(
-            logging_dir=trial_dir
+            logging_dir=trial_dir,
+            seed_count=seed_count
         )
         trial()
     elif dataset == 'toy_gaussian':
