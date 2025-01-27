@@ -14,7 +14,7 @@ from torch import multiprocessing
 plt.rcParams['font.size'] = 10
 plt.rcParams['font.family'] = 'Times New Roman'
 plt.rcParams['text.usetex'] = True
-plt.rcParams['text.latex.preamble'] = r'\usepackage{times} \usepackage{amssymb}'
+plt.rcParams['text.latex.preamble'] = r'\usepackage{times} \usepackage{amsmath} \usepackage{amssymb}'
 
 if torch.cuda.is_available():
     torch.backends.cudnn.benchmark = True
@@ -40,7 +40,7 @@ _seed = None
 
 PLOT_KWARGS = {'rasterized': True}
 PLOT_WIDTH = 4
-SAVEFIG_KWARGS = {'dpi': 300}
+SAVEFIG_KWARGS = {'dpi': 150}
 
 def get_trial_name():
     assert _trial_name is not None

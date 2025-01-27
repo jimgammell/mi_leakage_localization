@@ -2,7 +2,7 @@ from typing import *
 from copy import copy
 from collections import defaultdict
 import numpy as np
-from scipy.stats import pearsonr, kendalltau
+from scipy.stats import pearsonr, kendalltau, spearmanr
 from matplotlib import pyplot as plt
 from matplotlib import cm
 from matplotlib.lines import Line2D
@@ -24,6 +24,61 @@ from training_modules.cooperative_leakage_localization.plot_things import plot_l
 from utils.aes_multi_trace_eval import AESMultiTraceEvaluator
 from utils.multi_attack_baseline import MultiAttackTrainer, soft_kendall_tau
 from utils.template_attack import TemplateAttack
+from utils.dnn_performance_auc import compute_dnn_performance_auc
+
+def get_assessment_name(key):
+    return {
+        'random': 'Random',
+        'ground_truth': 'Ground Truth',
+        'snr': 'SNR',
+        'sosd': 'SOSD',
+        'cpa': 'CPA',
+        'gradvis': 'GradVis',
+        'lrp': 'LRP',
+        'occlusion': '1-Occlusion',
+        'saliency': 'Saliency',
+        'inputxgrad': r'Input $*$ Grad',
+        'zaid_gradvis': 'GradVis (ZaidNet)',
+        'zaid_occlusion': '1-Occlusion (ZaidNet)',
+        'zaid_saliency': 'Saliency (ZaidNet)',
+        'zaid_inputxgrad': r'Input $*$ Grad (ZaidNet)',
+        'wouters_gradvis': 'GradVis (WoutersNet)',
+        'wouters_occlusion': '1-Occlusion (WoutersNet)',
+        'wouters_saliency': 'Saliency (WoutersNet)',
+        'wouters_inputxgrad': r'Input $*$ Grad (WoutersNet)',
+        'leakage_localization': 'Adversarial Leakage Localization (Ours)'
+    }[key]
+
+def get_sensitive_variable_label_and_color(key, dataset_name):
+    cmap = cm.get_cmap('tab10', 7)
+    colors = [cmap(i) for i in range(7)]
+    if 'ascad' in dataset_name:
+        labels = {
+            'subbytes': r'$\operatorname{Sbox}(k_3 \oplus w_3)$',
+            'r_out': r'$r_{\mathrm{out}}$',
+            'subbytes__r_out': r'$\operatorname{Sbox}(k_3 \oplus w_3) \oplus r_{\mathrm{out}}$',
+            'r_in': r'$r_{\mathrm{in}}$',
+            'subbytes__r_in': r'$\operatorname{Sbox}(k_3 \oplus w_3) \oplus r_{\mathrm{in}}$',
+            'r': r'$r$',
+            'subbytes__r': r'$\operatorname{Sbox}(k_3 \oplus w_3) \oplus r$'
+        }
+        label = labels[key]
+        color = colors[list(labels.keys()).index(key)]
+    elif dataset_name == 'dpav4':
+        label = r'$\operatorname{Sbox}(k_0 \oplus w_0) \oplus m_0$'
+        color = colors[0]
+    elif dataset_name == 'aes_hd':
+        label = r'$\operatorname{Sbox}^{-1}(k_{11}^* \oplus c_{11}) \oplus c_7$'
+        color = colors[0]
+    elif dataset_name == 'otiait':
+        label = 'Ephemeral key nibble'
+        color = colors[0]
+    elif dataset_name == 'otp':
+        label = 'Dummy load?'
+        color = colors[0]
+    else:
+        assert False
+    return (label, color)
 
 class Trial:
     def __init__(self,
@@ -80,14 +135,14 @@ class Trial:
         print('\tDone.')
         
     def compute_ground_truth_assessments(self):
-        for seed in [0]: #range(self.seed_count):
+        for seed in range(self.seed_count):
             for attack_type in ['template']: #['mlp', 'template']:
                 assessments = {}
                 for window_size in [5]: #[1, 3, 5]:
                     name = f'{attack_type}__seed={seed}__window_size={window_size}'
                     assessments[window_size] = {}
                     if 'ascadv1' in self.dataset_name:
-                        targets = ['subbytes', 'r_out', 'subbytes__r_out', 'r_in', 'subbytes__r_in', 'r', 'subbytes__r']
+                        targets = ['subbytes', 'r_out', 'subbytes__r_out', 'r_in', 'subbytes__r_in', 'r', 'subbytes__r', 'k__p__r_in']
                     else:
                         targets = ['subbytes']
                     fig, axes = plt.subplots(len(targets), 3, figsize=(PLOT_WIDTH*3, PLOT_WIDTH*len(targets)))
@@ -119,15 +174,15 @@ class Trial:
     
     def get_ground_truth_assessments(self):
         rv = {}
-        for attack_type in ['mlp', 'template']:
-            for window_size in [1, 3, 5]:
+        for attack_type in ['template']: #['mlp', 'template']:
+            for window_size in [5]: #[1, 3, 5]:
                 assessment_name = f'{attack_type}__window_size={window_size}'
                 if 'ascadv1' in self.dataset_name:
-                    targets = ['subbytes', 'r_out', 'subbytes__r_out']
+                    targets = ['r_out', 'subbytes__r_out', 'r_in', 'subbytes__r_in', 'r', 'subbytes__r', 'subbytes']
                 else:
                     targets = ['subbytes']
                 mutinfs = defaultdict(list)
-                for seed in range(self.seed_count):
+                for seed in [0]: #range(self.seed_count):
                     for target in targets:
                         name = f'{attack_type}__seed={seed}__window_size={window_size}'
                         assessment = np.load(os.path.join(self.ground_truth_dir, f'{name}.npz'), allow_pickle=True)['assessments'].item()[target]
@@ -210,6 +265,30 @@ class Trial:
             print('Found existing LL classifier pretraining sweep.')
         self.optimal_ll_pretrain_hparams = plot_hparam_sweep(self.ll_classifiers_hparam_sweep_dir)
         print(f'Optimal hyperparameters on {self.dataset_name}: {self.optimal_ll_pretrain_hparams}')
+    
+    def compute_dnn_auc_vals_on_baselines(self):
+        leakage_assessments = self.get_leakage_assessments()
+        forward_auc_vals, reverse_auc_vals = defaultdict(list), defaultdict(list)
+        for seed in range(self.seed_count):
+            training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.supervised_model_dir, f'seed={(seed+1)%self.seed_count}', 'best_checkpoint.ckpt'))
+            supervised_dnn = training_module.classifier
+            for assessment_name, _leakage_assessments in leakage_assessments.items():
+                if _leakage_assessments.ndim > 1:
+                    leakage_assessment = _leakage_assessments[seed, :]
+                else:
+                    assert _leakage_assessments.ndim == 1
+                    leakage_assessment = _leakage_assessments
+                auc_vals = compute_dnn_performance_auc(
+                    DataLoader(self.attack_dataset, batch_size=len(self.attack_dataset), num_workers=max(1, os.cpu_count()//4)),
+                    supervised_dnn, leakage_assessment, device='cuda', cluster_count=10
+                )
+                forward_auc_vals[assessment_name].append(auc_vals['forward_dnn_auc'])
+                reverse_auc_vals[assessment_name].append(auc_vals['reverse_dnn_auc'])
+        forward_auc_vals, reverse_auc_vals = {key: np.stack(val) for key, val in forward_auc_vals.items()}, {key: np.stack(val) for key, val in reverse_auc_vals.items()}
+        for key in leakage_assessments.keys():
+            print(f'Assessment: {key}')
+            print(f'\tForward AUC: {forward_auc_vals[key].mean()} +/- {forward_auc_vals[key].std()}')
+            print(f'\tReverse AUC: {reverse_auc_vals[key].mean()} +/- {reverse_auc_vals[key].std()}')
     
     def run_ll_hparam_sweep(self):
         training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.supervised_model_dir, 'll_eval', 'best_checkpoint.ckpt'))
@@ -419,14 +498,14 @@ class Trial:
             else:
                 saliency = np.load(os.path.join(subdir, to_name('saliency.npy')))
                 print('Found precomputed saliency.')
-            r"""if not os.path.exists(os.path.join(subdir, to_name('occlusion.npy'))):
+            if not os.path.exists(os.path.join(subdir, to_name('occlusion.npy'))):
                 print('Computing occlusion...')
                 occlusion = nn_attributor.compute_occlusion().reshape(-1)
                 np.save(os.path.join(subdir, to_name('occlusion.npy')), occlusion)
                 print('\tDone.')
             else:
                 occlusion = np.load(os.path.join(subdir, to_name('occlusion.npy')))
-                print('Found precomputed occlusion.')"""
+                print('Found precomputed occlusion.')
             if not os.path.exists(os.path.join(subdir, to_name('inputxgrad.npy'))):
                 print('Computing inputxgrad...')
                 inputxgrad = nn_attributor.compute_inputxgrad().reshape(-1)
@@ -437,17 +516,17 @@ class Trial:
                 print('Found precomputed inputxgrad.')
             plot_leakage_assessment(gradvis, os.path.join(subdir, to_name('gradvis.png')))
             plot_leakage_assessment(saliency, os.path.join(subdir, to_name('saliency.png')))
-            #plot_leakage_assessment(occlusion, os.path.join(subdir, to_name('occlusion.png')))
+            plot_leakage_assessment(occlusion, os.path.join(subdir, to_name('occlusion.png')))
             plot_leakage_assessment(inputxgrad, os.path.join(subdir, to_name('inputxgrad.png')))
             if wouters_zaid_model is None:
                 plot_leakage_assessment(lrp, os.path.join(subdir, to_name('lrp.png')))
                 lrps.append(lrp)
             gradviss.append(gradvis)
             saliencies.append(saliency)
-            #occlusions.append(occlusion)
+            occlusions.append(occlusion)
             inputxgrads.append(inputxgrad)
         setattr(self, to_name('nn_attr_assessments'), {
-            to_name('gradvis'): np.stack(gradviss), to_name('saliency'): np.stack(saliencies), to_name('inputxgrad'): np.stack(inputxgrads),# to_name('occlusion'): np.stack(occlusions)
+            to_name('gradvis'): np.stack(gradviss), to_name('saliency'): np.stack(saliencies), to_name('inputxgrad'): np.stack(inputxgrads), to_name('occlusion'): np.stack(occlusions),
             **({to_name('lrp'): np.stack(lrps)} if wouters_zaid_model is None else {})
         })
     
@@ -499,7 +578,7 @@ class Trial:
                 print(f'\t{ground_truth_assessment_name}')
                 ground_truth_assessment = np.mean(np.stack(list(ground_truth_assessment.values())), axis=0)
                 kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name] = []
-                for seed in range(ground_truth_assessment.shape[0]):
+                for seed in range(self.seed_count):
                     if leakage_assessment.ndim == 1:
                         _leakage_assessment = leakage_assessment
                     else:
@@ -507,8 +586,8 @@ class Trial:
                     window_size = int(ground_truth_assessment_name.split('=')[-1])
                     _leakage_assessment = torch.tensor(_leakage_assessment).unfold(0, window_size, 1).numpy().mean(axis=-1)
                     #mutinf, rank_mean, rank_std = ground_truth_assessment[seed, 0, :], ground_truth_assessment[seed, 1, :], ground_truth_assessment[seed, 2, :]
-                    mutinf = ground_truth_assessment[seed, :]
-                    kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].append(soft_kendall_tau(_leakage_assessment, mutinf))
+                    mutinf = ground_truth_assessment[0, :]
+                    kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].append(spearmanr(_leakage_assessment, mutinf).statistic)  #soft_kendall_tau(_leakage_assessment, mutinf))
                 kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name] = np.stack(kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name])
                 print(f'\t\tKendall tau: {kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].mean()} +/- {kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].std()}')
         return kendalltau_evaluations
@@ -518,14 +597,18 @@ class Trial:
         ground_truth_assessments = self.get_ground_truth_assessments()['template__window_size=5']
         fig, axes = plt.subplots(2, 1, figsize=(PLOT_WIDTH, 2*PLOT_WIDTH))
         cmap = cm.get_cmap('tab10', len(ground_truth_assessments))
-        colors = [cmap(i) for i in range(len(ground_truth_assessments))]
-        for (key, _ground_truth_assessment), color in zip(ground_truth_assessments.items(), colors):
+        for key, _ground_truth_assessment in ground_truth_assessments.items():
+            name, color = get_sensitive_variable_label_and_color(key, self.dataset_name)
             axes[0].fill_between(range(_ground_truth_assessment.shape[-1]), np.min(_ground_truth_assessment, axis=0), np.max(_ground_truth_assessment, axis=0), color=color, alpha=0.25, **PLOT_KWARGS)
-            axes[0].plot(np.median(_ground_truth_assessment, axis=0), color=color, marker='.', markersize=1, linestyle='none', label=key.replace('_', r'\_'), **PLOT_KWARGS)
+            axes[0].plot(np.median(_ground_truth_assessment, axis=0), color=color, marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
         axes[1].fill_between(range(leakage_assessments.shape[-1]), np.min(leakage_assessments, axis=0), np.max(leakage_assessments, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
         axes[1].plot(np.median(leakage_assessments, axis=0), color='blue', marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
         axes[0].set_yscale('log')
-        axes[0].legend()
+        legend_handles = []
+        for key in ground_truth_assessments.keys():
+            name, color = get_sensitive_variable_label_and_color(key, self.dataset_name)
+            legend_handles.append(Line2D([], [], color=color, label=name, marker='.', linestyle='none'))
+        axes[0].legend(handles=legend_handles, ncol=2)
         axes[0].set_xlabel(r'Timestep $t$')
         axes[0].set_ylabel(r'Estimated leakage of $X_t$')
         axes[0].set_title('Ground truth-like assessment')
@@ -534,6 +617,47 @@ class Trial:
         axes[1].set_title('Adversarial leakage localization (ours)')
         fig.tight_layout()
         fig.savefig(os.path.join(self.logging_dir, 'main_paper_leakage_assessments.pdf'), **SAVEFIG_KWARGS)
+    
+    def create_appendix_leakage_assessment_plots(self):
+        leakage_assessments = self.get_leakage_assessments()
+        ground_truth_assessment = self.get_ground_truth_assessments()['template__window_size=5']
+        ground_truth_assessment = np.mean(np.stack(list(ground_truth_assessment.values())), axis=0)[0, :]
+        col_count = 4
+        row_count = int(np.ceil(2*(len(leakage_assessments)+1)/col_count))
+        fig, axes = plt.subplots(row_count, col_count, figsize=(col_count*PLOT_WIDTH, row_count*PLOT_WIDTH))
+        comparison_axes = axes[::2, :]
+        assessment_axes = axes[1::2, :]
+        for (assessment_name, assessment), comparison_ax, assessment_ax in zip({'ground_truth': ground_truth_assessment, **leakage_assessments}.items(), comparison_axes.flatten(), assessment_axes.flatten()):
+            assessment = np.abs(assessment.reshape(-1, assessment.shape[-1]))
+            if assessment_name != 'ground_truth':
+                averaged_assessment = np.stack([
+                    torch.tensor(_assessment).unfold(0, 5, 1).numpy().mean(axis=-1)
+                    for _assessment in assessment
+                ])
+            else:
+                assessment = assessment.reshape(1, -1)
+                averaged_assessment = assessment
+            comparison_ax.errorbar(
+                ground_truth_assessment, np.median(averaged_assessment, axis=0),
+                yerr=(np.median(averaged_assessment, axis=0)-np.min(averaged_assessment, axis=0), np.max(averaged_assessment, axis=0)-np.median(averaged_assessment, axis=0)),
+                color='blue', fmt='.', markersize=3, elinewidth=0.5, capsize=2, linestyle='none', **PLOT_KWARGS
+            )
+            assessment_ax.fill_between(np.arange(assessment.shape[-1]), np.min(assessment, axis=0), np.max(assessment, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
+            assessment_ax.plot(np.median(assessment, axis=0), color='blue', linewidth=0.25, **PLOT_KWARGS)
+            comparison_ax.set_xscale('log')
+            comparison_ax.set_yscale('log')
+            assessment_ax.set_yscale('log')
+            comparison_ax.set_xlabel(r'Ground truth-like leakage of $X_t$')
+            comparison_ax.set_ylabel(r'Estimated leakage of $X_t$')
+            assessment_ax.set_xlabel(r'Timestep $t$')
+            assessment_ax.set_ylabel(r'Estimated leakage of $X_t$')
+            comparison_ax.set_title(f'Method: {get_assessment_name(assessment_name)}')
+        for ax in comparison_axes.flatten()[len(leakage_assessments)+1:]:
+            ax.axis('off')
+        for ax in assessment_axes.flatten()[len(leakage_assessments)+1:]:
+            ax.axis('off')
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.logging_dir, 'appendix_leakage_assessment_plots.pdf'), **SAVEFIG_KWARGS)
     
     def plot_leakage_assessments(self):
         leakage_assessments = self.get_leakage_assessments()
@@ -566,8 +690,8 @@ class Trial:
         self.compute_random_assessment()
         if 'ascad' in self.dataset_name:
             self.compute_ascad_first_order_stats()
-        if ('compute_ground_truth_assessments' in self.trial_config) and self.trial_config['compute_ground_truth_assessments']:
-            self.compute_ground_truth_assessments()
+        #if ('compute_ground_truth_assessments' in self.trial_config) and self.trial_config['compute_ground_truth_assessments']:
+        #    self.compute_ground_truth_assessments()
         if ('compute_first_order_stats' in self.trial_config) and self.trial_config['compute_first_order_stats']:
             self.compute_first_order_stats()
         if ('run_supervised_hparam_sweep' in self.trial_config) and self.trial_config['run_supervised_hparam_sweep']:
@@ -613,3 +737,5 @@ class Trial:
         self.eval_leakage_assessments()
         self.plot_leakage_assessments()
         self.create_main_paper_leakage_assessment_plots()
+        #self.create_appendix_leakage_assessment_plots()
+        self.compute_dnn_auc_vals_on_baselines()

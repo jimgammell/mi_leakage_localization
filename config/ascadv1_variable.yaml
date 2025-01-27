@@ -8,7 +8,7 @@ pretrain_classifiers: true
 run_ll_classifiers_hparam_sweep: true
 run_ll_hparam_sweep: true
 run_leakage_localization: true
-max_classifiers_pretrain_steps: 10000
+max_classifiers_pretrain_steps: 20000
 max_leakage_localization_steps: 20000
 default_kwargs:
   classifiers_name: mlp-1d

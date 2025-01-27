@@ -123,6 +123,8 @@ class ASCADv1(Dataset):
                 target = aux_metadata['subbytes__r']
             elif target_val == 'subbytes__r_out':
                 target = aux_metadata['subbytes__r_out']
+            elif target_val == 'subbytes__r_in':
+                target = aux_metadata['subbytes__r_in']
             elif target_val == 'r_in':
                 target = aux_metadata['r_in']
             elif target_val == 'r_out':

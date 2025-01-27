@@ -198,7 +198,7 @@ class Trainer:
                         'etat_lr': float(np.random.choice([1e-5, 1e-4, 1e-3, 1e-2])),
                         'starting_prob': float(np.random.choice([0.1, 0.5, 0.9])),
                         'etat_steps_per_theta_step': int(np.random.choice([1, 2, 4])),
-                        'theta_weight_decay': float(np.random.choice([0.0, 1e-2, 1e0, 1e2]))
+                        'theta_weight_decay': float(np.random.choice([1e-2, 1e0, 1e2]))
                     }
                 override_kwargs.update(hparams)
                 override_kwargs.update({'supervised_dnn': supervised_dnn})

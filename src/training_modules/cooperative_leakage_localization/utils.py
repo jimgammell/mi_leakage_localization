@@ -53,7 +53,7 @@ class CondMutInfEstimator(nn.Module):
         assert False
 
 class SelectionMechanism(nn.Module):
-    def __init__(self, timesteps_per_trace: int, C: Optional[float] = None, beta: Optional[float] = None, average_gamma: bool = False, adversarial_mode: bool = False):
+    def __init__(self, timesteps_per_trace: int, C: Optional[float] = None, beta: Optional[float] = None, average_gamma: bool = True, adversarial_mode: bool = False):
         super().__init__()
         self.timesteps_per_trace = timesteps_per_trace
         if C is None:
