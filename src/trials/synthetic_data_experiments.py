@@ -151,7 +151,7 @@ class Trial:
         full_plot = axes is None
         betas = self.betas[::-1] if subsample is None else self.betas[subsample][::-1]
         if full_plot:
-            fig, axes = plt.subplots(5, self.trial_count, figsize=(self.trial_count*PLOT_WIDTH, 5*PLOT_WIDTH))
+            fig, axes = plt.subplots(5, self.trial_count, figsize=(0.75*self.trial_count*PLOT_WIDTH, 0.75*5*PLOT_WIDTH))
         else:
             axes = axes.reshape(1, len(betas))
         exp_dir = os.path.join(self.logging_dir, '1o_beta_sweep')
@@ -178,7 +178,7 @@ class Trial:
                 ax.set_ylim(0.0, 1.0)
         if full_plot:
             fig.tight_layout()
-            fig.savefig(os.path.join(exp_dir, 'beta_sweep.pdf'))
+            fig.savefig(os.path.join(exp_dir, 'beta_sweep.png'))
     
     def run_1o_data_var_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_data_var_sweep')
@@ -202,7 +202,7 @@ class Trial:
         full_plot = axes is None
         leaky_pt_counts = self.leaky_pt_counts if subsample is None else self.leaky_pt_counts[subsample]
         if full_plot:
-            fig, axes = plt.subplots(5, self.trial_count, figsize=(self.trial_count*PLOT_WIDTH, 5*PLOT_WIDTH))
+            fig, axes = plt.subplots(5, self.trial_count, figsize=(0.75*self.trial_count*PLOT_WIDTH, 0.75*5*PLOT_WIDTH))
         else:
             axes = axes.reshape(1, len(leaky_pt_counts))
         exp_dir = os.path.join(self.logging_dir, '1o_leaky_pt_sweep')
@@ -233,7 +233,7 @@ class Trial:
                 ax.set_ylim(0.0, 1.0)
         if full_plot:
             fig.tight_layout()
-            fig.savefig(os.path.join(exp_dir, 'leaky_pt_count_sweep.pdf'), **SAVEFIG_KWARGS)
+            fig.savefig(os.path.join(exp_dir, 'leaky_pt_count_sweep.png'), **SAVEFIG_KWARGS)
     
     def run_1o_no_op_count_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_no_op_sweep')
@@ -249,7 +249,7 @@ class Trial:
         full_plot = axes is None
         no_op_counts = self.no_op_counts if subsample is None else self.no_op_counts[subsample]
         if full_plot:
-            fig, axes = plt.subplots(5, self.trial_count, figsize=(self.trial_count*PLOT_WIDTH, 5*PLOT_WIDTH))
+            fig, axes = plt.subplots(5, self.trial_count, figsize=(0.75*self.trial_count*PLOT_WIDTH, 0.75*5*PLOT_WIDTH))
         else:
             axes = axes.reshape(1, len(no_op_counts))
         exp_dir = os.path.join(self.logging_dir, '1o_no_op_sweep')
@@ -280,7 +280,7 @@ class Trial:
                 ax.set_ylim(0.0, 1.0)
         if full_plot:
             fig.tight_layout()
-            fig.savefig(os.path.join(exp_dir, 'no_op_count_sweep.pdf'), **SAVEFIG_KWARGS)
+            fig.savefig(os.path.join(exp_dir, 'no_op_count_sweep.png'), **SAVEFIG_KWARGS)
     
     def run_1o_shuffle_loc_sweep(self):
         exp_dir = os.path.join(self.logging_dir, '1o_shuffle_sweep')
@@ -296,7 +296,7 @@ class Trial:
         full_plot = axes is None
         shuffle_loc_counts = self.shuffle_loc_counts if subsample is None else self.shuffle_loc_counts[subsample]
         if full_plot:
-            fig, axes = plt.subplots(5, self.trial_count, figsize=(self.trial_count*PLOT_WIDTH, 5*PLOT_WIDTH))
+            fig, axes = plt.subplots(5, self.trial_count, figsize=(0.75*self.trial_count*PLOT_WIDTH, 0.75*5*PLOT_WIDTH))
         else:
             axes = axes.reshape(1, len(shuffle_loc_counts))
         exp_dir = os.path.join(self.logging_dir, '1o_shuffle_sweep')
@@ -327,7 +327,7 @@ class Trial:
                 ax.set_ylim(0.0, 1.0)
         if full_plot:
             fig.tight_layout()
-            fig.savefig(os.path.join(exp_dir, 'shuffle_loc_count_sweep.pdf'), **SAVEFIG_KWARGS)
+            fig.savefig(os.path.join(exp_dir, 'shuffle_loc_count_sweep.png'), **SAVEFIG_KWARGS)
     
     def plot_main_paper_sweeps(self):
         subsample = np.linspace(0, self.trial_count-1, 4).astype(int)

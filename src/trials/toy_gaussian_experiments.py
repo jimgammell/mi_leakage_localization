@@ -145,6 +145,8 @@ class Trial:
         col_count = 4
         row_count = int(np.ceil(len(traces)/col_count))
         fig, axes = plt.subplots(row_count, col_count, figsize=(PLOT_WIDTH*col_count, PLOT_WIDTH*row_count))
+        for ax in axes.flatten():
+            ax.set_rasterization_zorder(-10)
         for (trace_name, trace), ax in zip(traces.items(), axes.flatten()):
             ax.set_title(to_names[trace_name])
             ax.set_xlabel('Number of leaky points')
@@ -160,7 +162,7 @@ class Trial:
         for ax in axes.flatten()[len(traces):]:
             ax.axis('off')
         fig.tight_layout()
-        fig.savefig(os.path.join(self.logging_dir, '1o_count_sweep', 'sweep.pdf'), **SAVEFIG_KWARGS)
+        fig.savefig(os.path.join(self.logging_dir, '1o_count_sweep', 'sweep.png'), **SAVEFIG_KWARGS)
     
     def plot_xor_var_sweep(self):
         vars = [0.5**n for n in range(1, self.trial_count//2+1)][::-1] + [1.0] + [2.0**n for n in range(1, self.trial_count//2+1)]
@@ -178,6 +180,8 @@ class Trial:
         col_count = 4
         row_count = int(np.ceil(len(traces)/col_count))
         fig, axes = plt.subplots(row_count, col_count, figsize=(PLOT_WIDTH*col_count, PLOT_WIDTH*row_count))
+        for ax in axes.flatten():
+            ax.set_rasterization_zorder(-10)
         for (trace_name, trace), ax in zip(traces.items(), axes.flatten()):
             ax.set_title(to_names[trace_name])
             ax.set_xlabel('SNR of 1st-order measurement')
@@ -196,10 +200,12 @@ class Trial:
         for ax in axes.flatten()[len(traces):]:
             ax.axis('off')
         fig.tight_layout()
-        fig.savefig(os.path.join(self.logging_dir, 'xor_var_sweep', 'sweep.pdf'), **SAVEFIG_KWARGS)
+        fig.savefig(os.path.join(self.logging_dir, 'xor_var_sweep', 'sweep.png'), **SAVEFIG_KWARGS)
     
     def create_main_paper_plot(self):
         fig, axes = plt.subplots(2, 3, figsize=(3*0.75*PLOT_WIDTH, 2*0.75*PLOT_WIDTH))
+        for ax in axes.flatten():
+            ax.set_rasterization_zorder(-10)
         axes[0, 0].set_title('SNR', fontsize=18)
         axes[0, 1].set_title('1-occlusion', fontsize=18)
         axes[0, 2].set_title(r'\textbf{ALL (Ours)}', fontsize=18)

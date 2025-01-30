@@ -14,7 +14,8 @@ def compute_dnn_performance_auc(
     device: Optional[str] = None,
     cluster_count: Optional[int] = 100,
     average: bool = True, # if false, will return the curve itself rather than its mean
-    logarithmic_mode: bool = False # if true, will ablate 1, then 2, then 4, etc. points
+    logarithmic_mode: bool = False, # if true, will ablate 1, then 2, then 4, etc. points
+    multi_classifiers: bool = False
 ):
     if device is None:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -38,19 +39,22 @@ def compute_dnn_performance_auc(
         while len(indices[-1]) < timesteps_per_trace:
             indices.append(leakage_ranking[:2**idx])
             idx += 1
-    mask = torch.ones(1, timesteps_per_trace, dtype=torch.float, device=device)
+    mask = torch.zeros(1, timesteps_per_trace, dtype=torch.float, device=device)
     ranks = []
     for index_cluster in indices:
-        mask[:, index_cluster] = 0.
+        mask[:, index_cluster] = 1.
         masked_traces = mask.unsqueeze(0)*traces
-        logits = dnn(masked_traces)
+        if multi_classifiers:
+            logits = dnn(masked_traces, mask.unsqueeze(0).repeat(traces.shape[0], 1, 1))
+        else:
+            logits = dnn(masked_traces)
         rank = get_rank(logits, labels).mean()
         ranks.append(rank)
     if average:
         reverse_auc = np.mean(ranks)
     else:
         reverse_auc = np.array(ranks)
-    
+        
     leakage_ranking = leakage_assessment.reshape(-1).argsort()[::-1].copy()
     if not logarithmic_mode:
         indices = leakage_ranking
@@ -70,7 +74,10 @@ def compute_dnn_performance_auc(
     for index_cluster in indices:
         mask[:, index_cluster] = 1.
         masked_traces = mask.unsqueeze(0)*traces
-        logits = dnn(masked_traces)
+        if multi_classifiers:
+            logits = dnn(masked_traces, mask.unsqueeze(0).repeat(traces.shape[0], 1, 1))
+        else:
+            logits = dnn(masked_traces)
         rank = get_rank(logits, labels).mean()
         ranks.append(rank)
     if average:
