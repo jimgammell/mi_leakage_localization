@@ -3,6 +3,7 @@ import os
 from collections import defaultdict
 from copy import copy
 from matplotlib import pyplot as plt
+from matplotlib.ticker import LinearLocator, LogLocator
 import numpy as np
 from torch.utils.data import DataLoader
 
@@ -198,22 +199,24 @@ class Trial:
         fig.savefig(os.path.join(self.logging_dir, 'xor_var_sweep', 'sweep.pdf'), **SAVEFIG_KWARGS)
     
     def create_main_paper_plot(self):
-        fig, axes = plt.subplots(3, 2, figsize=(2*PLOT_WIDTH, 3*PLOT_WIDTH))
+        fig, axes = plt.subplots(2, 3, figsize=(3*0.75*PLOT_WIDTH, 2*0.75*PLOT_WIDTH))
+        axes[0, 0].set_title('SNR', fontsize=18)
+        axes[0, 1].set_title('1-occlusion', fontsize=18)
+        axes[0, 2].set_title(r'\textbf{ALL (Ours)}', fontsize=18)
+        for ax in axes.flatten():
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+        for ax in axes[0, :]:
+            ax.set_xlabel(r'SNR of $X_{\mathrm{1o}}$', fontsize=14)
+        for ax in axes[1, :]:
+            ax.set_xlabel(r'Leaking point count $n$', fontsize=14)
         for ax in axes[:, 0]:
-            ax.set_xlabel('SNR of first-order leaking point')
-            ax.set_xscale('log')
-            ax.set_yscale('log')
-        for ax in axes[:, 1]:
-            ax.set_xlabel('Leaking point count')
-            ax.set_xscale('log')
-            ax.set_yscale('log')
-        axes[0, 0].set_ylabel('Estimated leakage by SNR')
-        axes[0, 1].set_ylabel('Estimated leakage by SNR')
-        axes[1, 0].set_ylabel('Estimated leakage by 1-occlusion')
-        axes[1, 1].set_ylabel('Estimated leakage by 1-occlusion')
-        axes[2, 0].set_ylabel('Estimated leakage by ALL (Ours)')
-        axes[2, 1].set_ylabel('Estimated leakage by ALL (Ours)')
-        axes = axes.T
+            ax.set_ylabel('Estimated leakage', fontsize=14)
+        #for ax in axes.flatten():
+        #    ax.xaxis.set_major_locator(LogLocator(base=2, subs=None, numticks=3))
+        #    ax.yaxis.set_major_locator(LogLocator(base=10.0, subs=None, numticks=3))
+        #    ax.xaxis.set_minor_locator(LogLocator(base=2, subs='auto', numticks=3))
+        #    ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs='auto', numticks=3))
         traces = defaultdict(list)
         xor_vars = [0.5**n for n in range(1, self.trial_count//2+1)][::-1] + [1.0] + [2.0**n for n in range(1, self.trial_count//2+1)]
         for xor_var in xor_vars:
@@ -230,13 +233,13 @@ class Trial:
         traces = {key: np.stack(val) for key, val in traces.items()}
         for key, ax in zip(['snr', 'occlusion', 'leakage_localization'], axes[0, :]):
             trace = traces[key]
-            ax.plot(xor_vars, np.median(trace[:, :, 0], axis=-1), color='red', label='Random', **PLOT_KWARGS)
+            ax.plot(xor_vars, np.median(trace[:, :, 0], axis=-1), color='red', label=r'$X_{\mathrm{rand}}$ (not leaky)', **PLOT_KWARGS)
             ax.fill_between(xor_vars, np.min(trace[:, :, 0], axis=-1), np.max(trace[:, :, 0], axis=-1), color='red', alpha=0.25, **PLOT_KWARGS)
-            ax.plot(xor_vars, np.median(trace[:, :, 1], axis=-1), color='blue', label='1st-order', **PLOT_KWARGS)
+            ax.plot(xor_vars, np.median(trace[:, :, 1], axis=-1), color='blue', label=r'$X_{\mathrm{1o}}$ (leaky)', **PLOT_KWARGS)
             ax.fill_between(xor_vars, np.min(trace[:, :, 1], axis=-1), np.max(trace[:, :, 1], axis=-1), color='blue', alpha=0.25, **PLOT_KWARGS)
-            ax.plot(xor_vars, np.median(trace[:, :, 2], axis=-1), color='green', label='2nd-order (share 1)', **PLOT_KWARGS)
+            ax.plot(xor_vars, np.median(trace[:, :, 2], axis=-1), color='green', label=r'$X_{\mathrm{2o, 1}}$ (leaky)', **PLOT_KWARGS)
             ax.fill_between(xor_vars, np.min(trace[:, :, 2], axis=-1), np.max(trace[:, :, 2], axis=-1), color='green', alpha=0.25, **PLOT_KWARGS)
-            ax.plot(xor_vars, np.median(trace[:, :, 3], axis=-1), color='purple', label='2nd-order (share 2)', **PLOT_KWARGS)
+            ax.plot(xor_vars, np.median(trace[:, :, 3], axis=-1), color='purple', label=r'$X_{\mathrm{2o, 2}}$ (leaky)', **PLOT_KWARGS)
             ax.fill_between(xor_vars, np.min(trace[:, :, 3], axis=-1), np.max(trace[:, :, 3], axis=-1), color='purple', alpha=0.25, **PLOT_KWARGS)
         traces = defaultdict(list)
         counts = [2**x for x in range(14)]
@@ -255,12 +258,12 @@ class Trial:
             trace = traces[key]
             for seed, marker in zip(range(self.seed_count), ['.', 'v', '^', '1', '2']):
                 for idx, (count, assessment) in enumerate(zip(counts, trace)):
-                    ax.plot(count*[count], assessment[seed, 1:], color='blue', marker=marker, linestyle='none', label='leaking' if idx == seed == 0 else None, **PLOT_KWARGS)
+                    ax.plot(count*[count], assessment[seed, 1:], color='blue', marker=marker, linestyle='none', label=r'$X_i,\;i>0$ (leaky)' if idx == seed == 0 else None, **PLOT_KWARGS)
             for seed, marker in zip(range(self.seed_count), ['.', 'v', '^', '1', '2']):
                 for idx, (count, assessment) in enumerate(zip(counts, trace)):
-                    ax.plot([count], [assessment[seed, 0]], color='red', marker=marker, linestyle='none', label='non-leaking' if idx == seed == 0 else None, **PLOT_KWARGS)
-        for ax in axes.flatten():
-            ax.legend()
+                    ax.plot([count], [assessment[seed, 0]], color='red', marker=marker, linestyle='none', label=r'$X_0$ (not leaky)' if idx == seed == 0 else None, **PLOT_KWARGS)
+        #axes[0, 0].legend(ncol=2, loc='lower center', fontsize=8, handletextpad=0.5, labelspacing=0.3)
+        #axes[1, 0].legend(loc='lower center', fontsize=8, handletextpad=0.5, labelspacing=0.3)
         fig.tight_layout()
         fig.savefig(os.path.join(self.logging_dir, 'main_paper_plot.pdf'), **SAVEFIG_KWARGS)
         plt.close(fig)

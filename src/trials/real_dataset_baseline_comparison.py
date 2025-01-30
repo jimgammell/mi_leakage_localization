@@ -6,6 +6,7 @@ from scipy.stats import pearsonr, kendalltau, spearmanr
 from matplotlib import pyplot as plt
 from matplotlib import cm
 from matplotlib.lines import Line2D
+from matplotlib import gridspec
 import torch
 from torch.utils.data import DataLoader
 
@@ -182,7 +183,7 @@ class Trial:
                 else:
                     targets = ['subbytes']
                 mutinfs = defaultdict(list)
-                for seed in [0]: #range(self.seed_count):
+                for seed in range(self.seed_count):
                     for target in targets:
                         name = f'{attack_type}__seed={seed}__window_size={window_size}'
                         assessment = np.load(os.path.join(self.ground_truth_dir, f'{name}.npz'), allow_pickle=True)['assessments'].item()[target]
@@ -592,29 +593,112 @@ class Trial:
                 print(f'\t\tKendall tau: {kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].mean()} +/- {kendalltau_evaluations[leakage_assessment_name][ground_truth_assessment_name].std()}')
         return kendalltau_evaluations
     
+    def create_main_paper_dnn_auc_plots(self):
+        leakage_assessments = self.get_leakage_assessments()['leakage_localization'].reshape(self.seed_count, -1)
+        random_assessments = self.get_leakage_assessments()['random'].reshape(self.seed_count, -1)
+        all_dnn_forward_curves, all_dnn_backward_curves, random_dnn_forward_curves, random_dnn_backward_curves = [], [], [], []
+        for seed in range(self.seed_count):
+            training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.supervised_model_dir, f'seed={(seed+1)%5}', 'best_checkpoint.ckpt'))
+            supervised_dnn = training_module.classifier
+            datamodule = DataModule(self.profiling_dataset, self.attack_dataset, eval_batch_size=len(self.attack_dataset))
+            attack_dataloader = datamodule.test_dataloader()
+            all_dnn_curve = compute_dnn_performance_auc(
+                attack_dataloader,
+                supervised_dnn, leakage_assessments[seed, :], 'cuda', average=False, cluster_count=None
+            )
+            random_dnn_curve = compute_dnn_performance_auc(
+                attack_dataloader,
+                supervised_dnn, random_assessments[seed, :], 'cuda', average=False, cluster_count=None
+            )
+            all_dnn_forward_curves.append(all_dnn_curve['forward_dnn_auc'])
+            all_dnn_backward_curves.append(all_dnn_curve['reverse_dnn_auc'])
+            random_dnn_forward_curves.append(random_dnn_curve['forward_dnn_auc'])
+            random_dnn_backward_curves.append(random_dnn_curve['reverse_dnn_auc'])
+        all_dnn_forward_curves, all_dnn_backward_curves, random_dnn_forward_curves, random_dnn_backward_curves = map(
+            lambda x: np.stack(x), (all_dnn_forward_curves, all_dnn_backward_curves, random_dnn_forward_curves, random_dnn_backward_curves)
+        )
+        fig, axes = plt.subplots(1, 2, figsize=(2*PLOT_WIDTH, PLOT_WIDTH))
+        mask_sizes = np.arange(all_dnn_forward_curves.shape[-1])
+        axes[0].plot(mask_sizes, np.median(all_dnn_backward_curves, axis=0), color='blue')
+        axes[0].fill_between(mask_sizes, np.min(all_dnn_backward_curves, axis=0), np.max(all_dnn_backward_curves, axis=0), color='blue', alpha=0.25)
+        axes[0].plot(mask_sizes, np.median(random_dnn_forward_curves, axis=0), color='red')
+        axes[0].fill_between(mask_sizes, np.min(random_dnn_forward_curves, axis=0), np.max(random_dnn_forward_curves, axis=0), color='red', alpha=0.25)
+        axes[1].plot(mask_sizes, np.median(all_dnn_backward_curves, axis=0), color='blue')
+        axes[1].fill_between(mask_sizes, np.min(all_dnn_backward_curves, axis=0), np.max(all_dnn_backward_curves, axis=0), color='blue', alpha=0.25)
+        axes[1].plot(mask_sizes, np.median(random_dnn_backward_curves, axis=0), color='red')
+        axes[1].fill_between(mask_sizes, np.min(random_dnn_backward_curves, axis=0), np.max(random_dnn_backward_curves, axis=0), color='red', alpha=0.25)
+        axes[0].set_xscale('log')
+        axes[1].set_xscale('log')
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.logging_dir, 'dnn_auc_plots.png'))
+    
     def create_main_paper_leakage_assessment_plots(self):
         leakage_assessments = self.get_leakage_assessments()['leakage_localization'].reshape(self.seed_count, -1)
+        random_assessment = self.get_leakage_assessments()['random'].reshape(self.seed_count, -1)
+        if self.dataset_name == 'ascadv1_fixed':
+            stat_baseline_assessment = self.get_leakage_assessments()['cpa'].reshape(1, -1)
+            nn_attr_baseline_assessment = self.get_leakage_assessments()['occlusion'].reshape(self.seed_count, -1)
+            stat_baseline_name = 'CPA'
+            nn_attr_baseline_name = '1-occlusion'
+        else:
+            stat_baseline_assessment = self.get_leakage_assessments()['sosd'].reshape(1, -1)
+            nn_attr_baseline_assessment = self.get_leakage_assessments()['gradvis'].reshape(self.seed_count, -1)
+            stat_baseline_name = 'SoSD'
+            nn_attr_baseline_name = 'GradVis'
         ground_truth_assessments = self.get_ground_truth_assessments()['template__window_size=5']
-        fig, axes = plt.subplots(2, 1, figsize=(PLOT_WIDTH, 2*PLOT_WIDTH))
+        mean_gta = np.mean(np.stack(list(ground_truth_assessments.values())), axis=0)
+        fig = plt.figure(figsize=(PLOT_WIDTH, 3*PLOT_WIDTH))
+        gs = gridspec.GridSpec(3, 1)
+        axes = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[1, 0])]
+        comp_gs = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[2, 0], wspace=0.3, hspace=0.3)
+        comp_axes = [fig.add_subplot(comp_gs[0, 0]), fig.add_subplot(comp_gs[0, 1]), fig.add_subplot(comp_gs[1, 0]), fig.add_subplot(comp_gs[1, 1])]
         cmap = cm.get_cmap('tab10', len(ground_truth_assessments))
         for key, _ground_truth_assessment in ground_truth_assessments.items():
             name, color = get_sensitive_variable_label_and_color(key, self.dataset_name)
             axes[0].fill_between(range(_ground_truth_assessment.shape[-1]), np.min(_ground_truth_assessment, axis=0), np.max(_ground_truth_assessment, axis=0), color=color, alpha=0.25, **PLOT_KWARGS)
             axes[0].plot(np.median(_ground_truth_assessment, axis=0), color=color, marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
-        axes[1].fill_between(range(leakage_assessments.shape[-1]), np.min(leakage_assessments, axis=0), np.max(leakage_assessments, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
-        axes[1].plot(np.median(leakage_assessments, axis=0), color='blue', marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
-        axes[0].set_yscale('log')
         legend_handles = []
         for key in ground_truth_assessments.keys():
             name, color = get_sensitive_variable_label_and_color(key, self.dataset_name)
             legend_handles.append(Line2D([], [], color=color, label=name, marker='.', linestyle='none'))
-        axes[0].legend(handles=legend_handles, ncol=2)
+        axes[0].legend(handles=legend_handles, loc='upper center', ncol=2, fontsize=8, handletextpad=0.5, labelspacing=0.3, framealpha=0.25)
         axes[0].set_xlabel(r'Timestep $t$')
         axes[0].set_ylabel(r'Estimated leakage of $X_t$')
-        axes[0].set_title('Ground truth-like assessment')
+        axes[0].set_title('Estimated leakage by\n`omniscient\' Gaussian mixture model', pad=5)
+        axes[0].set_yscale('log')
+        
+        axes[1].fill_between(range(leakage_assessments.shape[-1]), np.min(leakage_assessments, axis=0), np.max(leakage_assessments, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
+        axes[1].plot(np.median(leakage_assessments, axis=0), color='blue', marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
         axes[1].set_xlabel(r'Timestep $t$')
         axes[1].set_ylabel(r'Estimated leakage of $X_t$')
         axes[1].set_title('Adversarial leakage localization (ours)')
+        
+        markers = ['o', 'v', '^', 'p', '*']
+        def to_ranks(assessment):
+            if assessment.shape[-1] > mean_gta.shape[-1]:
+                averaged_assessment = torch.tensor(assessment).unfold(0, 5, 1).numpy().mean(axis=-1)
+            else:
+                averaged_assessment = assessment
+            averaged_assessment = np.abs(averaged_assessment)
+            #averaged_assessment -= np.min(averaged_assessment)
+            #averaged_assessment /= np.max(averaged_assessment)
+            return averaged_assessment
+        #print(mean_gta.shape, random_assessment.shape, stat_baseline_assessment.shape, nn_attr_baseline_assessment.shape, leakage_assessments.shape)
+        for seed in range(self.seed_count):
+            comp_axes[0].plot(mean_gta[seed, :], to_ranks(random_assessment[seed, :]), color='red', marker=markers[seed], markersize=1, linestyle='none', label='Random', alpha=0.5)
+            if seed == 0:
+                comp_axes[1].plot(mean_gta[seed, :], to_ranks(stat_baseline_assessment[seed, :]), color='green', marker=markers[seed], markersize=1, linestyle='none', label=stat_baseline_name, alpha=0.5)
+            comp_axes[2].plot(mean_gta[seed, :], to_ranks(nn_attr_baseline_assessment[seed, :]), color='purple', marker=markers[seed], markersize=1, linestyle='none', label=nn_attr_baseline_name, alpha=0.5)
+            comp_axes[3].plot(mean_gta[seed, :], to_ranks(leakage_assessments[seed, :]), color='blue', marker=markers[seed], markersize=1, linestyle='none', label='ALL (Ours)', alpha=0.5)
+        comp_axes[0].set_title('Random')
+        comp_axes[1].set_title(stat_baseline_name)
+        comp_axes[2].set_title(nn_attr_baseline_name)
+        comp_axes[3].set_title('ALL (Ours)')
+        fig.text(0.02, 1/6, r'Estimated leakage of $X_t$', va='center', rotation='vertical', fontsize=10)
+        fig.text(0.55, 0.005, 'Estimated leakage by `omniscient\' GMM', ha='center', fontsize=10)
+        for ax in comp_axes:
+            ax.set_xscale('log')
+            ax.tick_params(axis='y', labelrotation=45)
         fig.tight_layout()
         fig.savefig(os.path.join(self.logging_dir, 'main_paper_leakage_assessments.pdf'), **SAVEFIG_KWARGS)
     
@@ -734,6 +818,7 @@ class Trial:
             self.run_ll_hparam_sweep()
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:
             self.run_leakage_localization()
+        self.create_main_paper_dnn_auc_plots()
         self.eval_leakage_assessments()
         self.plot_leakage_assessments()
         self.create_main_paper_leakage_assessment_plots()

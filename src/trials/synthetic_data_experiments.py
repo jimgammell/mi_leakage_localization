@@ -170,9 +170,10 @@ class Trial:
                 ax.axvline(loc_1o, linestyle='--', color='black')
                 ax.fill_between(np.arange(self.timestep_count), np.min(leakage_assessments, axis=0), np.max(leakage_assessments, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
                 ax.plot(np.arange(self.timestep_count), np.median(leakage_assessments, axis=0), color='blue', marker='.', markersize=5, linestyle='-', linewidth=0.1, **PLOT_KWARGS)
-                ax.set_xlabel(r'Timestep $t$')
-                ax.set_ylabel(r'Estimated leakage of $X_t$')
-                ax.set_title(r'LPF coefficient $\beta='+f'{beta}'+r'$')
+                if full_plot:
+                    ax.set_xlabel(r'Timestep $t$')
+                    ax.set_ylabel(r'Estimated leakage of $X_t$')
+                ax.set_title(r'LPF $\beta$: $'+f'{beta}'+r'$', fontsize=18)
                 ax.set_xlim(0, self.timestep_count-1)
                 ax.set_ylim(0.0, 1.0)
         if full_plot:
@@ -224,9 +225,10 @@ class Trial:
                     pass
                 ax.fill_between(np.arange(self.timestep_count), np.min(leakage_assessments, axis=0), np.max(leakage_assessments, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
                 ax.plot(np.arange(self.timestep_count), np.median(leakage_assessments, axis=0), color='blue', marker='.', markersize=5, linestyle='-', linewidth=0.1, **PLOT_KWARGS)
-                ax.set_xlabel(r'Timestep $t$')
-                ax.set_ylabel(r'Estimated leakage of $X_t$')
-                ax.set_title(f'Leaky point count: {leaky_pt_count}')
+                if full_plot:
+                    ax.set_xlabel(r'Timestep $t$')
+                    ax.set_ylabel(r'Estimated leakage of $X_t$')
+                ax.set_title(f'Leaky pt. cnt.: {leaky_pt_count}', fontsize=18)
                 ax.set_xlim(0, self.timestep_count-1)
                 ax.set_ylim(0.0, 1.0)
         if full_plot:
@@ -270,9 +272,10 @@ class Trial:
                     pass
                 ax.fill_between(np.arange(self.timestep_count), np.min(leakage_assessments, axis=0), np.max(leakage_assessments, axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
                 ax.plot(np.arange(self.timestep_count), np.median(leakage_assessments, axis=0), color='blue', marker='.', markersize=5, linestyle='-', linewidth=0.1, **PLOT_KWARGS)
-                ax.set_xlabel(r'Timestep $t$')
-                ax.set_ylabel(r'Estimated leakage of $X_t$')
-                ax.set_title(f'Max no-op count: {no_op_count}')
+                if full_plot:
+                    ax.set_xlabel(r'Timestep $t$')
+                    ax.set_ylabel(r'Estimated leakage of $X_t$')
+                ax.set_title(f'Max no-op cnt.: {no_op_count}', fontsize=18)
                 ax.set_xlim(0, self.timestep_count-1)
                 ax.set_ylim(0.0, 1.0)
         if full_plot:
@@ -319,7 +322,7 @@ class Trial:
                 if full_plot:
                     ax.set_xlabel(r'Timestep $t$')
                     ax.set_ylabel(r'Estimated leakage of $X_t$')
-                ax.set_title(f'Shuffle location count: {shuffle_loc_count}')
+                ax.set_title(f'Shuffle loc. cnt.: {shuffle_loc_count}', fontsize=18)
                 ax.set_xlim(0, self.timestep_count-1)
                 ax.set_ylim(0.0, 1.0)
         if full_plot:
@@ -327,17 +330,22 @@ class Trial:
             fig.savefig(os.path.join(exp_dir, 'shuffle_loc_count_sweep.pdf'), **SAVEFIG_KWARGS)
     
     def plot_main_paper_sweeps(self):
-        #subsample = np.linspace(0, self.trial_count-1, 4).astype(int)
-        subsample = np.arange(self.trial_count)
-        fig, axes = plt.subplots(4, len(subsample), figsize=(0.5*len(subsample)*PLOT_WIDTH, 0.5*4*PLOT_WIDTH), sharex=True, sharey=True)
+        subsample = np.linspace(0, self.trial_count-1, 4).astype(int)
+        #subsample = np.arange(self.trial_count)
+        fig, axes = plt.subplots(4, len(subsample), figsize=(0.75*len(subsample)*PLOT_WIDTH, 0.75*4*PLOT_WIDTH))
         self.plot_1o_beta_sweep(axes[0, :], subsample)
         self.plot_1o_leaky_pt_count_sweep(axes[1, :], subsample)
         self.plot_1o_no_op_count_sweep(axes[2, :], subsample)
         self.plot_1o_shuffle_loc_sweep(axes[3, :], subsample)
         for ax in axes[:, 0]:
-            ax.set_ylabel(r'Estimated leakage of $X_t$')
+            ax.set_ylabel(r'Estimated leakage of $X_t$', fontsize=14)
         for ax in axes[-1, :]:
-            ax.set_xlabel(r'Timestep $t$')
+            ax.set_xlabel(r'Timestep $t$', fontsize=14)
+        for ax in axes.flatten():
+            ax.set_xlim(0, self.timestep_count-1)
+            ax.set_ylim(-0.05, 1.05)
+            ax.set_yticks([0.0, 1.0])
+            ax.set_yticklabels(['0.', '1.'])
         fig.tight_layout()
         fig.savefig(os.path.join(self.logging_dir, 'main_paper_sweep.pdf'), **SAVEFIG_KWARGS)
     
@@ -352,12 +360,12 @@ class Trial:
         )
     
     def __call__(self):
-        self.run_1o_beta_sweep()
+        r"""self.run_1o_beta_sweep()
         self.plot_1o_beta_sweep()
         self.run_1o_leaky_pt_count_sweep()
         self.plot_1o_leaky_pt_count_sweep()
         self.run_1o_no_op_count_sweep()
         self.plot_1o_no_op_count_sweep()
         self.run_1o_shuffle_loc_sweep()
-        self.plot_1o_shuffle_loc_sweep()
+        self.plot_1o_shuffle_loc_sweep()"""
         self.plot_main_paper_sweeps()
