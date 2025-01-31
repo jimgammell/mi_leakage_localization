@@ -360,12 +360,12 @@ class Trial:
         )
     
     def __call__(self):
-        r"""self.run_1o_beta_sweep()
+        self.run_1o_beta_sweep()
         self.plot_1o_beta_sweep()
         self.run_1o_leaky_pt_count_sweep()
         self.plot_1o_leaky_pt_count_sweep()
         self.run_1o_no_op_count_sweep()
         self.plot_1o_no_op_count_sweep()
         self.run_1o_shuffle_loc_sweep()
-        self.plot_1o_shuffle_loc_sweep()"""
+        self.plot_1o_shuffle_loc_sweep()
         self.plot_main_paper_sweeps()
