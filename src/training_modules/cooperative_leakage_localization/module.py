@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from dataclasses import dataclass
 import numpy as np
 import torch
 from torch import nn, optim
@@ -30,9 +31,9 @@ class Module(L.LightningModule):
     def __init__(self,
         classifiers_name: str,
         classifiers_kwargs: dict = {},
-        theta_lr_scheduler_name: str = None,
+        theta_lr_scheduler_name: Optional[str] = None,
         theta_lr_scheduler_kwargs: dict = {},
-        etat_lr_scheduler_name: str = None,
+        etat_lr_scheduler_name: Optional[str] = None,
         etat_lr_scheduler_kwargs: dict = {},
         theta_lr: float = 1e-3,
         theta_beta_1: float = 0.9,

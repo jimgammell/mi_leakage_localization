@@ -60,10 +60,12 @@ class DataModule(L.LightningDataModule):
     
     def val_dataloader(self, override_batch_size=None):
         return DataLoader(
-            self.val_dataset, shuffle=False, batch_size=self.eval_batch_size if override_batch_size is None else override_batch_size, **self.dataloader_kwargs
+            self.val_dataset, shuffle=False, batch_size=self.eval_batch_size if override_batch_size is None else override_batch_size,
+            **self.dataloader_kwargs
         )
     
     def test_dataloader(self, override_batch_size=None):
         return DataLoader(
-            self.attack_dataset, shuffle=False, batch_size=self.eval_batch_size if override_batch_size is None else override_batch_size, **self.dataloader_kwargs
+            self.attack_dataset, shuffle=False, batch_size=len(self.attack_dataset), #self.eval_batch_size if override_batch_size is None else override_batch_size,
+            **self.dataloader_kwargs
         )

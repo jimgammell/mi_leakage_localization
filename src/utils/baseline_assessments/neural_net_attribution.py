@@ -4,11 +4,13 @@ from copy import copy
 import numpy as np
 import torch
 from torch import nn
-from captum.attr import InputXGradient, FeatureAblation, Saliency, LRP
+from torch.utils.data import DataLoader
+from captum.attr import InputXGradient, FeatureAblation, Saliency, LRP, Occlusion
 
 from utils.chunk_iterator import chunk_iterator
 from training_modules.supervised_deep_sca import SupervisedModule
 from models.zaid_wouters_nets import pretrained_models
+from .second_order_occlusion import SecondOrderOcclusion
 
 class ReshapeOutput(nn.Module):
     def __init__(self, model):
@@ -22,7 +24,7 @@ class ReshapeOutput(nn.Module):
 
 class NeuralNetAttribution:
     def __init__(self, dataloader, model: Union[nn.Module, str, os.PathLike], seed: Optional[int] = None, device: Optional[str] = None):
-        self.dataloader = dataloader
+        self.dataloader = DataLoader(dataloader.dataset, batch_size=len(dataloader.dataset), num_workers=dataloader.num_workers) #dataloader
         if isinstance(model, (str, os.PathLike)):
             if 'ZaidNet' in model or 'Wouters' in model:
                 model_class = getattr(pretrained_models, model)
@@ -82,6 +84,20 @@ class NeuralNetAttribution:
         ablator = FeatureAblation(self.model)
         def attr_fn(trace, target):
             return ablator.attribute(trace, target=target.to(torch.long), perturbations_per_eval=10).abs().mean(axis=0).cpu()
+        return self.accumulate_attributions(attr_fn)
+    
+    @torch.no_grad()
+    def compute_n_occlusion(self, n):
+        occludor = Occlusion(self.model)
+        def attr_fn(trace, target):
+            return occludor.attribute(trace, sliding_window_shapes=(1, n), strides=(1,), target=target.to(torch.long), perturbations_per_eval=10).abs().mean(axis=0).cpu()
+        return self.accumulate_attributions(attr_fn)
+    
+    @torch.no_grad()
+    def compute_second_order_occlusion(self):
+        occludor = SecondOrderOcclusion(self.model, perturbations_per_eval=10)
+        def attr_fn(trace, target):
+            return occludor.attribute(trace, target.to(torch.long))
         return self.accumulate_attributions(attr_fn)
     
     def compute_inputxgrad(self):

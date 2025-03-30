@@ -42,7 +42,7 @@ class DataModule(L.LightningDataModule):
         self.val_prop = val_prop
         self.train_batch_size = train_batch_size
         self.aug_train_batch_size = aug_train_batch_size
-        self.eval_batch_size = eval_batch_size
+        self.eval_batch_size = len(attack_dataset) #eval_batch_size
         self.adversarial_mode = adversarial_mode
         self.data_mean = data_mean
         self.data_var = data_var
