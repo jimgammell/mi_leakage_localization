@@ -107,6 +107,7 @@ class OccPOI:
         print(f'Running OccPOI. Lambda value: {self.lbda}.')
         all_timesteps = set(range(self.trace_shape[-1]))
         occpois = set(self.run_kgo_procedure())
+        nonextended_pois = copy(occpois)
         print(f'Pre-start: occpois={occpois}')
         while (len(all_timesteps - occpois) > 0) and (self.compute_guessing_entropy(list(occpois)) < self.lbda):
             queue = list(all_timesteps - occpois)
@@ -115,10 +116,21 @@ class OccPOI:
                 break
             occpois = occpois.union(new_occpois)
             print(f'New sub-trial finished. Current occpois: {occpois}')
-        return list(occpois)
+        return list(occpois), list(nonextended_pois)
     
     def __call__(self):
-        occpois = self.run_extended_kgo_procedure()
+        occpois, nonextended_pois = self.run_extended_kgo_procedure()
+        ranked_occpois = []
+        base_ge = self.compute_guessing_entropy([])
+        for x in occpois:
+            occluded_ge = self.compute_guessing_entropy(list((set(range(self.trace_shape[-1])) - set(occpois)) + set([x])))
+            ranked_occpois.append(occluded_ge - base_ge)
+        ranked_nonextended_pois = []
+        for x in nonextended_pois:
+            occluded_ge = self.compute_guessing_entropy(list((set(range(self.trace_shape[-1])) - set(nonextended_pois)) + set([x])))
+            ranked_nonextended_pois.append(occluded_ge - base_ge)
         leakage_assessment = np.zeros(self.trace_shape, dtype=np.float32).squeeze()
-        leakage_assessment[..., occpois] = 1
-        return leakage_assessment
+        leakage_assessment[..., occpois] = ranked_occpois
+        nonextended_leakage_assessment = np.zeros(self.trace_shape, dtype=np.float32).squeeze()
+        nonextended_leakage_assessment[..., nonextended_pois] = ranked_nonextended_pois
+        return leakage_assessment, nonextended_leakage_assessment

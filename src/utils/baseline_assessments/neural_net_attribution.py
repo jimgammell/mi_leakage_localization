@@ -1,5 +1,6 @@
 from typing import *
 import os
+from collections import defaultdict
 from copy import copy
 import numpy as np
 import torch
@@ -43,16 +44,46 @@ class NeuralNetAttribution:
         self.trace_shape = self.base_model.input_shape
         self.model = ReshapeOutput(self.base_model)
     
-    def accumulate_attributions(self, attr_fn: Callable):
-        attribution_map = torch.zeros(*self.trace_shape)
+    def accumulate_attributions(self, attr_fn: Callable, timing=False):
+        if not timing:
+            attribution_map = torch.zeros(*self.trace_shape)
         count = 0
         for trace, target in self.dataloader:
             batch_size = trace.size(0)
             trace, target = trace.to(self.device), target.to(self.device)
-            batch_attribution_map = attr_fn(trace, target)
-            attribution_map = (count/(count+batch_size))*attribution_map + (batch_size/(count+batch_size))*batch_attribution_map
+            if not timing:
+                batch_attribution_map = attr_fn(trace, target)
+                attribution_map = (count/(count+batch_size))*attribution_map + (batch_size/(count+batch_size))*batch_attribution_map
+            else:
+                prop = attr_fn(trace, target)
             count += batch_size
-        return attribution_map.numpy()
+        return attribution_map.numpy() if not timing else prop
+    
+    def measure_occl2o_runtime(self):
+        pass
+    
+    def time_things(self):
+        results = defaultdict(list)
+        for name, fn in zip(
+            ['occl2o'], #, 'gradvis', 'saliency', 'lrp', 'occlusion', 'inputxgrad'],
+            [None]# , self.compute_gradvis, self.compute_saliency, self.compute_lrp, self.compute_occlusion, self.compute_inputxgrad]
+        ):
+            for seed in range(5):
+                if name == 'occl2o':
+                    x, y = next(iter(self.dataloader))
+                    x, y = x.to(self.device), y.to(self.device)
+                    occludor = SecondOrderOcclusion(self.model, perturbations_per_eval=10)
+                    results[name].append(occludor.estimate_runtime(x, y))
+                else:
+                    start_event = torch.cuda.Event(enable_timing=True)
+                    end_event = torch.cuda.Event(enable_timing=True)
+                    start_event.record()
+                    _ = fn()
+                    end_event.record()
+                    torch.cuda.synchronize()
+                    elapsed_time_min = 1e-3*start_event.elapsed_time(end_event)/60
+                    results[name].append(elapsed_time_min)
+        return {key: np.stack(val) for key, val in results.items()}
     
     def compute_gradvis(self):
         def attr_fn(trace, target):
@@ -94,11 +125,11 @@ class NeuralNetAttribution:
         return self.accumulate_attributions(attr_fn)
     
     @torch.no_grad()
-    def compute_second_order_occlusion(self):
+    def compute_second_order_occlusion(self, timing=False):
         occludor = SecondOrderOcclusion(self.model, perturbations_per_eval=10)
         def attr_fn(trace, target):
             return occludor.attribute(trace, target.to(torch.long))
-        return self.accumulate_attributions(attr_fn)
+        return self.accumulate_attributions(attr_fn, timing=timing)
     
     def compute_inputxgrad(self):
         input_x_grad = InputXGradient(self.model)

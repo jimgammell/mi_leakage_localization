@@ -16,16 +16,18 @@ class TimingCallback(lightning.Callback):
         self.start_batch = start_batch
         self.end_batch = end_batch
         self.batch_times = []
+        self.batches_seen = 0 # batch_idx doesn't work -- resets every pass through dataloader. And global_idx is incremented every optimizer.step call.
     
     def on_train_batch_start(self, trainer, module, batch, batch_idx):
-        if self.start_batch <= batch_idx < self.end_batch:
+        if self.start_batch <= self.batches_seen < self.end_batch:
             self.start_event = torch.cuda.Event(enable_timing=True)
             self.end_event = torch.cuda.Event(enable_timing=True)
             self.start_event.record()
     
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        if self.start_batch <= batch_idx < self.end_batch:
+        if self.start_batch <= self.batches_seen < self.end_batch:
             self.end_event.record()
             torch.cuda.synchronize()
             elapsed_time_ms = self.start_event.elapsed_time(self.end_event)
             self.batch_times.append(elapsed_time_ms)
+        self.batches_seen += 1

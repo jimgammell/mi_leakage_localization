@@ -31,10 +31,11 @@ class Trainer:
             **self.default_data_module_kwargs
         )
     
-    def time_run(self, max_steps: int = 1000, test_steps: int = 10):
+    def time_run(self, test_steps: int = 10):
         training_module = Module(
             timesteps_per_trace=self.profiling_dataset.timesteps_per_trace,
-            class_count=self.profiling_dataset.class_count
+            class_count=self.profiling_dataset.class_count,
+            **self.default_training_module_kwargs
         )
         timing_callback = TimingCallback(test_steps, 2*test_steps)
         trainer = LightningTrainer(
@@ -47,8 +48,9 @@ class Trainer:
             enable_progress_bar=False,
             enable_model_summary=False
         )
-        trainer.fit(training_module, datamodule=self.datamodule)
+        trainer.fit(training_module, datamodule=self.data_module)
         batch_times = np.array(timing_callback.batch_times)
+        print(f'Global steps after {timing_callback.batches_seen} minibatches: {trainer.global_step}')
         return batch_times
 
     def run(self,

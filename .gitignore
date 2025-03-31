@@ -171,3 +171,4 @@ outputs_v
 good_experiments
 outputs.zip
 *.zip
+lightning_logs

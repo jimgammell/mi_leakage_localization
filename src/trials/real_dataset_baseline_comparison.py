@@ -501,6 +501,45 @@ class Trial:
             else:
                 print('Found pretrained supervised model.')
     
+    def run_timing_trials(self):
+        if os.path.exists(os.path.join(self.logging_dir, 'timing_info.npz')):
+            timing_info = np.load(os.path.join(self.logging_dir, 'timing_info.npz'), allow_pickle=True)
+        else:
+            timing_info = {}
+            
+            data_module = DataModule(self.profiling_dataset, self.attack_dataset, val_prop=0.0)
+            profiling_dataloader = data_module.train_dataloader()
+            model_dir = os.path.join(self.supervised_model_dir, f'seed={0}')
+            nn_attributor = NeuralNetAttribution(profiling_dataloader, model_dir, seed=0)
+            nn_attr_timing = nn_attributor.time_things()
+            timing_info.update(nn_attr_timing)
+
+            supervised_trainer = SupervisedTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=self.trial_config['supervised_training_kwargs'])
+            supervised_runtime = np.stack([
+                supervised_trainer.time_run(test_steps=100)
+                for _ in range(5)
+            ])
+            sup_per_trial_runtime = supervised_runtime.sum(axis=1)*self.trial_config['max_classifiers_pretrain_steps']/100
+            timing_info['supervised_training'] = 1e-3*sup_per_trial_runtime/60 # min
+
+            kwargs = self.trial_config['default_kwargs']
+            kwargs.update(self.trial_config['leakage_localization_kwargs'])
+            ll_trainer = LeakageLocalizationTrainer(self.profiling_dataset, self.attack_dataset, default_training_module_kwargs=kwargs)
+            ll_runtime = np.stack([
+                ll_trainer.time_run(test_steps=100)
+                for _ in range(5)
+            ])
+            all_per_trial_runtime = ll_runtime.sum(axis=1)*(
+                self.trial_config['max_leakage_localization_steps']
+                + (self.trial_config['max_classifiers_pretrain_steps'] if self.dataset_name in ['ascadv1_fixed', 'ascadv1_variable', 'aes_hd'] else 0)
+            )/100
+            timing_info['all'] = 1e-3*all_per_trial_runtime/60
+
+            np.savez(os.path.join(self.logging_dir, 'timing_info.npz'), **timing_info)
+        print('Timing info:')
+        for key, val in timing_info.items():
+            print(f'{key}: {val.mean()} +/- {val.std()} minutes')
+    
     def plot_supervised_training_curves(self):
         fig, axes = plt.subplots(1, 2, figsize=(2*PLOT_WIDTH, 1*PLOT_WIDTH))
         colormap = plt.cm.get_cmap('tab10', self.seed_count)
@@ -657,21 +696,21 @@ class Trial:
             else:
                 inputxgrad = np.load(os.path.join(subdir, to_name('inputxgrad.npy')))
                 print('Found precomputed inputxgrad.')
-            r"""if not os.path.exists(os.path.join(subdir, to_name('second_order_occl.npy'))):
+            if not os.path.exists(os.path.join(subdir, to_name('second_order_occl.npy'))):
                 print('Computing second-order occlusion...')
                 occl2o = nn_attributor.compute_second_order_occlusion().reshape(-1)
                 np.save(os.path.join(subdir, to_name('second_order_occl.npy')), occl2o)
                 print('\tDone.')
             else:
                 occl2o = np.load(os.path.join(subdir, to_name('second_order_occl.npy')))
-                print('Found precomputed second-order occlusion.')"""
-            r"""if not os.path.exists(os.path.join(subdir, to_name('occpoi.npy'))):
+                print('Found precomputed second-order occlusion.')
+            if not os.path.exists(os.path.join(subdir, to_name('occpoi.npy'))):
                 print('Computing OccPOI...')
                 occpoi = OccPOI(attack_dataloader=attack_dataloader, model=model_dir, seed=seed, dataset_name=self.dataset_name)()
                 np.save(os.path.join(subdir, to_name('occpoi.npy')), occpoi)
             else:
                 occpoi = np.load(os.path.join(subdir, to_name('occpoi.npy')))
-                print('Found precomputed OccPOI.')"""
+                print('Found precomputed OccPOI.')
             for occl_n in OCCL_VALS:
                 if not os.path.exists(os.path.join(subdir, to_name(f'{occl_n}_occl.npy'))):
                     print(f'Computing {occl_n}-occlusion...')
@@ -687,8 +726,8 @@ class Trial:
             plot_leakage_assessment(saliency, os.path.join(subdir, to_name('saliency.png')))
             #plot_leakage_assessment(occlusion, os.path.join(subdir, to_name('occlusion.png')))
             plot_leakage_assessment(inputxgrad, os.path.join(subdir, to_name('inputxgrad.png')))
-            #plot_leakage_assessment(occl2o, os.path.join(subdir, to_name('second_order_occl.png')))
-            #plot_leakage_assessment(occpoi, os.path.join(subdir, to_name('occpoi.png')))
+            plot_leakage_assessment(occl2o, os.path.join(subdir, to_name('second_order_occl.png')))
+            plot_leakage_assessment(occpoi, os.path.join(subdir, to_name('occpoi.png')))
             if wouters_zaid_model is None:
                 plot_leakage_assessment(lrp, os.path.join(subdir, to_name('lrp.png')))
                 lrps.append(lrp)
@@ -696,11 +735,11 @@ class Trial:
             saliencies.append(saliency)
             #occlusions.append(occlusion)
             inputxgrads.append(inputxgrad)
-            #occpois.append(occpoi)
+            occpois.append(occpoi)
         setattr(self, to_name('nn_attr_assessments'), {
             to_name('gradvis'): np.stack(gradviss), to_name('saliency'): np.stack(saliencies), to_name('inputxgrad'): np.stack(inputxgrads),
-            #to_name('second_order_occlusion'): np.stack(occl2o),
-            #to_name('occlusion'): np.stack(occlusions), #to_name('occpoi'): np.stack(occpois),
+            to_name('second_order_occlusion'): np.stack(occl2o),
+            #to_name('occlusion'): np.stack(occlusions), to_name('occpoi'): np.stack(occpois),
             **({to_name('lrp'): np.stack(lrps)} if wouters_zaid_model is None else {})
         })
         val = getattr(self, to_name('nn_attr_assessments'))
@@ -967,6 +1006,7 @@ class Trial:
         plt.close(fig)
     
     def __call__(self):
+        self.run_timing_trials()
         self.compute_random_assessment()
         if 'ascad' in self.dataset_name:
             self.compute_ascad_first_order_stats()
