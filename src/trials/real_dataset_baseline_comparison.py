@@ -10,6 +10,7 @@ from matplotlib.lines import Line2D
 from matplotlib import gridspec
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from common import *
 from .utils import *
@@ -197,7 +198,7 @@ class Trial:
         else: # these are unprotected so leakage is dominated by the SubBytes variable itself
             targets = ['label']
         if not os.path.exists(os.path.join(self.ground_truth_dir, 'assessments.npz')):
-            snr = FirstOrderStatistics(self.profiling_dataset, targets).snr_vals
+            snr = FirstOrderStatistics(self.attack_dataset, targets).snr_vals
             np.savez(os.path.join(self.ground_truth_dir, 'assessments.npz'), **snr)
         else:
             snr = np.load(os.path.join(self.ground_truth_dir, 'assessments.npz'), allow_pickle=True)
@@ -642,12 +643,50 @@ class Trial:
         fig.savefig(os.path.join(self.supervised_model_dir, 'paper_rank_over_time.pdf'), **SAVEFIG_KWARGS)
         plt.close(fig)
         
+    def occlusion_window_sweep(self):
+        window_sizes = np.arange(1, 51, 2)
+        if not os.path.exists(os.path.join(self.nn_attr_dir, 'occl_window_sweep.npy')):
+            print('Running occlusion window size sweep')
+            data_module = DataModule(self.profiling_dataset, self.attack_dataset, val_prop=0.0)
+            profiling_dataloader = data_module.train_dataloader()
+            results = np.full((len(window_sizes), self.seed_count, self.profiling_dataset.data_shape[-1]), np.nan, dtype=np.float32)
+            progress_bar = tqdm(total=self.seed_count*len(window_sizes))
+            for seed in range(self.seed_count):
+                model_dir = os.path.join(self.supervised_model_dir, f'seed={seed}')
+                nn_attributor = NeuralNetAttribution(profiling_dataloader, model_dir, seed=seed)
+                for window_idx, window_size in enumerate(window_sizes):
+                    leakage_assessment = nn_attributor.compute_n_occlusion(window_size)
+                    results[window_idx, seed, :] = leakage_assessment
+                    progress_bar.update(1)
+            assert np.all(np.isfinite(results))
+            np.save(os.path.join(self.nn_attr_dir, 'occl_window_sweep.npy'), results)
+        else:
+            print('Found precomputed occlusion window size sweep')
+            results = np.load(os.path.join(self.nn_attr_dir, 'occl_window_sweep.npy'))
+        ground_truth_assessments = self.get_ground_truth_assessments()
+        ground_truth_assessment = np.stack(list(ground_truth_assessments.values())).mean(axis=0)
+        spearmanr_evaluations = np.full(results.shape[:-1], np.nan, dtype=np.float32)
+        for window_idx in range(results.shape[0]):
+            for seed_idx in range(results.shape[1]):
+                corr = spearmanr(results[window_idx, seed_idx, :].squeeze(), ground_truth_assessment.squeeze()).statistic
+                spearmanr_evaluations[window_idx, seed_idx] = corr
+        assert np.all(np.isfinite(spearmanr_evaluations))
+        fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
+        ax.fill_between(window_sizes, spearmanr_evaluations.min(axis=1), spearmanr_evaluations.max(axis=1), color='blue', alpha=0.25, **PLOT_KWARGS)
+        ax.plot(window_sizes, np.median(spearmanr_evaluations, axis=1), color='blue', marker='.', linestyle='none', markersize=1, **PLOT_KWARGS)
+        ax.set_xlabel(r'Window size: $m$')
+        ax.set_ylabel(r'oSNR for $m$-occlusion')
+        ax.set_yscale('log')
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.logging_dir, 'occl_window_size_performance_sweep.pdf'), **SAVEFIG_KWARGS)
+        assert False
+
     def compute_neural_net_attributions(self, wouters_zaid_model=None):
         data_module = DataModule(self.profiling_dataset, self.attack_dataset, val_prop=0.0)
         profiling_dataloader = data_module.train_dataloader()
         attack_dataloader = data_module.test_dataloader()
         to_name = lambda x: x if wouters_zaid_model is None else f'zaid_{x}' if 'Zaid' in wouters_zaid_model else f'wouters_{x}' if 'Wouters' in wouters_zaid_model else None
-        gradviss, saliencies, occlusions, inputxgrads, lrps, occpois = [], [], [], [], [], []
+        gradviss, saliencies, inputxgrads, lrps, occpois, occl2os, ext_occpois = [], [], [], [], [], [], []
         for occl_n in OCCL_VALS:
             setattr(self, to_name(f'occl_{occl_n}'), [])
         for seed in range(self.seed_count):
@@ -680,14 +719,6 @@ class Trial:
             else:
                 saliency = np.load(os.path.join(subdir, to_name('saliency.npy')))
                 print('Found precomputed saliency.')
-            #if not os.path.exists(os.path.join(subdir, to_name('occlusion.npy'))):
-            #    print('Computing occlusion...')
-            #    occlusion = nn_attributor.compute_occlusion().reshape(-1)
-            #    np.save(os.path.join(subdir, to_name('occlusion.npy')), occlusion)
-            #    print('\tDone.')
-            #else:
-            #    occlusion = np.load(os.path.join(subdir, to_name('occlusion.npy')))
-            #    print('Found precomputed occlusion.')
             if not os.path.exists(os.path.join(subdir, to_name('inputxgrad.npy'))):
                 print('Computing inputxgrad...')
                 inputxgrad = nn_attributor.compute_inputxgrad().reshape(-1)
@@ -711,6 +742,12 @@ class Trial:
             else:
                 occpoi = np.load(os.path.join(subdir, to_name('occpoi.npy')))
                 print('Found precomputed OccPOI.')
+            if not os.path.exists(os.path.join(subdir, to_name('extended_occpoi.npy'))):
+                print('Computing extended OccPOI...')
+                ext_occpoi = OccPOI(attack_dataloader=attack_dataloader, model=model_dir, seed=seed, dataset_name=self.dataset_name)(extended=True)
+                np.save(os.path.join(subdir, to_name('extended_occpoi.npy')), ext_occpoi)
+            else:
+                ext_occpoi = np.load(os.path.join(subdir, to_name('extended_occpoi.npy')))
             for occl_n in OCCL_VALS:
                 if not os.path.exists(os.path.join(subdir, to_name(f'{occl_n}_occl.npy'))):
                     print(f'Computing {occl_n}-occlusion...')
@@ -724,24 +761,31 @@ class Trial:
                 vals.append(n_occl)
             plot_leakage_assessment(gradvis, os.path.join(subdir, to_name('gradvis.png')))
             plot_leakage_assessment(saliency, os.path.join(subdir, to_name('saliency.png')))
-            #plot_leakage_assessment(occlusion, os.path.join(subdir, to_name('occlusion.png')))
             plot_leakage_assessment(inputxgrad, os.path.join(subdir, to_name('inputxgrad.png')))
             plot_leakage_assessment(occl2o, os.path.join(subdir, to_name('second_order_occl.png')))
             plot_leakage_assessment(occpoi, os.path.join(subdir, to_name('occpoi.png')))
+            plot_leakage_assessment(ext_occpoi, os.path.join(subdir, to_name('ext_occpoi.png')))
             if wouters_zaid_model is None:
                 plot_leakage_assessment(lrp, os.path.join(subdir, to_name('lrp.png')))
                 lrps.append(lrp)
             gradviss.append(gradvis)
             saliencies.append(saliency)
-            #occlusions.append(occlusion)
             inputxgrads.append(inputxgrad)
+            occl2os.append(occl2o)
             occpois.append(occpoi)
+            ext_occpois.append(ext_occpoi)
         setattr(self, to_name('nn_attr_assessments'), {
             to_name('gradvis'): np.stack(gradviss), to_name('saliency'): np.stack(saliencies), to_name('inputxgrad'): np.stack(inputxgrads),
-            to_name('second_order_occlusion'): np.stack(occl2o),
-            #to_name('occlusion'): np.stack(occlusions), to_name('occpoi'): np.stack(occpois),
+            to_name('second_order_occlusion'): np.stack(occl2os),
+            to_name('occpoi'): np.stack(occpois),
+            to_name('ext_occpoi'): np.stack(ext_occpois),
             **({to_name('lrp'): np.stack(lrps)} if wouters_zaid_model is None else {})
         })
+        if os.path.exists(os.path.join(self.logging_dir, 'occpoi_reported_result.npy')):
+            occpoi_indices = np.load(os.path.join(self.logging_dir, 'occpoi_reported_result.npy'))
+            leakage_assessment = np.zeros(self.profiling_dataset.data_shape, dtype=np.float32).squeeze()
+            leakage_assessment[..., occpoi_indices] = 1
+            self.nn_attr_assessments['occpoi_reported'] = leakage_assessment
         val = getattr(self, to_name('nn_attr_assessments'))
         for occl_n in OCCL_VALS:
             _val = getattr(self, to_name(f'occl_{occl_n}'))
@@ -824,7 +868,7 @@ class Trial:
             fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
             forward_random_baseline = forward_results['random'].reshape(self.seed_count, -1)
             forward_stat_baseline = forward_results['sosd'].reshape(self.seed_count, -1)
-            forward_nn_baseline = forward_results['gradvis'].reshape(self.seed_count, -1)
+            forward_nn_baseline = forward_results['occl_5'].reshape(self.seed_count, -1)
             forward_ll = forward_results['leakage_localization'].reshape(self.seed_count, -1)
             xx = np.arange(forward_random_baseline.shape[-1])
             ax.fill_between(xx, forward_random_baseline.min(axis=0), forward_random_baseline.max(axis=0), color='red', alpha=0.25, **PLOT_KWARGS)
@@ -835,18 +879,19 @@ class Trial:
             ax.plot(xx, np.median(forward_stat_baseline, axis=0), color='green', marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
             ax.plot(xx, np.median(forward_nn_baseline, axis=0), color='purple', marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
             ax.plot(xx, np.median(forward_ll, axis=0), color='blue', marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
-            ax.set_xlabel('Number of un-occluded features')
+            ax.set_xlabel(r'Number of \textit{un-occluded} features')
             ax.set_ylabel('Mean rank on test dataset')
             ax.set_title('Forward DNN occlusion test')
             ax.set_xscale('symlog', linthresh=10)
             fig.tight_layout()
             fig.savefig(os.path.join(self.logging_dir, 'main_paper_forward_dnn_occlusion.png'), **SAVEFIG_KWARGS)
+            fig.savefig(os.path.join(self.logging_dir, 'main_paper_forward_dnn_occlusion.pdf'), **SAVEFIG_KWARGS)
             plt.close(fig)
             
             fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
             reverse_random_baseline = reverse_results['random'].reshape(self.seed_count, -1)[:, ::-1]
             reverse_stat_baseline = reverse_results['sosd'].reshape(self.seed_count, -1)[:, ::-1]
-            reverse_nn_baseline = reverse_results['gradvis'].reshape(self.seed_count, -1)[:, ::-1]
+            reverse_nn_baseline = reverse_results['occl_5'].reshape(self.seed_count, -1)[:, ::-1]
             reverse_ll = reverse_results['leakage_localization'].reshape(self.seed_count, -1)[:, ::-1]
             xx = np.arange(reverse_random_baseline.shape[-1])
             ax.fill_between(xx, reverse_random_baseline.min(axis=0), reverse_random_baseline.max(axis=0), color='red', alpha=0.25, **PLOT_KWARGS)
@@ -857,12 +902,13 @@ class Trial:
             ax.plot(xx, np.median(reverse_stat_baseline, axis=0), color='green', marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
             ax.plot(xx, np.median(reverse_nn_baseline, axis=0), color='purple', marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
             ax.plot(xx, np.median(reverse_ll, axis=0), color='blue', marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
-            ax.set_xlabel('Number of un-occluded features')
+            ax.set_xlabel(r'Number of \textit{occluded} features')
             ax.set_ylabel('Mean rank on test dataset')
             ax.set_title('Reverse DNN occlusion test')
             ax.set_xscale('symlog', linthresh=10)
             fig.tight_layout()
             fig.savefig(os.path.join(self.logging_dir, 'main_paper_reverse_dnn_occlusion.png'), **SAVEFIG_KWARGS)
+            fig.savefig(os.path.join(self.logging_dir, 'main_paper_reverse_dnn_occlusion.pdf'), **SAVEFIG_KWARGS)
             plt.close(fig)
 
 
@@ -901,9 +947,9 @@ class Trial:
         if self.dataset_name != 'ascadv1_variable':
             return
         stat_baseline_assessment = self.get_leakage_assessments()['sosd'].reshape(1, -1)
-        nn_attr_baseline_assessment = self.get_leakage_assessments()['gradvis'].reshape(self.seed_count, -1)
+        nn_attr_baseline_assessment = self.get_leakage_assessments()['occl_5'].reshape(self.seed_count, -1)
         stat_baseline_name = 'SoSD'
-        nn_attr_baseline_name = 'GradVis'
+        nn_attr_baseline_name = '5-Occlusion'
         r"""if self.dataset_name == 'ascadv1_fixed':
             stat_baseline_assessment = self.get_leakage_assessments()['cpa'].reshape(1, -1)
             nn_attr_baseline_assessment = self.get_leakage_assessments()['occlusion'].reshape(self.seed_count, -1)
@@ -920,19 +966,20 @@ class Trial:
         fig, axes = plt.subplots(2, 2, figsize=(PLOT_WIDTH, PLOT_WIDTH))
         for assessment, color, ax, title in zip(
             [random_assessment, stat_baseline_assessment, nn_attr_baseline_assessment, leakage_assessments],
-            ['red', 'green', 'purple', 'blue'], axes.flatten(), ['Random', 'SoSD', 'GradVis', 'ALL (Ours)']
+            ['red', 'green', 'purple', 'blue'], axes.flatten(), ['Random', 'SoSD', '5-Occlusion', 'ALL (Ours)']
         ):
             assessment = np.abs(assessment[:, sorted_indices])
             if assessment.shape[0] > 1:
                 ax.fill_between(ground_truth_assessment[sorted_indices], assessment.min(axis=0), assessment.max(axis=0), color=color, alpha=0.25, **PLOT_KWARGS)
             ax.plot(ground_truth_assessment[sorted_indices], np.median(assessment, axis=0), color=color, linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
             ax.set_xscale('log')
-            if title in ['SoSD', 'GradVis']:
+            if title in ['SoSD', '5-Occlusion']:
                 ax.set_yscale('log')
             ax.set_title(title)
         fig.text(0.5, 0.04, 'Leakage of $X_t$ according to `Omniscient\' SNR', ha='center')
         fig.text(0.04, 0.5, 'Estimated leakage of $X_t$', va='center', rotation='vertical')
         fig.tight_layout(rect=[0.05, 0.05, 1, 1])
+        fig.savefig(os.path.join(self.logging_dir, 'main_paper_leakage_assessments.png'), **SAVEFIG_KWARGS)
         fig.savefig(os.path.join(self.logging_dir, 'main_paper_leakage_assessments.pdf'), **SAVEFIG_KWARGS)
         plt.close(fig)
     
@@ -1019,6 +1066,7 @@ class Trial:
         if ('train_supervised_model' in self.trial_config) and self.trial_config['train_supervised_model']:
             self.train_supervised_model()
             self.plot_supervised_training_curves()
+        self.occlusion_window_sweep()
         if ('compute_nn_attributions' in self.trial_config) and self.trial_config['compute_nn_attributions']:
             self.compute_neural_net_attributions()
             if self.dataset_name == 'dpav4':

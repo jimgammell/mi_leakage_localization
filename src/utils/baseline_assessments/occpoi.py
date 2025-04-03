@@ -2,6 +2,7 @@
 
 from typing import Union, Optional, Sequence, Literal
 import os
+import time
 from tqdm import tqdm
 from copy import copy
 from random import shuffle
@@ -34,6 +35,7 @@ class OccPOI:
         attack_dataloader, model: Union[nn.Module, str], seed: Optional[int] = None, device: Optional[str] = None,
         dataset_name: Literal['dpav4', 'aes_hd', 'ascadv1_fixed', 'ascadv1_variable'] = 'dpav4'
     ):
+        # Setting these values to ~10x the 'traces to disclosure' shown on pg. 35 of my paper
         if dataset_name == 'dpav4':
             attack_traces = 10
         elif dataset_name == 'ascadv1_fixed':
@@ -68,6 +70,10 @@ class OccPOI:
         base_guessing_entropy = self.compute_guessing_entropy([])
         self.lbda = base_guessing_entropy + 1 # generalizes lambda in paper to settings where we don't get down to zero guessing entropy
     
+    # Using the test set as part of the algorithm is problematic. But baselines should significantly outperform this regardless, so I'm leaving as-is.
+    #   Probably some better options would be: 1) cut test set in half, use half here and half for evaluation so that we can still accumulate predictions
+    #   for a fixed key. Still not 100% kosher because it leaks the fixed evaluation key value into training. 2) just use a validation partition of the
+    #   training set. We can't accumulate predictions in this case, but I feel like it should be fine.
     def compute_guessing_entropy(self, points_to_occlude: Sequence[int]):
         self.model.points_to_occlude = points_to_occlude
         multi_trace_evaluator = AESMultiTraceEvaluator(
@@ -78,6 +84,10 @@ class OccPOI:
         return guessing_entropy
     
     def run_kgo_procedure(self, starting_queue: Optional[Sequence[int]] = None):
+        # Implementation of Algorithm 1 from the OccPOI paper.
+        # Note that the paper's algorithm is inconsistent with their code. Paper sets has_converged=False if we identify a new leaky point, and code
+        #   sets has_converged=False if we identify a new *nonleaky* point. Since successive iterations only look at the 'leaky' points identified in
+        #   the last iteration, the paper version intuitively + empirically doesn't converge. I'm going with the code version.
         queue = copy(list(starting_queue)) if starting_queue is not None else list(range(self.trace_shape[-1]))
         has_converged = False
         points_to_occlude = list(set(range(self.trace_shape[-1])) - set(queue))
@@ -101,36 +111,56 @@ class OccPOI:
             queue = important_index
             points_to_occlude = list(set(range(self.trace_shape[-1])) - set(queue))
             iteration += 1
-        return queue
+        # Best-effort implementation of '1-Key Guessing Occlusion' method proposed on page 11. I don't think they have this anywhere in their code.
+        occpois = queue
+        ranked_occpois = []
+        base_ge = self.compute_guessing_entropy([])
+        for x in occpois:
+            occluded_ge = self.compute_guessing_entropy(list((set(range(self.trace_shape[-1])) - set(occpois)).union(set([x]))))
+            ranked_occpois.append(occluded_ge - base_ge)
+        ranked_occpois = np.array(ranked_occpois, dtype=np.float32) + 1 # adding 1 to avoid division by zero below -- doesn't change order
+        ranked_occpois /= ranked_occpois.sum() # for aesthetic reasons
+        leakage_assessment = np.zeros(self.trace_shape, dtype=np.float32).squeeze()
+        leakage_assessment[..., occpois] = ranked_occpois # for consistency with the other baselines
+        return queue, leakage_assessment
     
+    # Best-effort implementation of 'Extending KGO by applying it multiple times' technique proposed on page 18. I don't see this implemented in their code.
     def run_extended_kgo_procedure(self):
+        # This algorithm takes an absurd amount of time to run. I'm just going to cut it off at 10x the runtime of my algorithm and note this in paper.
+        if self.dataset_name == 'ascadv1_fixed':
+            max_time_min = 64.2
+        elif self.dataset_name == 'ascadv1_var':
+            max_time_min = 90
+        elif self.dataset_name == 'dpav4':
+            max_time_min = 31
+        elif self.dataset_name == 'aes_hd':
+            max_time_min = 46
+        elif self.dataset_name == 'otiait':
+            max_time_min = 30
+        elif self.dataset_name == 'otp':
+            max_time_min = 21
+        else:
+            assert False
+        start_time = time.time()
         print(f'Running OccPOI. Lambda value: {self.lbda}.')
         all_timesteps = set(range(self.trace_shape[-1]))
-        occpois = set(self.run_kgo_procedure())
-        nonextended_pois = copy(occpois)
+        occpois, leakage_assessment = self.run_kgo_procedure()
+        occpois = set(occpois)
         print(f'Pre-start: occpois={occpois}')
-        while (len(all_timesteps - occpois) > 0) and (self.compute_guessing_entropy(list(occpois)) < self.lbda):
+        while (len(all_timesteps - occpois) > 0) and (self.compute_guessing_entropy(list(occpois)) < self.lbda) and (time.time()-start_time < 60*max_time_min):
             queue = list(all_timesteps - occpois)
-            new_occpois = set(self.run_kgo_procedure(queue))
+            new_occpois, new_leakage_assessment = self.run_kgo_procedure(queue)
+            new_occpois = set(new_occpois)
+            leakage_assessment += new_leakage_assessment # should have disjoint support
             if len(new_occpois) == 0:
                 break
             occpois = occpois.union(new_occpois)
             print(f'New sub-trial finished. Current occpois: {occpois}')
-        return list(occpois), list(nonextended_pois)
+        return leakage_assessment
     
-    def __call__(self):
-        occpois, nonextended_pois = self.run_extended_kgo_procedure()
-        ranked_occpois = []
-        base_ge = self.compute_guessing_entropy([])
-        for x in occpois:
-            occluded_ge = self.compute_guessing_entropy(list((set(range(self.trace_shape[-1])) - set(occpois)) + set([x])))
-            ranked_occpois.append(occluded_ge - base_ge)
-        ranked_nonextended_pois = []
-        for x in nonextended_pois:
-            occluded_ge = self.compute_guessing_entropy(list((set(range(self.trace_shape[-1])) - set(nonextended_pois)) + set([x])))
-            ranked_nonextended_pois.append(occluded_ge - base_ge)
-        leakage_assessment = np.zeros(self.trace_shape, dtype=np.float32).squeeze()
-        leakage_assessment[..., occpois] = ranked_occpois
-        nonextended_leakage_assessment = np.zeros(self.trace_shape, dtype=np.float32).squeeze()
-        nonextended_leakage_assessment[..., nonextended_pois] = ranked_nonextended_pois
-        return leakage_assessment, nonextended_leakage_assessment
+    def __call__(self, extended=False):
+        if extended:
+            leakage_assessment = self.run_extended_kgo_procedure()
+        else:
+            _, leakage_assessment = self.run_kgo_procedure()
+        return leakage_assessment

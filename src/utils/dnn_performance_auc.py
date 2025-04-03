@@ -25,7 +25,9 @@ def compute_dnn_performance_auc(
     if cluster_count is None:
         cluster_count = traces.shape[-1]
     timesteps_per_trace = traces.shape[-1]
-    leakage_ranking = leakage_assessment.reshape(-1).argsort()
+    leakage_assessment = leakage_assessment.reshape(-1)
+    leakage_ranking = np.lexsort((np.random.randn(*leakage_assessment.shape), leakage_assessment)) #leakage_assessment.reshape(-1).argsort()
+    # This argsorts and chooses randomly between tied values. Important for evaluating OccPOI, which gives a ton of ties.
     if not logarithmic_mode:
         indices = leakage_ranking
         if not len(indices) % cluster_count == 0:
@@ -55,7 +57,7 @@ def compute_dnn_performance_auc(
     else:
         reverse_auc = np.array(ranks)
         
-    leakage_ranking = leakage_assessment.reshape(-1).argsort()[::-1].copy()
+    leakage_ranking = np.lexsort((np.random.randn(*leakage_assessment.shape), leakage_assessment))[::-1].copy()
     if not logarithmic_mode:
         indices = leakage_ranking
         if not len(indices) % cluster_count == 0:
