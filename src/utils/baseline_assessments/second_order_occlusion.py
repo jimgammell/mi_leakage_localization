@@ -7,9 +7,11 @@ import numpy as np
 import torch
 
 class SecondOrderOcclusion:
-    def __init__(self, model: Callable, perturbations_per_eval: int = 1, window_size: int = 10):
+    def __init__(self, model: Callable, perturbations_per_eval: int = 1, window_size: int = 1):
         self.model = model
         self.perturbations_per_eval = perturbations_per_eval
+        self.window_size = window_size
+        assert self.window_size == 1
     
     def get_ablation_indices(self, dim: int) -> List[Tuple[int, ...]]:
         return list(range(dim)) + list(combinations(range(dim), 2))

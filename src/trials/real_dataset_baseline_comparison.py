@@ -31,7 +31,7 @@ from utils.dnn_performance_auc import compute_dnn_performance_auc
 from utils.baseline_assessments.occpoi import OccPOI
 
 OCCL_VALS = [1, 5, 17, 65, 257]
-GAMMAO_VALS = [0.05, 0.1, 0.5, 0.9, 0.95]
+GAMMAO_VALS = np.arange(0.05, 1.0, 0.05)
 
 def get_assessment_name(key):
     lut = {
@@ -198,7 +198,11 @@ class Trial:
         else: # these are unprotected so leakage is dominated by the SubBytes variable itself
             targets = ['label']
         if not os.path.exists(os.path.join(self.ground_truth_dir, 'assessments.npz')):
-            snr = FirstOrderStatistics(self.attack_dataset, targets).snr_vals
+            if self.dataset_name == 'dpav4':
+                dataset = DPAv4(root=self.trial_config['data_dir'], train=False, ground_truth=True)
+            else:
+                dataset = self.attack_dataset
+            snr = FirstOrderStatistics(dataset, targets).snr_vals
             np.savez(os.path.join(self.ground_truth_dir, 'assessments.npz'), **snr)
         else:
             snr = np.load(os.path.join(self.ground_truth_dir, 'assessments.npz'), allow_pickle=True)
@@ -433,61 +437,58 @@ class Trial:
         print('\tDone.')
     
     def run_ll_gammao_sweep(self):
-        training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.supervised_model_dir, 'll_eval', 'best_checkpoint.ckpt'))
-        supervised_dnn = training_module.classifier
-        use_pretrained_classifiers = self.dataset_name not in ['otp', 'otiait', 'dpav4']
-        assessments = defaultdict(list)
+        if not os.path.exists(os.path.join(self.leakage_localization_dir, 'gammao_sweep.npy')):
+            training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.supervised_model_dir, 'll_eval', 'best_checkpoint.ckpt'))
+            supervised_dnn = training_module.classifier
+            use_pretrained_classifiers = self.dataset_name not in ['otp', 'otiait', 'dpav4']
+            assessments = np.full((self.seed_count, len(GAMMAO_VALS), self.profiling_dataset.data_shape[-1]), np.nan, dtype=np.float32)
+            for seed in range(self.seed_count):
+                for gammao_idx, gammao in enumerate(GAMMAO_VALS):
+                    subdir = os.path.join(self.leakage_localization_dir, f'gammao={gammao}_seed={seed}')
+                    os.makedirs(subdir, exist_ok=True)
+                    if not os.path.exists(os.path.join(subdir, 'best_checkpoint.ckpt')):
+                        print(f'Running LL hparam sweep with gammao={gammao}, seed={seed}')
+                        trainer = LeakageLocalizationTrainer(
+                            self.profiling_dataset, self.attack_dataset,
+                            default_training_module_kwargs=self.trial_config['default_kwargs']
+                        )
+                        leakage_localization_kwargs = copy(self.trial_config['default_kwargs'])
+                        leakage_localization_kwargs.update(self.trial_config['leakage_localization_kwargs'])
+                        leakage_localization_kwargs.update({'supervised_dnn': supervised_dnn})
+                        leakage_localization_kwargs.update(self.ll_optimal_hparams)
+                        leakage_localization_kwargs.update({'starting_prob': gammao})
+                        leakage_assessment = trainer.run(
+                            logging_dir=subdir,
+                            pretrained_classifiers_logging_dir=os.path.join(self.ll_classifiers_pretrain_dir, f'seed={seed}') if use_pretrained_classifiers else None,
+                            max_steps=self.trial_config['max_leakage_localization_steps'],
+                            override_kwargs=leakage_localization_kwargs,
+                            anim_gammas=False
+                        )
+                    else:
+                        assert os.path.exists(os.path.join(subdir, 'leakage_assessment.npy'))
+                        leakage_assessment = np.load(os.path.join(subdir, 'leakage_assessment.npy'))
+                    assessments[seed, gammao_idx, :] = leakage_assessment.squeeze()
+            np.save(os.path.join(self.leakage_localization_dir, 'gammao_sweep.npy'), assessments)
+        else:
+            assessments = np.load(os.path.join(self.leakage_localization_dir, 'gammao_sweep.npy'))
+        assert np.all(np.isfinite(assessments))
+        ground_truth_assessments = self.get_ground_truth_assessments()
+        ground_truth_assessment = np.stack(list(ground_truth_assessments.values())).mean(axis=0)
+        spearmanr_evaluations = np.full(assessments.shape[:-1], np.nan, dtype=np.float32)
         for seed in range(self.seed_count):
-            for gammao in GAMMAO_VALS:
-                subdir = os.path.join(self.leakage_localization_dir, f'gammao={gammao}_seed={seed}')
-                os.makedirs(subdir, exist_ok=True)
-                if not os.path.exists(os.path.join(subdir, 'best_checkpoint.ckpt')):
-                    print(f'Running LL hparam sweep with gammao={gammao}, seed={seed}')
-                    trainer = LeakageLocalizationTrainer(
-                        self.profiling_dataset, self.attack_dataset,
-                        default_training_module_kwargs=self.trial_config['default_kwargs']
-                    )
-                    leakage_localization_kwargs = copy(self.trial_config['default_kwargs'])
-                    leakage_localization_kwargs.update(self.trial_config['leakage_localization_kwargs'])
-                    leakage_localization_kwargs.update({'supervised_dnn': supervised_dnn})
-                    leakage_localization_kwargs.update(self.ll_optimal_hparams)
-                    leakage_localization_kwargs.update({'starting_prob': gammao})
-                    leakage_assessment = trainer.run(
-                        logging_dir=subdir,
-                        pretrained_classifiers_logging_dir=os.path.join(self.ll_classifiers_pretrain_dir, f'seed={seed}') if use_pretrained_classifiers else None,
-                        max_steps=self.trial_config['max_leakage_localization_steps'],
-                        override_kwargs=leakage_localization_kwargs,
-                        anim_gammas=False
-                    )
-                else:
-                    assert os.path.exists(os.path.join(subdir, 'leakage_assessment.npy'))
-                    leakage_assessment = np.load(os.path.join(subdir, 'leakage_assessment.npy'))
-                assessments[f'leakage_localization__gammao={gammao}'].append(leakage_assessment)
-        assessments = {key: np.stack(val) for key, val in assessments.items()}
-        self.leakage_localization_assessments.update(assessments)
-        print('\tDone.')
-    
-    def plot_ll_gammao_sweep(self):
-        fig, axes = plt.subplots(1, len(GAMMAO_VALS), figsize=(0.6*PLOT_WIDTH*(len(GAMMAO_VALS)), 0.6*PLOT_WIDTH))
-        ground_truth = self.get_ground_truth_assessments()
-        ground_truth = np.concatenate(list(ground_truth.values())).mean(axis=0).squeeze()
-        #axes[0].plot(ground_truth, marker='.', markersize=1, linestyle='-', linewidth=0.1, **PLOT_KWARGS)
-        #axes[0].set_xlabel(r'Timestep $t$')
-        #axes[0].set_ylabel(r'Estimated leakage of $X_t$')
-        #axes[0].set_title('`Omniscient\' SNR')
-        #axes[0].set_yscale('log')
-        sorted_indices = ground_truth.argsort()
-        for gammao, ax in zip(GAMMAO_VALS, axes):
-            assessment = self.leakage_localization_assessments[f'leakage_localization__gammao={gammao}'].squeeze()
-            ax.fill_between(ground_truth[sorted_indices], assessment[:, sorted_indices].min(axis=0), assessment[:, sorted_indices].max(axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
-            ax.plot(ground_truth[sorted_indices], np.median(assessment[:, sorted_indices], axis=0), color='blue', marker='.', markersize=1, linestyle='none', **PLOT_KWARGS)
-            ax.set_xlabel(r'Leakage of $X_t$ via oSNR')
-            ax.set_ylabel(r'Leakage of $X_t$ via ALL (Ours)')
-            ax.set_title(r'$\overline{\gamma}='+f'{gammao}'+r'$')
-            #ax.set_ylim(0, 1)
-            ax.set_xscale('log')
+            for gammao_idx, _ in enumerate(GAMMAO_VALS):
+                corr = spearmanr(assessments[seed, gammao_idx, :], ground_truth_assessment.squeeze()).statistic
+                spearmanr_evaluations[seed, gammao_idx] = corr
+        assert np.all(np.isfinite(spearmanr_evaluations))
+        fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
+        ax.fill_between(GAMMAO_VALS, spearmanr_evaluations.min(axis=0), spearmanr_evaluations.max(axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
+        ax.plot(GAMMAO_VALS, np.median(spearmanr_evaluations, axis=1), color='blue', marker='.', linestyle='none', markersize=1, **PLOT_KWARGS)
+        ax.set_xlabel(r'Budget: $\overline{\gamma}$')
+        ax.set_ylabel(r'oSNR of ALL with budget $\overline{\gamma}$')
+        ax.set_yscale('log')
         fig.tight_layout()
-        fig.savefig(os.path.join(self.leakage_localization_dir, 'll_gammao_sweep.pdf'), **SAVEFIG_KWARGS)
+        fig.savefig(os.path.join(self.logging_dir, 'gammao_performance_sweep.pdf'), **SAVEFIG_KWARGS)
+        fig.savefig(os.path.join(self.logging_dir, 'gammao_performance_sweep.png'), **SAVEFIG_KWARGS)
 
     def train_supervised_model(self):
         for subdir in ['ll_eval', *[f'seed={seed}' for seed in range(self.seed_count)]]:
@@ -679,7 +680,10 @@ class Trial:
         ax.set_yscale('log')
         fig.tight_layout()
         fig.savefig(os.path.join(self.logging_dir, 'occl_window_size_performance_sweep.pdf'), **SAVEFIG_KWARGS)
-        assert False
+        assert hasattr(self, 'nn_attr_assessments')
+        best_window_idx = np.argmax(spearmanr_evaluations.mean(axis=1))
+        print(f'Best occlusion window size: {window_sizes[best_window_idx]}')
+        self.nn_attr_assessments['m_occlusion'] = results[best_window_idx, :, :]
 
     def compute_neural_net_attributions(self, wouters_zaid_model=None):
         data_module = DataModule(self.profiling_dataset, self.attack_dataset, val_prop=0.0)
@@ -687,7 +691,7 @@ class Trial:
         attack_dataloader = data_module.test_dataloader()
         to_name = lambda x: x if wouters_zaid_model is None else f'zaid_{x}' if 'Zaid' in wouters_zaid_model else f'wouters_{x}' if 'Wouters' in wouters_zaid_model else None
         gradviss, saliencies, inputxgrads, lrps, occpois, occl2os, ext_occpois = [], [], [], [], [], [], []
-        for occl_n in OCCL_VALS:
+        for occl_n in [1]:
             setattr(self, to_name(f'occl_{occl_n}'), [])
         for seed in range(self.seed_count):
             subdir = os.path.join(self.nn_attr_dir, f'seed={seed}')
@@ -735,20 +739,21 @@ class Trial:
             else:
                 occl2o = np.load(os.path.join(subdir, to_name('second_order_occl.npy')))
                 print('Found precomputed second-order occlusion.')
-            if not os.path.exists(os.path.join(subdir, to_name('occpoi.npy'))):
+            r"""if not os.path.exists(os.path.join(subdir, to_name('occpoi.npy'))):
                 print('Computing OccPOI...')
                 occpoi = OccPOI(attack_dataloader=attack_dataloader, model=model_dir, seed=seed, dataset_name=self.dataset_name)()
                 np.save(os.path.join(subdir, to_name('occpoi.npy')), occpoi)
             else:
                 occpoi = np.load(os.path.join(subdir, to_name('occpoi.npy')))
-                print('Found precomputed OccPOI.')
-            if not os.path.exists(os.path.join(subdir, to_name('extended_occpoi.npy'))):
-                print('Computing extended OccPOI...')
-                ext_occpoi = OccPOI(attack_dataloader=attack_dataloader, model=model_dir, seed=seed, dataset_name=self.dataset_name)(extended=True)
-                np.save(os.path.join(subdir, to_name('extended_occpoi.npy')), ext_occpoi)
-            else:
-                ext_occpoi = np.load(os.path.join(subdir, to_name('extended_occpoi.npy')))
-            for occl_n in OCCL_VALS:
+                print('Found precomputed OccPOI.')"""
+            if not(self.dataset_name in ['otp', 'otiait']):
+                if not(os.path.exists(os.path.join(subdir, to_name('extended_occpoi.npy')))):
+                    print('Computing extended OccPOI...')
+                    ext_occpoi = OccPOI(attack_dataloader=attack_dataloader, model=model_dir, seed=seed, dataset_name=self.dataset_name)(extended=True)
+                    np.save(os.path.join(subdir, to_name('extended_occpoi.npy')), ext_occpoi)
+                else:
+                    ext_occpoi = np.load(os.path.join(subdir, to_name('extended_occpoi.npy')))
+            for occl_n in [1]:
                 if not os.path.exists(os.path.join(subdir, to_name(f'{occl_n}_occl.npy'))):
                     print(f'Computing {occl_n}-occlusion...')
                     n_occl = nn_attributor.compute_n_occlusion(occl_n).reshape(-1)
@@ -763,8 +768,10 @@ class Trial:
             plot_leakage_assessment(saliency, os.path.join(subdir, to_name('saliency.png')))
             plot_leakage_assessment(inputxgrad, os.path.join(subdir, to_name('inputxgrad.png')))
             plot_leakage_assessment(occl2o, os.path.join(subdir, to_name('second_order_occl.png')))
-            plot_leakage_assessment(occpoi, os.path.join(subdir, to_name('occpoi.png')))
-            plot_leakage_assessment(ext_occpoi, os.path.join(subdir, to_name('ext_occpoi.png')))
+            #plot_leakage_assessment(occpoi, os.path.join(subdir, to_name('occpoi.png')))
+            if not(self.dataset_name in ['otp', 'otiait']):
+                plot_leakage_assessment(ext_occpoi, os.path.join(subdir, to_name('ext_occpoi.png')))
+                ext_occpois.append(ext_occpoi)
             if wouters_zaid_model is None:
                 plot_leakage_assessment(lrp, os.path.join(subdir, to_name('lrp.png')))
                 lrps.append(lrp)
@@ -772,22 +779,22 @@ class Trial:
             saliencies.append(saliency)
             inputxgrads.append(inputxgrad)
             occl2os.append(occl2o)
-            occpois.append(occpoi)
-            ext_occpois.append(ext_occpoi)
+            #occpois.append(occpoi)
         setattr(self, to_name('nn_attr_assessments'), {
             to_name('gradvis'): np.stack(gradviss), to_name('saliency'): np.stack(saliencies), to_name('inputxgrad'): np.stack(inputxgrads),
             to_name('second_order_occlusion'): np.stack(occl2os),
-            to_name('occpoi'): np.stack(occpois),
-            to_name('ext_occpoi'): np.stack(ext_occpois),
+            #to_name('occpoi'): np.stack(occpois),
             **({to_name('lrp'): np.stack(lrps)} if wouters_zaid_model is None else {})
         })
+        if not self.dataset_name in ['otp', 'otiait']:
+            self.nn_attr_assessments.update({'ext_occpoi': np.stack(ext_occpois)})
         if os.path.exists(os.path.join(self.logging_dir, 'occpoi_reported_result.npy')):
             occpoi_indices = np.load(os.path.join(self.logging_dir, 'occpoi_reported_result.npy'))
             leakage_assessment = np.zeros(self.profiling_dataset.data_shape, dtype=np.float32).squeeze()
             leakage_assessment[..., occpoi_indices] = 1
             self.nn_attr_assessments['occpoi_reported'] = leakage_assessment
         val = getattr(self, to_name('nn_attr_assessments'))
-        for occl_n in OCCL_VALS:
+        for occl_n in [1]:
             _val = getattr(self, to_name(f'occl_{occl_n}'))
             val[to_name(f'occl_{occl_n}')] = np.stack(_val)
     
@@ -868,7 +875,7 @@ class Trial:
             fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
             forward_random_baseline = forward_results['random'].reshape(self.seed_count, -1)
             forward_stat_baseline = forward_results['sosd'].reshape(self.seed_count, -1)
-            forward_nn_baseline = forward_results['occl_5'].reshape(self.seed_count, -1)
+            forward_nn_baseline = forward_results['m_occlusion'].reshape(self.seed_count, -1)
             forward_ll = forward_results['leakage_localization'].reshape(self.seed_count, -1)
             xx = np.arange(forward_random_baseline.shape[-1])
             ax.fill_between(xx, forward_random_baseline.min(axis=0), forward_random_baseline.max(axis=0), color='red', alpha=0.25, **PLOT_KWARGS)
@@ -891,7 +898,7 @@ class Trial:
             fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
             reverse_random_baseline = reverse_results['random'].reshape(self.seed_count, -1)[:, ::-1]
             reverse_stat_baseline = reverse_results['sosd'].reshape(self.seed_count, -1)[:, ::-1]
-            reverse_nn_baseline = reverse_results['occl_5'].reshape(self.seed_count, -1)[:, ::-1]
+            reverse_nn_baseline = reverse_results['m_occlusion'].reshape(self.seed_count, -1)[:, ::-1]
             reverse_ll = reverse_results['leakage_localization'].reshape(self.seed_count, -1)[:, ::-1]
             xx = np.arange(reverse_random_baseline.shape[-1])
             ax.fill_between(xx, reverse_random_baseline.min(axis=0), reverse_random_baseline.max(axis=0), color='red', alpha=0.25, **PLOT_KWARGS)
@@ -947,9 +954,9 @@ class Trial:
         if self.dataset_name != 'ascadv1_variable':
             return
         stat_baseline_assessment = self.get_leakage_assessments()['sosd'].reshape(1, -1)
-        nn_attr_baseline_assessment = self.get_leakage_assessments()['occl_5'].reshape(self.seed_count, -1)
+        nn_attr_baseline_assessment = self.get_leakage_assessments()['m_occlusion'].reshape(self.seed_count, -1)
         stat_baseline_name = 'SoSD'
-        nn_attr_baseline_name = '5-Occlusion'
+        nn_attr_baseline_name = '7-Occlusion'
         r"""if self.dataset_name == 'ascadv1_fixed':
             stat_baseline_assessment = self.get_leakage_assessments()['cpa'].reshape(1, -1)
             nn_attr_baseline_assessment = self.get_leakage_assessments()['occlusion'].reshape(self.seed_count, -1)
@@ -966,14 +973,14 @@ class Trial:
         fig, axes = plt.subplots(2, 2, figsize=(PLOT_WIDTH, PLOT_WIDTH))
         for assessment, color, ax, title in zip(
             [random_assessment, stat_baseline_assessment, nn_attr_baseline_assessment, leakage_assessments],
-            ['red', 'green', 'purple', 'blue'], axes.flatten(), ['Random', 'SoSD', '5-Occlusion', 'ALL (Ours)']
+            ['red', 'green', 'purple', 'blue'], axes.flatten(), ['Random', 'SoSD', '7-Occlusion', 'ALL (Ours)']
         ):
             assessment = np.abs(assessment[:, sorted_indices])
             if assessment.shape[0] > 1:
                 ax.fill_between(ground_truth_assessment[sorted_indices], assessment.min(axis=0), assessment.max(axis=0), color=color, alpha=0.25, **PLOT_KWARGS)
             ax.plot(ground_truth_assessment[sorted_indices], np.median(assessment, axis=0), color=color, linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
             ax.set_xscale('log')
-            if title in ['SoSD', '5-Occlusion']:
+            if title in ['SoSD', '7-Occlusion']:
                 ax.set_yscale('log')
             ax.set_title(title)
         fig.text(0.5, 0.04, 'Leakage of $X_t$ according to `Omniscient\' SNR', ha='center')
@@ -1053,7 +1060,7 @@ class Trial:
         plt.close(fig)
     
     def __call__(self):
-        self.run_timing_trials()
+        #self.run_timing_trials()
         self.compute_random_assessment()
         if 'ascad' in self.dataset_name:
             self.compute_ascad_first_order_stats()
@@ -1066,7 +1073,6 @@ class Trial:
         if ('train_supervised_model' in self.trial_config) and self.trial_config['train_supervised_model']:
             self.train_supervised_model()
             self.plot_supervised_training_curves()
-        self.occlusion_window_sweep()
         if ('compute_nn_attributions' in self.trial_config) and self.trial_config['compute_nn_attributions']:
             self.compute_neural_net_attributions()
             if self.dataset_name == 'dpav4':
@@ -1093,6 +1099,7 @@ class Trial:
                 self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__AES_HD')
                 self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
                 self.create_paper_rot_plot()
+            self.occlusion_window_sweep()
         if self.dataset_name not in ['otiait', 'otp', 'dpav4']:
             if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
                 self.run_ll_classifiers_hparam_sweep()
@@ -1103,7 +1110,6 @@ class Trial:
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:
             self.run_leakage_localization()
             self.run_ll_gammao_sweep()
-            self.plot_ll_gammao_sweep()
         self.create_main_paper_dnn_auc_plots()
         self.eval_leakage_assessments()
         self.plot_leakage_assessments()

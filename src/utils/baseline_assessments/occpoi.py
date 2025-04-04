@@ -65,7 +65,7 @@ class OccPOI:
         self.seed = seed
         self.device = device if device is not None else 'cuda' if torch.cuda.is_available() else 'cpu'
         self.dataset_name = dataset_name
-        self.trace_shape = self.base_model.input_shape
+        self.trace_shape = (1, self.base_model.input_shape[-1])
         self.model = OccludedModel(self.base_model, [])
         base_guessing_entropy = self.compute_guessing_entropy([])
         self.lbda = base_guessing_entropy + 1 # generalizes lambda in paper to settings where we don't get down to zero guessing entropy
@@ -120,7 +120,7 @@ class OccPOI:
             ranked_occpois.append(occluded_ge - base_ge)
         ranked_occpois = np.array(ranked_occpois, dtype=np.float32) + 1 # adding 1 to avoid division by zero below -- doesn't change order
         ranked_occpois /= ranked_occpois.sum() # for aesthetic reasons
-        leakage_assessment = np.zeros(self.trace_shape, dtype=np.float32).squeeze()
+        leakage_assessment = np.zeros(self.trace_shape[-1], dtype=np.float32)
         leakage_assessment[..., occpois] = ranked_occpois # for consistency with the other baselines
         return queue, leakage_assessment
     
@@ -129,7 +129,7 @@ class OccPOI:
         # This algorithm takes an absurd amount of time to run. I'm just going to cut it off at 10x the runtime of my algorithm and note this in paper.
         if self.dataset_name == 'ascadv1_fixed':
             max_time_min = 64.2
-        elif self.dataset_name == 'ascadv1_var':
+        elif self.dataset_name == 'ascadv1_variable':
             max_time_min = 90
         elif self.dataset_name == 'dpav4':
             max_time_min = 31
