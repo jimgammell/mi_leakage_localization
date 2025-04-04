@@ -125,8 +125,8 @@ class NeuralNetAttribution:
         return self.accumulate_attributions(attr_fn)
     
     @torch.no_grad()
-    def compute_second_order_occlusion(self, timing=False):
-        occludor = SecondOrderOcclusion(self.model, perturbations_per_eval=10)
+    def compute_second_order_occlusion(self, timing=False, window_size=1):
+        occludor = SecondOrderOcclusion(self.model, perturbations_per_eval=10, window_size=window_size)
         def attr_fn(trace, target):
             return occludor.attribute(trace, target.to(torch.long))
         return self.accumulate_attributions(attr_fn, timing=timing)

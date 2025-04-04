@@ -482,7 +482,7 @@ class Trial:
         assert np.all(np.isfinite(spearmanr_evaluations))
         fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
         ax.fill_between(GAMMAO_VALS, spearmanr_evaluations.min(axis=0), spearmanr_evaluations.max(axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
-        ax.plot(GAMMAO_VALS, np.median(spearmanr_evaluations, axis=1), color='blue', marker='.', linestyle='none', markersize=1, **PLOT_KWARGS)
+        ax.plot(GAMMAO_VALS, np.median(spearmanr_evaluations, axis=0), color='blue', marker='.', linestyle='none', markersize=1, **PLOT_KWARGS)
         ax.set_xlabel(r'Budget: $\overline{\gamma}$')
         ax.set_ylabel(r'oSNR of ALL with budget $\overline{\gamma}$')
         ax.set_yscale('log')
@@ -682,8 +682,25 @@ class Trial:
         fig.savefig(os.path.join(self.logging_dir, 'occl_window_size_performance_sweep.pdf'), **SAVEFIG_KWARGS)
         assert hasattr(self, 'nn_attr_assessments')
         best_window_idx = np.argmax(spearmanr_evaluations.mean(axis=1))
-        print(f'Best occlusion window size: {window_sizes[best_window_idx]}')
+        self.best_occlusion_window_size = window_sizes[best_window_idx]
+        print(f'Best occlusion window size: {self.best_occlusion_window_size}')
         self.nn_attr_assessments['m_occlusion'] = results[best_window_idx, :, :]
+        if not os.path.exists(os.path.join(self.nn_attr_dir, '2o_m_occl.npy')):
+            print(f'Computing 2nd-order {self.best_occlusion_window_size}-occlusion...')
+            data_module = DataModule(self.profiling_dataset, self.attack_dataset, val_prop=0.0)
+            profiling_dataloader = data_module.train_dataloader()
+            results = []
+            for seed in range(self.seed_count):
+                model_dir = os.path.join(self.supervised_model_dir, f'seed={seed}')
+                nn_attributor = NeuralNetAttribution(profiling_dataloader, model_dir, seed=seed)
+                leakage_assessment = nn_attributor.compute_second_order_occlusion(window_size=10)#self.best_occlusion_window_size)
+                results.append(leakage_assessment.squeeze())
+            occl2o = np.stack(results)
+            np.save(os.path.join(self.nn_attr_dir, '2o_m_occl.npy'), occl2o)
+        else:
+            occl2o = np.load(os.path.join(self.nn_attr_dir, '2o_m_occl.npy'))
+        plot_leakage_assessment(occl2o.mean(axis=0), os.path.join(self.nn_attr_dir, 'sec_order_m_occl.png'))
+        self.nn_attr_assessments['second_order_m_occl'] = occl2o
 
     def compute_neural_net_attributions(self, wouters_zaid_model=None):
         data_module = DataModule(self.profiling_dataset, self.attack_dataset, val_prop=0.0)

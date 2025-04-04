@@ -51,6 +51,7 @@ class Module(L.LightningModule):
         class_count: int = 256,
         gradient_estimator: Literal['REINFORCE', 'REBAR'] = 'REBAR',
         rebar_relaxation: Literal['CONCRETE', 'MuProp'] = 'MuProp',
+        fixed_concrete_temperature: Optional[float] = None,
         noise_scale: Optional[float] = None,
         eps: float = 1e-6, # Constant that is added/subtracted from various things for numerical stability
         train_theta: bool = True,
@@ -168,7 +169,6 @@ class Module(L.LightningModule):
         return trace, label
 
     def get_b_values(self, trace: torch.Tensor, temperature: torch.Tensor):
-        assert self.hparams.gradient_estimator == 'REBAR'
         if self.hparams.train_etat:
             log_gamma = self.selection_mechanism.get_log_gamma().unsqueeze(0)
             log_1mgamma = self.selection_mechanism.get_log_1mgamma().unsqueeze(0)
@@ -178,29 +178,38 @@ class Module(L.LightningModule):
         log_alpha = log_gamma - log_1mgamma
         assert torch.all(torch.isfinite(log_gamma))
         assert torch.all(torch.isfinite(log_1mgamma))
-        u = self.rand_like(trace)
-        b = torch.where(log_alpha + u.log() - (1-u).log() >= 0, torch.ones_like(u), torch.zeros_like(u))
-        uprime = 1 - log_gamma.exp()
-        v = self.rand_like(u)
-        v = torch.where(b == 1, uprime + v*(1-uprime), v*uprime).clip_(self.hparams.eps, 1-self.hparams.eps)
-        if self.hparams.rebar_relaxation == 'CONCRETE':
-            to_z = lambda log_alpha, u: (log_alpha + u.log() - (1-u).log())
-            rb = nn.functional.sigmoid(to_z(log_alpha, u)/temperature)
-            rb_tilde = nn.functional.sigmoid(to_z(log_alpha, v)/temperature)
-            rb_tilde_detached = nn.functional.sigmoid(to_z(log_alpha.detach(), v.detach())/temperature)
-        elif self.hparams.rebar_relaxation == 'MuProp': # Like CONCRETE but modified so mean approaches that of Bernoulli distribution as temperature increases
-            to_z = lambda log_alpha, u: ((temperature**2 + temperature + 1)/(temperature + 1))*log_alpha + u.log() - (1-u).log()
-            rb = nn.functional.sigmoid(to_z(log_alpha, u)/temperature)
-            rb_tilde = nn.functional.sigmoid(to_z(log_alpha, v)/temperature)
-            rb_tilde_detached = nn.functional.sigmoid(to_z(log_alpha.detach(), v.detach())/temperature) # We only want to 'detach' with respect to log_gamma, not the temperature.
+        if self.hparams.gradient_estimator == 'REBAR':
+            u = self.rand_like(trace)
+            b = torch.where(log_alpha + u.log() - (1-u).log() >= 0, torch.ones_like(u), torch.zeros_like(u))
+            uprime = 1 - log_gamma.exp()
+            v = self.rand_like(u)
+            v = torch.where(b == 1, uprime + v*(1-uprime), v*uprime).clip_(self.hparams.eps, 1-self.hparams.eps)
+            if self.hparams.rebar_relaxation == 'CONCRETE':
+                to_z = lambda log_alpha, u: (log_alpha + u.log() - (1-u).log())
+                rb = nn.functional.sigmoid(to_z(log_alpha, u)/temperature)
+                rb_tilde = nn.functional.sigmoid(to_z(log_alpha, v)/temperature)
+                rb_tilde_detached = nn.functional.sigmoid(to_z(log_alpha.detach(), v.detach())/temperature)
+            elif self.hparams.rebar_relaxation == 'MuProp': # Like CONCRETE but modified so mean approaches that of Bernoulli distribution as temperature increases
+                to_z = lambda log_alpha, u: ((temperature**2 + temperature + 1)/(temperature + 1))*log_alpha + u.log() - (1-u).log()
+                rb = nn.functional.sigmoid(to_z(log_alpha, u)/temperature)
+                rb_tilde = nn.functional.sigmoid(to_z(log_alpha, v)/temperature)
+                rb_tilde_detached = nn.functional.sigmoid(to_z(log_alpha.detach(), v.detach())/temperature) # We only want to 'detach' with respect to log_gamma, not the temperature.
+            else:
+                raise NotImplementedError
+            if self.hparams.adversarial_mode:
+                b = 1-b
+                rb = 1-rb
+                rb_tilde = 1-rb_tilde
+                rb_tilde_detached = 1-rb_tilde_detached
+            return b, rb, rb_tilde, rb_tilde_detached
+        elif self.hparams.gradient_estimator == 'CONCRETE':
+            assert self.hparams.fixed_concrete_temperature is not None
+            u = self.rand_like(u)
+            z = log_alpha + u.log() - (1-u).log()
+            rb = nn.functional.sigmoid(z/self.hparams.fixed_concrete_temperature)
+            return rb
         else:
-            raise NotImplementedError
-        if self.hparams.adversarial_mode:
-            b = 1-b
-            rb = 1-rb
-            rb_tilde = 1-rb_tilde
-            rb_tilde_detached = 1-rb_tilde_detached
-        return b, rb, rb_tilde, rb_tilde_detached
+            assert False
     
     def step(self, batch, train_theta: bool = True, train_etat: bool = True):
         if train_theta or train_etat:
@@ -254,11 +263,23 @@ class Module(L.LightningModule):
                 etat_loss = etat_loss + self.hparams.ent_penalty*(1 + log_p_b.detach().mean())*log_p_b.mean()
             rv.update({'etat_loss': etat_loss.detach()})
             rv.update({'hard_eta_loss': -mutinf_b.detach().cpu().numpy().mean()})
+        elif self.hparams.gradient_estimator == 'CONCRETE':
+            rb = self.get_b_values(trace, None)
+            logits = self.cmi_estimator.get_logits(trace.repeat(4, 1, 1), rb)
+            theta_loss = nn.functional.cross_entropy(logits, label.repeat(4))
+            rv.update({'theta_loss': theta_loss.detach()})
+            with torch.no_grad():
+                rv.update({'theta_rank': get_rank(logits, label.repeat(4)).mean()})
+            mutinf = self.cmi_estimator.get_mutinf_estimate_from_logits(logits, label.repeat(4))
+            etat_loss = -mutinf.mean()
+            if self.hparams.adversarial_mode:
+                etat_loss = -1*etat_loss
+            rv.update({'etat_loss': etat_loss.detach()})
         else:
             assert False
         if train_theta:
             theta_loss.backward(retain_graph=train_etat, inputs=list(self.cmi_estimator.classifiers.parameters()))
-        if train_etat:
+        if train_etat and self.hparams.gradient_estimator == 'REBAR':
             rv.update({'rebar_eta': rebar_eta.item(), 'rebar_tau': rebar_tau.item()})
             (etat_grad,) = torch.autograd.grad(etat_loss, self.selection_mechanism.etat, create_graph=True)
             self.selection_mechanism.etat.grad = etat_grad
@@ -269,6 +290,10 @@ class Module(L.LightningModule):
                 self.etat_grad_ema = 0.999*self.etat_grad_ema + 0.001*etat_grad.detach()
             rebar_params_loss = ((etat_grad - self.etat_grad_ema)**2).mean()
             (self.rebar_etat.grad, self.rebar_taut.grad) = torch.autograd.grad(rebar_params_loss, [self.rebar_etat, self.rebar_taut])
+        elif train_etat and self.hparams.gradient_estimator == 'CONCRETE':
+            (etat_grad,) = torch.autograd.grad(etat_loss, self.selection_mechanism.etat)
+            self.selection_mechanism.etat.grad = etat_grad
+            rv.update({'rms_grad': get_rms_grad(self.selection_mechanism)})
         if train_theta:
             theta_optimizer.step()
             theta_lr_scheduler.step()
