@@ -45,6 +45,8 @@ class Module(L.LightningModule):
         theta_weight_decay: float = 0.0,
         etat_weight_decay: float = 0.0,
         ent_penalty: float = 0.0,
+        norm_penalty: float = 0.0,
+        no_budget: bool = False,
         starting_prob: float = 0.5,
         adversarial_mode: bool = True, ###########
         timesteps_per_trace: Optional[int] = None,
@@ -77,11 +79,16 @@ class Module(L.LightningModule):
             output_classes=self.hparams.class_count,
             classifiers_kwargs=self.hparams.classifiers_kwargs
         )
-        self.selection_mechanism = SelectionMechanism(
-            self.hparams.timesteps_per_trace,
-            beta=self.hparams.starting_prob,
-            adversarial_mode=self.hparams.adversarial_mode
-        )
+        if not self.hparams.no_budget:
+            self.selection_mechanism = SelectionMechanism(
+                self.hparams.timesteps_per_trace,
+                beta=self.hparams.starting_prob,
+                adversarial_mode=self.hparams.adversarial_mode
+            )
+        else:
+            self.selection_mechanism = SimpleSelectionMechanism( # for use with norm penalty-based methods
+                self.hparams.timesteps_per_trace
+            )
         if self.hparams.calibrate_classifiers:
             self.to_temperature = TemperaturePredictor(self.hparams.timesteps_per_trace)
         if self.hparams.gradient_estimator == 'REBAR':
@@ -204,9 +211,11 @@ class Module(L.LightningModule):
             return b, rb, rb_tilde, rb_tilde_detached
         elif self.hparams.gradient_estimator == 'CONCRETE':
             assert self.hparams.fixed_concrete_temperature is not None
-            u = self.rand_like(u)
+            u = self.rand_like(trace)
             z = log_alpha + u.log() - (1-u).log()
             rb = nn.functional.sigmoid(z/self.hparams.fixed_concrete_temperature)
+            if self.hparams.adversarial_mode:
+                rb = 1-rb
             return rb
         else:
             assert False
@@ -261,11 +270,15 @@ class Module(L.LightningModule):
                 etat_loss = -1*etat_loss
             if self.hparams.ent_penalty > 0:
                 etat_loss = etat_loss + self.hparams.ent_penalty*(1 + log_p_b.detach().mean())*log_p_b.mean()
+            if self.hparams.norm_penalty > 0:
+                l1_norm = rb.sum(dim=-1).mean()
+                l2_norm = (rb**2).sum(dim=-1).sqrt().mean()
+                etat_loss = etat_loss + self.hparams.norm_penalty*(l1_norm + l2_norm)
             rv.update({'etat_loss': etat_loss.detach()})
             rv.update({'hard_eta_loss': -mutinf_b.detach().cpu().numpy().mean()})
         elif self.hparams.gradient_estimator == 'CONCRETE':
             rb = self.get_b_values(trace, None)
-            logits = self.cmi_estimator.get_logits(trace.repeat(4, 1, 1), rb)
+            logits = self.cmi_estimator.get_logits(trace.repeat(4, 1, 1), rb.repeat(4, 1, 1))
             theta_loss = nn.functional.cross_entropy(logits, label.repeat(4))
             rv.update({'theta_loss': theta_loss.detach()})
             with torch.no_grad():
@@ -274,6 +287,10 @@ class Module(L.LightningModule):
             etat_loss = -mutinf.mean()
             if self.hparams.adversarial_mode:
                 etat_loss = -1*etat_loss
+            if self.hparams.norm_penalty > 0:
+                l1_norm = rb.sum(dim=-1).mean()
+                l2_norm = (rb**2).sum(dim=-1).sqrt().mean()
+                etat_loss = etat_loss + self.hparams.norm_penalty*(l1_norm + l2_norm)
             rv.update({'etat_loss': etat_loss.detach()})
         else:
             assert False
@@ -300,8 +317,9 @@ class Module(L.LightningModule):
         if train_etat:
             etat_optimizer.step()
             etat_lr_scheduler.step()
-            rebar_params_optimizer.step()
-            rebar_params_lr_scheduler.step()
+            if self.hparams.gradient_estimator == 'REBAR':
+                rebar_params_optimizer.step()
+                rebar_params_lr_scheduler.step()
             self.selection_mechanism.update_accumulated_gamma()
         if train_theta and self.hparams.calibrate_classifiers:
             if not(hasattr(self, 'cal_trace') and hasattr(self, 'cal_labels')): # don't want to spend a ton of time every step constructing dataloader, moving these to GPU, etc.

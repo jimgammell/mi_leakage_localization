@@ -158,9 +158,9 @@ class Trainer:
                 assert os.path.exists(pretrained_classifiers_logging_dir)
                 pretrained_module = Module.load_from_checkpoint(os.path.join(pretrained_classifiers_logging_dir, 'best_checkpoint.ckpt'))
                 training_module.cmi_estimator.classifiers.load_state_dict(pretrained_module.cmi_estimator.classifiers.state_dict())
-            if False: # 'supervised_dnn' in override_kwargs:
+            if False: #'supervised_dnn' in override_kwargs:
                 checkpoint = ModelCheckpoint(
-                    monitor='dnn_auc',
+                    monitor='reverse_dnn_auc',
                     mode='max',
                     save_top_k=1,
                     dirpath=logging_dir,
@@ -182,8 +182,8 @@ class Trainer:
             trainer.save_checkpoint(os.path.join(logging_dir, 'final_checkpoint.ckpt'))
             training_curves = get_training_curves(logging_dir)
             save_training_curves(training_curves, logging_dir)
-            if False: # 'supervised_dnn' in override_kwargs:
-                training_module = Module.load_from_checkpoint(os.path.join(logging_dir, 'best_checkpoint.ckpt'))
+            #if 'supervised_dnn' in override_kwargs:
+            #    training_module = Module.load_from_checkpoint(os.path.join(logging_dir, 'best_checkpoint.ckpt'))
             leakage_assessment = training_module.selection_mechanism.get_accumulated_gamma().reshape(-1)
             np.save(os.path.join(logging_dir, 'leakage_assessment.npy'), leakage_assessment)
             plot_leakage_assessment(leakage_assessment, os.path.join(logging_dir, 'leakage_assessment.png'))

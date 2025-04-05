@@ -147,8 +147,9 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
     if all(x in training_curves for x in ['train_etat_loss', 'val_etat_loss']):
         axes[0].plot(*training_curves['train_etat_loss'], color='blue', linestyle='--', label='train', **PLOT_KWARGS)
         axes[0].plot(*training_curves['val_etat_loss'], color='blue', linestyle='-', label='val', **PLOT_KWARGS)
-        axes[0].plot(*training_curves['train_hard_eta_loss'], color='red', linestyle='--', **PLOT_KWARGS)
-        axes[0].plot(*training_curves['val_hard_eta_loss'], color='red', linestyle='-', **PLOT_KWARGS)
+        if 'train_hard_eta_loss' in training_curves and 'val_hard_eta_loss' in training_curves:
+            axes[0].plot(*training_curves['train_hard_eta_loss'], color='red', linestyle='--', **PLOT_KWARGS)
+            axes[0].plot(*training_curves['val_hard_eta_loss'], color='red', linestyle='-', **PLOT_KWARGS)
     if all(x in training_curves for x in ['train_theta_loss', 'val_theta_loss']):
         axes[1].plot(*training_curves['train_theta_loss'], color='red', linestyle='--', label='train', **PLOT_KWARGS)
         axes[1].plot(*training_curves['val_theta_loss'], color='red', linestyle='-', label='val', **PLOT_KWARGS)

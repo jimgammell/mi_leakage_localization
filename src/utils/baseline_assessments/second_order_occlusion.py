@@ -14,7 +14,7 @@ class SecondOrderOcclusion:
     
     def get_ablation_indices(self, dim: int) -> List[Tuple[int, ...]]:
         if self.window_size == 1:
-            first_order = list(range(dim))
+            first_order = list((i,) for i in range(dim))
             second_order = [((i,), (j,)) for i, j in combinations(range(dim), 2)]
         elif self.window_size > 1:
             first_order = [tuple(range(i, i+self.window_size)) for i in range(dim-self.window_size+1)]
