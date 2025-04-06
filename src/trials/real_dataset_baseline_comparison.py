@@ -517,27 +517,29 @@ class Trial:
         )
         fig, ax = plt.subplots(1, 1, figsize=(PLOT_WIDTH, PLOT_WIDTH))
         tax = ax.twiny()
-        ax.plot(np.arange(0.1, 1.0, 0.1), basic_osnrs, color='blue', marker='.', label='No ablation', **PLOT_KWARGS)
-        ax.plot(np.arange(0.1, 1.0, 0.1), concrete_osnrs, color='red', marker='.', label=r'REBAR $\to$ CONCRETE($\lambda=1$)', **PLOT_KWARGS)
-        line, = tax.plot(np.logspace(-2, 2, 9)[::-1], norm_osnrs, color='orange', marker='.', label=r'Fixed budget $\to$ Norm penalty', **PLOT_KWARGS)
-        ax.plot(np.arange(0.1, 1.0, 0.1), maximax_osnrs, color='green', marker='.', label=r'Adversarial $\to$ ``Cooperative"', **PLOT_KWARGS)
-        ax.plot(np.arange(0.1, 1.0, 0.1), fixed_classifier_osnrs, color='purple', marker='.', label=r'Alternating SGD $\to$ train $\boldsymbol{\theta}$, then $\boldsymbol{\overline{\eta}}$', **PLOT_KWARGS)
+        tax.plot(np.arange(0.1, 1.0, 0.1), basic_osnrs, color='blue', marker='.', label='No ablation', **PLOT_KWARGS)
+        tax.plot(np.arange(0.1, 1.0, 0.1), concrete_osnrs, color='red', marker='.', label=r'REBAR $\to$ CONCRETE($\lambda=1$)', **PLOT_KWARGS)
+        line, = ax.plot(np.logspace(-2, 2, 9)[::-1], norm_osnrs, color='orange', marker='.', label=r'Fixed $\boldsymbol{\gamma}$ budget $\to$ Penalize $\mathbb{E}\left[\lVert \boldsymbol{\mathcal{A}}_{\boldsymbol{\gamma}} \rVert_1 + \lVert \boldsymbol{\mathcal{A}}_{\boldsymbol{\gamma}} \rVert_2\right]$', **PLOT_KWARGS)
+        tax.plot(np.arange(0.1, 1.0, 0.1), maximax_osnrs, color='green', marker='.', label=r'Adversarial $\to$ ``Cooperative"', **PLOT_KWARGS)
+        tax.plot(np.arange(0.1, 1.0, 0.1), fixed_classifier_osnrs, color='purple', marker='.', label=r'Alternating SGD $\to$ fully train $\boldsymbol{\theta}$, then $\boldsymbol{\overline{\eta}}$', **PLOT_KWARGS)
+        tax.plot(np.arange(0.1, 1.0, 0.1), pretrained_classifier_osnrs, color='brown', marker='.', label=r'Alternating SGD $\to$ ``interpret" standard classifier', **PLOT_KWARGS)
         traces = [
             ('No ablation', basic_osnrs, 'blue'),
             ('CONCRETE', concrete_osnrs, 'red'),
             ('Norm penalty', norm_osnrs, 'orange'),
             ('Maximax', maximax_osnrs, 'green'),
             (r'Train $\boldsymbol{\theta}$, then $\overline{\boldsymbol{\eta}}$', fixed_classifier_osnrs, 'purple'),
+            (None, pretrained_classifier_osnrs, 'brown')
         ]
         best_label, best_trace, best_color = max(traces, key=lambda t: np.max(t[1]))
         best_max = np.max(best_trace)
-        ax.axhline(best_max, color=best_color, linestyle=':', linewidth=1.5)
-        ax.set_xlabel(r'Budget: $\overline{\gamma}$')
-        tax.set_xlabel(r'Norm penalty coefficient: $\lambda$')
-        tax.set_xscale('log')
+        tax.axhline(best_max, color=best_color, linestyle=':', linewidth=1.5)
+        tax.set_xlabel(r'Budget: $\overline{\gamma}$')
+        ax.set_xlabel(r'Norm penalty coefficient: $\lambda$')
+        ax.set_xscale('log')
         ax.set_ylabel(r'oSNR value$\uparrow$')
-        lines1, labels1 = ax.get_legend_handles_labels()
-        ax.legend(lines1+[line], labels1+[line.get_label()], loc='lower right', fontsize='small')
+        lines1, labels1 = tax.get_legend_handles_labels()
+        leg = tax.legend(lines1+[line], labels1+[line.get_label()], loc='lower right', fontsize='x-small')
         fig.tight_layout()
         fig.savefig(os.path.join(self.leakage_localization_dir, 'ablation_results.pdf'), **SAVEFIG_KWARGS)
         fig.savefig(os.path.join(self.leakage_localization_dir, 'ablation_results.png'), **SAVEFIG_KWARGS)
@@ -869,13 +871,12 @@ class Trial:
             else:
                 occpoi = np.load(os.path.join(subdir, to_name('occpoi.npy')))
                 print('Found precomputed OccPOI.')
-            if not(self.dataset_name in ['otp', 'otiait']):
-                if not(os.path.exists(os.path.join(subdir, to_name('extended_occpoi.npy')))):
-                    print('Computing extended OccPOI...')
-                    ext_occpoi = OccPOI(attack_dataloader=attack_dataloader, model=model_dir, seed=seed, dataset_name=self.dataset_name)(extended=True)
-                    np.save(os.path.join(subdir, to_name('extended_occpoi.npy')), ext_occpoi)
-                else:
-                    ext_occpoi = np.load(os.path.join(subdir, to_name('extended_occpoi.npy')))
+            if not(os.path.exists(os.path.join(subdir, to_name('extended_occpoi.npy')))):
+                print('Computing extended OccPOI...')
+                ext_occpoi = OccPOI(attack_dataloader=attack_dataloader, model=model_dir, seed=seed, dataset_name=self.dataset_name)(extended=True)
+                np.save(os.path.join(subdir, to_name('extended_occpoi.npy')), ext_occpoi)
+            else:
+                ext_occpoi = np.load(os.path.join(subdir, to_name('extended_occpoi.npy')))
             for occl_n in [1]:
                 if not os.path.exists(os.path.join(subdir, to_name(f'{occl_n}_occl.npy'))):
                     print(f'Computing {occl_n}-occlusion...')
@@ -891,9 +892,8 @@ class Trial:
             plot_leakage_assessment(saliency, os.path.join(subdir, to_name('saliency.png')))
             plot_leakage_assessment(inputxgrad, os.path.join(subdir, to_name('inputxgrad.png')))
             plot_leakage_assessment(occl2o, os.path.join(subdir, to_name('second_order_occl.png')))
-            if not(self.dataset_name in ['otp', 'otiait']):
-                plot_leakage_assessment(ext_occpoi, os.path.join(subdir, to_name('ext_occpoi.png')))
-                ext_occpois.append(ext_occpoi)
+            plot_leakage_assessment(ext_occpoi, os.path.join(subdir, to_name('ext_occpoi.png')))
+            ext_occpois.append(ext_occpoi)
             occpois.append(occpoi)
             plot_leakage_assessment(occpoi, os.path.join(subdir, to_name('occpoi.png')))
             if wouters_zaid_model is None:
@@ -906,11 +906,10 @@ class Trial:
         setattr(self, to_name('nn_attr_assessments'), {
             to_name('gradvis'): np.stack(gradviss), to_name('saliency'): np.stack(saliencies), to_name('inputxgrad'): np.stack(inputxgrads),
             to_name('second_order_occlusion'): np.stack(occl2os),
+            to_name('ext_occpoi'): np.stack(ext_occpois),
+            to_name('occpoi'): np.stack(occpois),
             **({to_name('lrp'): np.stack(lrps)} if wouters_zaid_model is None else {})
         })
-        if not self.dataset_name in ['otp', 'otiait']:
-            self.nn_attr_assessments.update({to_name('ext_occpoi'): np.stack(ext_occpois)})
-        self.nn_attr_assessments.update({to_name('occpoi'): np.stack(occpois)})
         if os.path.exists(os.path.join(self.logging_dir, 'occpoi_reported_result.npy')):
             occpoi_indices = np.load(os.path.join(self.logging_dir, 'occpoi_reported_result.npy'))
             leakage_assessment = np.zeros(self.profiling_dataset.data_shape, dtype=np.float32).squeeze()
@@ -1223,17 +1222,18 @@ class Trial:
                 self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
                 self.create_paper_rot_plot()
             self.occlusion_window_sweep()
+        if ('run_ll_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_hparam_sweep']:
+            self.run_ll_hparam_sweep()
+        if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:
+            self.run_leakage_localization()
+            self.run_ll_gammao_sweep()
         if True:
             if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
                 self.run_ll_classifiers_hparam_sweep()
             if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:
                 self.pretrain_leakage_localization_classifiers()
-        if ('run_ll_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_hparam_sweep']:
-            self.run_ll_hparam_sweep()
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:
-            self.run_leakage_localization()
             self.run_ll_ablation_study()
-            self.run_ll_gammao_sweep()
         self.create_main_paper_dnn_auc_plots()
         self.eval_leakage_assessments()
         self.plot_leakage_assessments()
