@@ -61,7 +61,8 @@ class Module(L.LightningModule):
         calibrate_classifiers: bool = False, # Should we do an online temperature calibration for the classifiers? Prevents overconfidence and makes val loss more-correlated w/ performance
         compute_gmm_ktcc: bool = False,
         reference_leakage_assessment: Optional[np.ndarray] = None,
-        supervised_dnn: Optional[nn.Module] = None
+        supervised_dnn: Optional[nn.Module] = None,
+        standard_classifier_dir: Optional[str] = None
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -77,7 +78,8 @@ class Module(L.LightningModule):
             self.hparams.classifiers_name,
             input_shape=(1, self.hparams.timesteps_per_trace),
             output_classes=self.hparams.class_count,
-            classifiers_kwargs=self.hparams.classifiers_kwargs
+            classifiers_kwargs=self.hparams.classifiers_kwargs,
+            standard_classifier_dir=self.hparams.standard_classifier_dir
         )
         if not self.hparams.no_budget:
             self.selection_mechanism = SelectionMechanism(
@@ -271,8 +273,8 @@ class Module(L.LightningModule):
             if self.hparams.ent_penalty > 0:
                 etat_loss = etat_loss + self.hparams.ent_penalty*(1 + log_p_b.detach().mean())*log_p_b.mean()
             if self.hparams.norm_penalty > 0:
-                l1_norm = rb.sum(dim=-1).mean()
-                l2_norm = (rb**2).sum(dim=-1).sqrt().mean()
+                l1_norm = (1-rb).sum(dim=-1).mean()
+                l2_norm = ((1-rb)**2).sum(dim=-1).sqrt().mean()
                 etat_loss = etat_loss + self.hparams.norm_penalty*(l1_norm + l2_norm)
             rv.update({'etat_loss': etat_loss.detach()})
             rv.update({'hard_eta_loss': -mutinf_b.detach().cpu().numpy().mean()})
@@ -288,8 +290,8 @@ class Module(L.LightningModule):
             if self.hparams.adversarial_mode:
                 etat_loss = -1*etat_loss
             if self.hparams.norm_penalty > 0:
-                l1_norm = rb.sum(dim=-1).mean()
-                l2_norm = (rb**2).sum(dim=-1).sqrt().mean()
+                l1_norm = (1-rb).sum(dim=-1).mean()
+                l2_norm = ((1-rb)**2).sum(dim=-1).sqrt().mean()
                 etat_loss = etat_loss + self.hparams.norm_penalty*(l1_norm + l2_norm)
             rv.update({'etat_loss': etat_loss.detach()})
         else:

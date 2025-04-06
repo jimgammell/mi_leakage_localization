@@ -262,7 +262,11 @@ class Trial:
         spearmanr_evaluations = defaultdict(list)
         for leakage_assessment_name, leakage_assessment in leakage_assessments.items():
             for leakage_assessment_sample in leakage_assessment.reshape(-1, leakage_assessment.shape[-1]):
-                spearmanr_evaluations[leakage_assessment_name].append(spearmanr(leakage_assessment_sample.squeeze(), ground_truth_assessment.squeeze()).statistic)
+                if leakage_assessment_sample.var() > 0:
+                    corr = spearmanr(leakage_assessment_sample.squeeze(), ground_truth_assessment.squeeze()).statistic
+                else:
+                    corr = 0.
+                spearmanr_evaluations[leakage_assessment_name].append(corr)
         spearmanr_evaluations = {key: np.stack(val) for key, val in spearmanr_evaluations.items()}
         for key, val in spearmanr_evaluations.items():
             print(f'method={key}: spearmanr={val.mean()}+/-{val.std()}')
@@ -439,8 +443,7 @@ class Trial:
     def run_single_ablation_study(self, search_settings: List[dict], fixed_settings: dict, study_name: str, use_pretrained_classifiers: bool):
         training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.supervised_model_dir, 'll_eval', 'best_checkpoint.ckpt'))
         supervised_dnn = training_module.classifier
-        use_pretrained_classifiers = self.dataset_name not in ['otp', 'otiait', 'dpav4']
-        if not os.path.exists(os.path.join(self.leakage_localization_dir, study_name, f'results.npy')):
+        if not os.path.exists(os.path.join(self.leakage_localization_dir, study_name, f'result.npy')):
             assessments = []
             for search_setting in search_settings:
                 subdir = os.path.join(self.leakage_localization_dir, study_name, '__'.join((f'{key}={val}' for key, val in search_setting.items())))
@@ -488,11 +491,23 @@ class Trial:
             study_name='maximax',
             use_pretrained_classifiers=use_pretrained_classifiers
         )
+        norm_assessments, norm_osnrs = self.run_single_ablation_study(
+            search_settings=[{'norm_penalty': penalty} for penalty in np.logspace(-2, 2, 9)[::-1]],
+            fixed_settings={'no_budget': True},
+            study_name='norm_penalty',
+            use_pretrained_classifiers=use_pretrained_classifiers
+        )
         fixed_classifier_assessments, fixed_classifier_osnrs = self.run_single_ablation_study(
             search_settings=[{'starting_prob': gammao} for gammao in np.arange(0.1, 1.0, 0.1)],
             fixed_settings={'train_theta': False},
             study_name='fixed_classifier',
-            use_pretrained_classifiers=use_pretrained_classifiers
+            use_pretrained_classifiers=True
+        )
+        pretrained_classifier_assessments, pretrained_classifier_osnrs = self.run_single_ablation_study(
+            search_settings=[{'starting_prob': gammao} for gammao in np.arange(0.1, 1.0, 0.1)],
+            fixed_settings={'standard_classifier_dir': os.path.join(self.supervised_model_dir, f'seed={0}'), 'train_theta': False},
+            study_name='pretrained_classifier',
+            use_pretrained_classifiers=False
         )
         concrete_assessments, concrete_osnrs = self.run_single_ablation_study(
             search_settings=[{'starting_prob': gammao} for gammao in np.arange(0.1, 1.0, 0.1)],
@@ -500,33 +515,29 @@ class Trial:
             study_name='concrete_temp=1.0',
             use_pretrained_classifiers=use_pretrained_classifiers
         )
-        norm_assessments, norm_osnrs = self.run_single_ablation_study(
-            search_settings=[{'norm_penalty': penalty} for penalty in np.logspace(-2, 2, 9)],
-            fixed_settings={'no_budget': True},
-            study_name='norm_penalty',
-            use_pretrained_classifiers=use_pretrained_classifiers
-        )
-        fig, axes = plt.subplots(1, 5, figsize=(5*PLOT_WIDTH, PLOT_WIDTH), sharey=True)
-        axes[0].plot(np.arange(0.1, 1.0, 0.1), basic_osnrs, color='blue', marker='.', markersize=1, linestyle='--', **PLOT_KWARGS)
-        axes[0].set_xlabel(r'$\overline{\gamma}$')
-        axes[0].set_ylabel(r'oSNR value$\uparrow$')
-        axes[0].set_title('No ablation')
-        axes[1].plot(np.arange(0.1, 1.0, 0.1), maximax_osnrs, color='blue', marker='.', markersize=1, linestyle='--', **PLOT_KWARGS)
-        axes[1].set_xlabel(r'$\overline{\gamma}$')
-        axes[1].set_ylabel(r'oSNR value$\uparrow$')
-        axes[1].set_title(r'Minimax $\to$ maximax')
-        axes[2].plot(np.arange(0.1, 1.0, 0.1), fixed_classifier_osnrs, color='blue', marker='.', markersize=1, linestyle='--', **PLOT_KWARGS)
-        axes[2].set_xlabel(r'$\overline{\gamma}$')
-        axes[2].set_ylabel(r'oSNR value$\uparrow$')
-        axes[2].set_title(r'Sequential training of $\boldsymbol{\theta}$ and $\boldsymbol{\overline{\eta}}$')
-        axes[3].plot(np.arange(0.1, 1.0, 0.1), concrete_osnrs, color='blue', marker='.', markersize=1, linestyle='--', **PLOT_KWARGS)
-        axes[3].set_xlabel(r'$\overline{\gamma}$')
-        axes[3].set_ylabel(r'oSNR value$\uparrow$')
-        axes[3].set_title(r'REBAR $\to$ CONCRETE($\lambda=1$)')
-        axes[4].plot(np.logspace(-2, 2, 9), norm_osnrs, color='blue', marker='.', markersize=1, linestyle='--', **PLOT_KWARGS)
-        axes[4].set_xlabel(r'Norm penalty: $\lambda_1$')
-        axes[4].set_ylabel(r'oSNR value$\uparrow$')
-        axes[4].set_title(r'$\boldsymbol{\gamma}$ budget $\to$ penalize $\lVert \boldsymbol{\mathcal{A}}_{\boldsymbol{\gamma}} \rVert_1 + \lVert \boldsymbol{\mathcal{A}}_{\boldsymbol{\gamma}} \rVert_2')
+        fig, ax = plt.subplots(1, 1, figsize=(PLOT_WIDTH, PLOT_WIDTH))
+        tax = ax.twiny()
+        ax.plot(np.arange(0.1, 1.0, 0.1), basic_osnrs, color='blue', marker='.', label='No ablation', **PLOT_KWARGS)
+        ax.plot(np.arange(0.1, 1.0, 0.1), concrete_osnrs, color='red', marker='.', label=r'REBAR $\to$ CONCRETE($\lambda=1$)', **PLOT_KWARGS)
+        line, = tax.plot(np.logspace(-2, 2, 9)[::-1], norm_osnrs, color='orange', marker='.', label=r'Fixed budget $\to$ Norm penalty', **PLOT_KWARGS)
+        ax.plot(np.arange(0.1, 1.0, 0.1), maximax_osnrs, color='green', marker='.', label=r'Adversarial $\to$ ``Cooperative"', **PLOT_KWARGS)
+        ax.plot(np.arange(0.1, 1.0, 0.1), fixed_classifier_osnrs, color='purple', marker='.', label=r'Alternating SGD $\to$ train $\boldsymbol{\theta}$, then $\boldsymbol{\overline{\eta}}$', **PLOT_KWARGS)
+        traces = [
+            ('No ablation', basic_osnrs, 'blue'),
+            ('CONCRETE', concrete_osnrs, 'red'),
+            ('Norm penalty', norm_osnrs, 'orange'),
+            ('Maximax', maximax_osnrs, 'green'),
+            (r'Train $\boldsymbol{\theta}$, then $\overline{\boldsymbol{\eta}}$', fixed_classifier_osnrs, 'purple'),
+        ]
+        best_label, best_trace, best_color = max(traces, key=lambda t: np.max(t[1]))
+        best_max = np.max(best_trace)
+        ax.axhline(best_max, color=best_color, linestyle=':', linewidth=1.5)
+        ax.set_xlabel(r'Budget: $\overline{\gamma}$')
+        tax.set_xlabel(r'Norm penalty coefficient: $\lambda$')
+        tax.set_xscale('log')
+        ax.set_ylabel(r'oSNR value$\uparrow$')
+        lines1, labels1 = ax.get_legend_handles_labels()
+        ax.legend(lines1+[line], labels1+[line.get_label()], loc='lower right', fontsize='small')
         fig.tight_layout()
         fig.savefig(os.path.join(self.leakage_localization_dir, 'ablation_results.pdf'), **SAVEFIG_KWARGS)
         fig.savefig(os.path.join(self.leakage_localization_dir, 'ablation_results.png'), **SAVEFIG_KWARGS)
@@ -851,13 +862,13 @@ class Trial:
             else:
                 occl2o = np.load(os.path.join(subdir, to_name('second_order_occl.npy')))
                 print('Found precomputed second-order occlusion.')
-            r"""if not os.path.exists(os.path.join(subdir, to_name('occpoi.npy'))):
+            if not os.path.exists(os.path.join(subdir, to_name('occpoi.npy'))):
                 print('Computing OccPOI...')
                 occpoi = OccPOI(attack_dataloader=attack_dataloader, model=model_dir, seed=seed, dataset_name=self.dataset_name)()
                 np.save(os.path.join(subdir, to_name('occpoi.npy')), occpoi)
             else:
                 occpoi = np.load(os.path.join(subdir, to_name('occpoi.npy')))
-                print('Found precomputed OccPOI.')"""
+                print('Found precomputed OccPOI.')
             if not(self.dataset_name in ['otp', 'otiait']):
                 if not(os.path.exists(os.path.join(subdir, to_name('extended_occpoi.npy')))):
                     print('Computing extended OccPOI...')
@@ -880,10 +891,11 @@ class Trial:
             plot_leakage_assessment(saliency, os.path.join(subdir, to_name('saliency.png')))
             plot_leakage_assessment(inputxgrad, os.path.join(subdir, to_name('inputxgrad.png')))
             plot_leakage_assessment(occl2o, os.path.join(subdir, to_name('second_order_occl.png')))
-            #plot_leakage_assessment(occpoi, os.path.join(subdir, to_name('occpoi.png')))
             if not(self.dataset_name in ['otp', 'otiait']):
                 plot_leakage_assessment(ext_occpoi, os.path.join(subdir, to_name('ext_occpoi.png')))
                 ext_occpois.append(ext_occpoi)
+            occpois.append(occpoi)
+            plot_leakage_assessment(occpoi, os.path.join(subdir, to_name('occpoi.png')))
             if wouters_zaid_model is None:
                 plot_leakage_assessment(lrp, os.path.join(subdir, to_name('lrp.png')))
                 lrps.append(lrp)
@@ -891,15 +903,14 @@ class Trial:
             saliencies.append(saliency)
             inputxgrads.append(inputxgrad)
             occl2os.append(occl2o)
-            #occpois.append(occpoi)
         setattr(self, to_name('nn_attr_assessments'), {
             to_name('gradvis'): np.stack(gradviss), to_name('saliency'): np.stack(saliencies), to_name('inputxgrad'): np.stack(inputxgrads),
             to_name('second_order_occlusion'): np.stack(occl2os),
-            #to_name('occpoi'): np.stack(occpois),
             **({to_name('lrp'): np.stack(lrps)} if wouters_zaid_model is None else {})
         })
-        #if not self.dataset_name in ['otp', 'otiait']:
-        #    self.nn_attr_assessments.update({'ext_occpoi': np.stack(ext_occpois)})
+        if not self.dataset_name in ['otp', 'otiait']:
+            self.nn_attr_assessments.update({to_name('ext_occpoi'): np.stack(ext_occpois)})
+        self.nn_attr_assessments.update({to_name('occpoi'): np.stack(occpois)})
         if os.path.exists(os.path.join(self.logging_dir, 'occpoi_reported_result.npy')):
             occpoi_indices = np.load(os.path.join(self.logging_dir, 'occpoi_reported_result.npy'))
             leakage_assessment = np.zeros(self.profiling_dataset.data_shape, dtype=np.float32).squeeze()
@@ -1212,7 +1223,7 @@ class Trial:
                 self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
                 self.create_paper_rot_plot()
             self.occlusion_window_sweep()
-        if self.dataset_name not in ['otiait', 'otp', 'dpav4']:
+        if True:
             if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
                 self.run_ll_classifiers_hparam_sweep()
             if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:

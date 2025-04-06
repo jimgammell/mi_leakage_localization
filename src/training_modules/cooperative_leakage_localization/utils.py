@@ -1,9 +1,23 @@
 from typing import *
+import os
 import numpy as np
 import torch
 from torch import nn
 
 import models
+from training_modules.supervised_deep_sca import SupervisedModule
+
+class PretrainedClassifierWrapper(nn.Module):
+    def __init__(self, classifier):
+        super().__init__()
+        self.classifier = classifier
+        self.output_classes = self.classifier.output_classes
+        self.classifier.eval()
+        for param in self.classifier.parameters():
+            param.requires_grad_(False)
+    
+    def forward(self, masked_input, mask):
+        return self.classifier(masked_input)
 
 class CondMutInfEstimator(nn.Module):
     def __init__(self,
@@ -11,7 +25,8 @@ class CondMutInfEstimator(nn.Module):
         input_shape: Sequence[int],
         output_classes: int,
         mutinf_estimate_with_labels: bool = True,
-        classifiers_kwargs: dict = {}
+        classifiers_kwargs: dict = {},
+        standard_classifier_dir: Optional[str] = None # ablation test: just using ALL to 'interpret' a normal pretrained neural net
     ):
         super().__init__()
         self.classifiers_name = classifiers_name
@@ -19,14 +34,19 @@ class CondMutInfEstimator(nn.Module):
         self.output_classes = output_classes
         self.mutinf_estimate_with_labels = mutinf_estimate_with_labels
         self.classifiers_kwargs = classifiers_kwargs
-        
-        self.classifiers = models.load(
-            self.classifiers_name,
-            input_shape=self.input_shape,
-            output_classes=self.output_classes,
-            noise_conditional=True,
-            **self.classifiers_kwargs
-        )
+        self.standard_classifier_dir = standard_classifier_dir
+        if self.standard_classifier_dir is None:
+            self.classifiers = models.load(
+                self.classifiers_name,
+                input_shape=self.input_shape,
+                output_classes=self.output_classes,
+                noise_conditional=True,
+                **self.classifiers_kwargs
+            )
+        else:
+            assert os.path.exists(os.path.join(self.standard_classifier_dir, 'best_checkpoint.ckpt'))
+            training_module = SupervisedModule.load_from_checkpoint(os.path.join(self.standard_classifier_dir, 'best_checkpoint.ckpt'))
+            self.classifiers = PretrainedClassifierWrapper(training_module.classifier)
     
     def get_logits(self, input: torch.Tensor, condition_mask: torch.Tensor):
         masked_input = condition_mask*input + (1-condition_mask)*torch.randn_like(input)

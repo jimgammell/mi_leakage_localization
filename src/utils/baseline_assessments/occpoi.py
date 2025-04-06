@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader, Subset
 from training_modules.supervised_deep_sca import SupervisedModule
 from models.zaid_wouters_nets import pretrained_models
 from utils.aes_multi_trace_eval import AESMultiTraceEvaluator
+from utils.metrics import get_rank
 
 class OccludedModel(nn.Module):
     def __init__(self, model: nn.Module, points_to_occlude: Sequence[int]):
@@ -44,6 +45,10 @@ class OccPOI:
             attack_traces = 10000
         elif dataset_name == 'aes_hd':
             attack_traces = 10000
+        elif dataset_name == 'otiait':
+            attack_traces = 100
+        elif dataset_name == 'otp':
+            attack_traces = 100
         else:
             assert False
         attack_dataset = Subset(attack_dataloader.dataset, np.arange(attack_traces))
@@ -68,7 +73,7 @@ class OccPOI:
         self.trace_shape = (1, self.base_model.input_shape[-1])
         self.model = OccludedModel(self.base_model, [])
         base_guessing_entropy = self.compute_guessing_entropy([])
-        self.lbda = base_guessing_entropy + 1 # generalizes lambda in paper to settings where we don't get down to zero guessing entropy
+        self.lbda = base_guessing_entropy + 1 if dataset_name != 'otp' else base_guessing_entropy + 0.1 # generalizes lambda in paper to settings where we don't get down to zero guessing entropy
     
     # Using the test set as part of the algorithm is problematic. But baselines should significantly outperform this regardless, so I'm leaving as-is.
     #   Probably some better options would be: 1) cut test set in half, use half here and half for evaluation so that we can still accumulate predictions
@@ -76,12 +81,21 @@ class OccPOI:
     #   training set. We can't accumulate predictions in this case, but I feel like it should be fine.
     def compute_guessing_entropy(self, points_to_occlude: Sequence[int]):
         self.model.points_to_occlude = points_to_occlude
-        multi_trace_evaluator = AESMultiTraceEvaluator(
-            dataloader=self.attack_dataloader, model=self.model, seed=self.seed, device=self.device, dataset_name=self.dataset_name 
-        )
-        rank_over_time = multi_trace_evaluator()
-        guessing_entropy = rank_over_time[-1]
-        return guessing_entropy
+        if self.dataset_name in ['ascadv1_fixed', 'ascadv1_variable', 'dpav4', 'aes_hd']:
+            multi_trace_evaluator = AESMultiTraceEvaluator(
+                dataloader=self.attack_dataloader, model=self.model, seed=self.seed, device=self.device, dataset_name=self.dataset_name 
+            )
+            rank_over_time = multi_trace_evaluator()
+            guessing_entropy = rank_over_time[-1]
+            return guessing_entropy
+        elif self.dataset_name in ['otiait', 'otp']:
+            trace, target = next(iter(self.attack_dataloader))
+            trace, target = trace.to(self.device), target.to(self.device)
+            logits = self.model(trace)
+            mean_rank = get_rank(logits, target).mean()
+            return mean_rank
+        else:
+            assert False
     
     def run_kgo_procedure(self, starting_queue: Optional[Sequence[int]] = None):
         # Implementation of Algorithm 1 from the OccPOI paper.
