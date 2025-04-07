@@ -33,6 +33,18 @@ from utils.baseline_assessments.occpoi import OccPOI
 OCCL_VALS = [1, 5, 17, 65, 257]
 GAMMAO_VALS = np.arange(0.05, 1.0, 0.05)
 
+def get_dataset_name(key):
+    lut = {
+        'ascadv1_fixed': 'ASCADv1 (fixed)',
+        'ascadv1_variable': 'ASCADv1 (random)',
+        'dpav4': 'DPAv4 (Zaid version)',
+        'aes_hd': 'AES-HD',
+        'otiait': 'OTiAiT',
+        'otp': 'OTP'
+    }
+    assert key in lut.keys()
+    return lut[key]
+
 def get_assessment_name(key):
     lut = {
         'random': 'Random',
@@ -517,6 +529,7 @@ class Trial:
         )
         fig, ax = plt.subplots(1, 1, figsize=(PLOT_WIDTH, PLOT_WIDTH))
         tax = ax.twiny()
+        tax.axhline(0., color='black', linestyle=':', label='Random', **PLOT_KWARGS)
         tax.plot(np.arange(0.1, 1.0, 0.1), basic_osnrs, color='blue', marker='.', label='No ablation', **PLOT_KWARGS)
         tax.plot(np.arange(0.1, 1.0, 0.1), concrete_osnrs, color='red', marker='.', label=r'REBAR $\to$ CONCRETE($\lambda=1$)', **PLOT_KWARGS)
         line, = ax.plot(np.logspace(-2, 2, 9)[::-1], norm_osnrs, color='orange', marker='.', label=r'Fixed $\boldsymbol{\gamma}$ budget $\to$ Penalize $\mathbb{E}\left[\lVert \boldsymbol{\mathcal{A}}_{\boldsymbol{\gamma}} \rVert_1 + \lVert \boldsymbol{\mathcal{A}}_{\boldsymbol{\gamma}} \rVert_2\right]$', **PLOT_KWARGS)
@@ -538,6 +551,7 @@ class Trial:
         ax.set_xlabel(r'Norm penalty coefficient: $\lambda$')
         ax.set_xscale('log')
         ax.set_ylabel(r'oSNR value$\uparrow$')
+        ax.set_title(f'Dataset: {get_dataset_name(self.dataset_name)}')
         lines1, labels1 = tax.get_legend_handles_labels()
         leg = tax.legend(lines1+[line], labels1+[line.get_label()], loc='lower right', fontsize='x-small')
         fig.tight_layout()
@@ -589,11 +603,44 @@ class Trial:
                 spearmanr_evaluations[seed, gammao_idx] = corr
         assert np.all(np.isfinite(spearmanr_evaluations))
         fig, ax = plt.subplots(figsize=(PLOT_WIDTH, PLOT_WIDTH))
-        ax.fill_between(GAMMAO_VALS, spearmanr_evaluations.min(axis=0), spearmanr_evaluations.max(axis=0), color='blue', alpha=0.25, **PLOT_KWARGS)
-        ax.plot(GAMMAO_VALS, np.median(spearmanr_evaluations, axis=0), color='blue', marker='.', linestyle='none', markersize=1, **PLOT_KWARGS)
+        if self.dataset_name == 'ascadv1_fixed':
+            random_mean, random_std = -0.02, 0.04
+            parametric_mean = 0.521
+            nn_attr_mean, nn_attr_std = 0.625, 0.009
+        elif self.dataset_name == 'ascadv1_variable':
+            random_mean, random_std = 0.0, 0.02
+            parametric_mean = 0.272
+            nn_attr_mean, nn_attr_std = 0.49, 0.06
+        elif self.dataset_name == 'dpav4':
+            assert False
+        elif self.dataset_name == 'aes_hd':
+            random_mean, random_std = -0.02, 0.02
+            parametric_mean = 0.303
+            nn_attr_mean, nn_attr_std = 0.13, 0.02
+        elif self.dataset_name == 'otiait':
+            random_mean, random_std = 0.0, 0.02
+            parametric_mean = 0.989
+            nn_attr_mean, nn_attr_std = 0.77, 0.02
+        elif self.dataset_name == 'otp':
+            random_mean, random_std = 0.0, 0.04
+            parametric_mean = 0.944
+            nn_attr_mean, nn_attr_std = 0.74, 0.02
+        else:
+            assert False
+        ax.axhline(random_mean, color='red', linestyle=':', label='Random', **PLOT_KWARGS)
+        ax.fill_between(np.linspace(0, 1, 2), random_mean-random_std, random_mean+random_std, color='red', alpha=0.25, **PLOT_KWARGS)
+        ax.axhline(parametric_mean, color='green', linestyle=':', label='Best parametric', **PLOT_KWARGS)
+        ax.axhline(nn_attr_mean, color='purple', linestyle=':', label='Best NN attr', **PLOT_KWARGS)
+        ax.fill_between(np.linspace(0, 1, 2), nn_attr_mean-nn_attr_std, nn_attr_mean+nn_attr_std, color='purple', alpha=0.25, **PLOT_KWARGS)
+        mean = np.mean(spearmanr_evaluations, axis=0)
+        std = np.std(spearmanr_evaluations, axis=0)
+        ax.fill_between(GAMMAO_VALS, mean-std, mean+std, color='blue', alpha=0.25, **PLOT_KWARGS)
+        ax.plot(GAMMAO_VALS, mean, color='blue', linestyle=':', label=r'ALL (Ours)', **PLOT_KWARGS)
         ax.set_xlabel(r'Budget: $\overline{\gamma}$')
         ax.set_ylabel(r'oSNR of ALL with budget $\overline{\gamma}$')
-        ax.set_yscale('log')
+        ax.set_xlim(0, 1)
+        ax.legend(loc='lower center')
+        ax.set_title(f'Dataset: {get_dataset_name(self.dataset_name)}')
         fig.tight_layout()
         fig.savefig(os.path.join(self.logging_dir, 'gammao_performance_sweep.pdf'), **SAVEFIG_KWARGS)
         fig.savefig(os.path.join(self.logging_dir, 'gammao_performance_sweep.png'), **SAVEFIG_KWARGS)
@@ -793,7 +840,7 @@ class Trial:
         self.best_occlusion_window_size = window_sizes[best_window_idx]
         print(f'Best occlusion window size: {self.best_occlusion_window_size}')
         self.nn_attr_assessments['m_occlusion'] = results[best_window_idx, :, :]
-        if not os.path.exists(os.path.join(self.nn_attr_dir, '2o_m_occl.npy')):
+        r"""if not os.path.exists(os.path.join(self.nn_attr_dir, '2o_m_occl.npy')):
             print(f'Computing 2nd-order {self.best_occlusion_window_size}-occlusion...')
             data_module = DataModule(self.profiling_dataset, self.attack_dataset, val_prop=0.0)
             profiling_dataloader = data_module.train_dataloader()
@@ -808,7 +855,7 @@ class Trial:
         else:
             occl2o = np.load(os.path.join(self.nn_attr_dir, '2o_m_occl.npy'))
         plot_leakage_assessment(occl2o.mean(axis=0), os.path.join(self.nn_attr_dir, 'sec_order_m_occl.png'))
-        self.nn_attr_assessments['second_order_m_occl'] = occl2o
+        self.nn_attr_assessments['second_order_m_occl'] = occl2o"""
 
     def compute_neural_net_attributions(self, wouters_zaid_model=None):
         data_module = DataModule(self.profiling_dataset, self.attack_dataset, val_prop=0.0)
@@ -877,6 +924,7 @@ class Trial:
                 np.save(os.path.join(subdir, to_name('extended_occpoi.npy')), ext_occpoi)
             else:
                 ext_occpoi = np.load(os.path.join(subdir, to_name('extended_occpoi.npy')))
+                print('Found precomputed extended OccPOI')
             for occl_n in [1]:
                 if not os.path.exists(os.path.join(subdir, to_name(f'{occl_n}_occl.npy'))):
                     print(f'Computing {occl_n}-occlusion...')
@@ -1221,15 +1269,17 @@ class Trial:
                 self.compute_supervised_ranks_over_time(wouters_zaid_model='ZaidNet__AES_HD')
                 self.compute_supervised_ranks_over_time(wouters_zaid_model='WoutersNet__AES_HD')
                 self.create_paper_rot_plot()
-            self.occlusion_window_sweep()
+            #self.occlusion_window_sweep()
         if ('run_ll_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_hparam_sweep']:
             self.run_ll_hparam_sweep()
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:
             self.run_leakage_localization()
+        self.eval_leakage_assessments()
+        if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:
             self.run_ll_gammao_sweep()
         if True:
-            if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
-                self.run_ll_classifiers_hparam_sweep()
+            #if ('run_ll_classifiers_hparam_sweep' in self.trial_config) and self.trial_config['run_ll_classifiers_hparam_sweep']:
+            #    self.run_ll_classifiers_hparam_sweep()
             if ('pretrain_classifiers' in self.trial_config) and self.trial_config['pretrain_classifiers']:
                 self.pretrain_leakage_localization_classifiers()
         if ('run_leakage_localization' in self.trial_config) and self.trial_config['run_leakage_localization']:

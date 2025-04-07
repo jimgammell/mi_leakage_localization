@@ -371,7 +371,7 @@ class Module(L.LightningModule):
                 correlation = pearsonr(gamma, leakage_assessment.reshape(-1)).statistic
                 self.log(f'{key}_ktcc', ktcc)
                 self.log(f'{key}_corr', correlation)
-        if (
+        if False and (
             (self.total_steps // (100*len(self.trainer.train_dataloader)) == 0)
             or (self.current_epoch % (self.total_steps//(100*len(self.trainer.train_dataloader))) == 0)
         ):

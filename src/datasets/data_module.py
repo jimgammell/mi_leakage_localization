@@ -81,7 +81,7 @@ class DataModule(L.LightningDataModule):
         dataloader_kwargs = {
             'num_workers': max(os.cpu_count()//4, 1),
             'pin_memory': True,
-            'persistent_workers': True,
+            'persistent_workers': False,
             'prefetch_factor': 4
         }
         dataloader_kwargs.update(self.dataloader_kwargs)

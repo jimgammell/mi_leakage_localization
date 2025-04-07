@@ -163,16 +163,17 @@ def plot_training_curves(logging_dir, anim_gammas=True, reference=None):
         axes[3].plot(*training_curves['train_etat_rms_grad'], color='blue', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
     if 'train_theta_rms_grad' in training_curves:
         axes[4].plot(*training_curves['train_theta_rms_grad'], color='red', linestyle='none', marker='.', markersize=1, **PLOT_KWARGS)
-    lines = [np.column_stack([training_curves['log_gamma'][0], np.exp(y)]) for y in training_curves['log_gamma'][1].T]
-    if not anim_gammas: # this is a simple Gaussian dataset trial where the first line is the nonleaky point
-        nonleaky_line = lines[0]
-        lines = lines[1:]
-    linekwargs = {'linewidth': 0.1, 'alpha': 0.5} if anim_gammas else {'linewidth': 1, 'alpha': 1.0}
-    lc = LineCollection(lines, color='blue', linestyle='-', **linekwargs, **PLOT_KWARGS)
-    axes[5].add_collection(lc)
-    if not anim_gammas:
-        axes[5].plot(nonleaky_line[:, 0], nonleaky_line[:, 1], color='red')
-    axes[5].autoscale()
+    if 'log_gamma' in training_curves:
+        lines = [np.column_stack([training_curves['log_gamma'][0], np.exp(y)]) for y in training_curves['log_gamma'][1].T]
+        if not anim_gammas: # this is a simple Gaussian dataset trial where the first line is the nonleaky point
+            nonleaky_line = lines[0]
+            lines = lines[1:]
+        linekwargs = {'linewidth': 0.1, 'alpha': 0.5} if anim_gammas else {'linewidth': 1, 'alpha': 1.0}
+        lc = LineCollection(lines, color='blue', linestyle='-', **linekwargs, **PLOT_KWARGS)
+        axes[5].add_collection(lc)
+        if not anim_gammas:
+            axes[5].plot(nonleaky_line[:, 0], nonleaky_line[:, 1], color='red')
+        axes[5].autoscale()
     ktcc_curves = {key: val for key, val in training_curves.items() if key.endswith('_ktcc')}
     corr_curves = {key: val for key, val in training_curves.items() if key.endswith('_corr')}
     if len(ktcc_curves) > 0:

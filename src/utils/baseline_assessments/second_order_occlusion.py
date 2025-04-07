@@ -72,9 +72,8 @@ class SecondOrderOcclusion:
         ]
         sum_map, count_map = map(lambda _: np.zeros((dim, dim), dtype=np.float32), range(2))
         for ablation_idx_batch in tqdm(ablation_idx_batches):
-            xx = []
+            ablated_x = x.unsqueeze(0).repeat(len(ablation_idx_batch), 1, 1, 1)
             for ablation_idx in ablation_idx_batch:
-                ablated_x = x.clone()
                 if isinstance(ablation_idx[0], int):
                     indices = list(ablation_idx)
                 elif isinstance(ablation_idx[0], tuple):
@@ -84,10 +83,9 @@ class SecondOrderOcclusion:
                     assert False
                 ablated_x[..., indices] = 0 # Note: we are standardizing the inputs so each feature has mean 0 and std. dev. 1. While some prior work
                                             #  emphasizes the distinction between e.g. occlude w/ zero vs. occlude w/ mean, these are the same here.
-                xx.append(ablated_x)
-            xx = torch.cat(xx, dim=0)
-            yy = torch.cat([y.clone() for _ in ablation_idx_batch], dim=0)
-            perturbed_logits = self.model(xx)[torch.arange(len(yy)), yy]
+            ablated_x = ablated_x.reshape(-1, *x.shape[1:])
+            yy = y.unsqueeze(0).repeat(len(ablation_idx_batch), 1).reshape(-1) #torch.cat([y.clone() for _ in ablation_idx_batch], dim=0)
+            perturbed_logits = self.model(ablated_x)[torch.arange(len(yy)), yy]
             for idx, ablation_idx in enumerate(ablation_idx_batch):
                 diff = (unperturbed_logits - perturbed_logits[idx*batch_size:(idx+1)*batch_size]).abs().mean().cpu().item()
                 if isinstance(ablation_idx[0], int):

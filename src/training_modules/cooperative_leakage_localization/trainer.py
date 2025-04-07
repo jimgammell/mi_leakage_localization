@@ -154,7 +154,7 @@ class Trainer:
                 reference_leakage_assessment=self.reference_leakage_assessment,
                 **kwargs
             )
-            if pretrained_classifiers_logging_dir is not None:
+            if False: #pretrained_classifiers_logging_dir is not None:
                 assert os.path.exists(pretrained_classifiers_logging_dir)
                 pretrained_module = Module.load_from_checkpoint(os.path.join(pretrained_classifiers_logging_dir, 'best_checkpoint.ckpt'))
                 training_module.cmi_estimator.classifiers.load_state_dict(pretrained_module.cmi_estimator.classifiers.state_dict())
@@ -171,7 +171,8 @@ class Trainer:
                 callbacks = []
             trainer = LightningTrainer(
                 max_steps=training_module.to_global_steps(max_steps),
-                val_check_interval=1.,
+                #val_check_interval=1.,
+                limit_val_batches=0.,
                 default_root_dir=logging_dir,
                 accelerator='gpu',
                 devices=1,
